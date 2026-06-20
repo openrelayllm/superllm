@@ -230,6 +230,7 @@ const adminNavItems = computed((): NavItem[] => [
   { path: '/admin/dashboard', label: t('nav.dashboard'), icon: DashboardIcon },
   { path: '/admin/ops', label: t('nav.ops'), icon: ChartIcon },
   { path: '/admin/operations/suppliers', label: '供应商管理', icon: OperationsIcon },
+  { path: '/admin/operations/supplier-accounts', label: '账号/Key 绑定', icon: OperationsIcon },
   { path: '/admin/operations/rates', label: '费率监控', icon: ChartIcon },
   { path: '/admin/operations/balances', label: '余额监控', icon: OperationsIcon },
   { path: '/admin/operations/health', label: '健康监控', icon: ChartIcon },

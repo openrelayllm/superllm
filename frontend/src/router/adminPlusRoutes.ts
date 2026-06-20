@@ -69,6 +69,16 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/operations/supplier-accounts',
+    name: 'AdminPlusSupplierAccounts',
+    component: () => import('@/views/admin/operations/SupplierAccountsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: '账号/Key 绑定'
+    }
+  },
+  {
     path: '/admin/operations/rates',
     name: 'AdminPlusRates',
     component: () => import('@/views/admin/operations/RatesView.vue'),

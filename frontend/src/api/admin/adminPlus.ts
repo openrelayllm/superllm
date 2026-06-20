@@ -11,11 +11,13 @@ export type SupplierRuntimeStatus = 'monitor_only' | 'candidate' | 'active' | 'd
 export type SupplierHealthStatus = 'normal' | 'unavailable' | 'credential_invalid' | 'paused'
 
 export interface SupplierCredentialStatus {
-  admin_api_key_configured: boolean
   postgres_configured: boolean
   redis_configured: boolean
   browser_login_enabled: boolean
-  masked_admin_api_key?: string
+  browser_login_username_configured: boolean
+  browser_login_password_configured: boolean
+  browser_login_token_configured: boolean
+  masked_browser_login_username?: string
 }
 
 export interface Supplier {
@@ -47,10 +49,12 @@ export interface CreateSupplierPayload {
   api_base_url?: string
   contact?: string
   notes?: string
-  admin_api_key?: string
   postgres_read_dsn?: string
   redis_read_dsn?: string
   browser_login_enabled?: boolean
+  browser_login_username?: string
+  browser_login_password?: string
+  browser_login_token?: string
   balance_cents?: number
   balance_currency?: string
 }
@@ -58,6 +62,57 @@ export interface CreateSupplierPayload {
 export interface UpdateSupplierStatusPayload {
   runtime_status: SupplierRuntimeStatus
   health_status: SupplierHealthStatus
+}
+
+export interface LocalSub2APIAccount {
+  id: number
+  name: string
+  platform: string
+  type: string
+  status: string
+  schedulable: boolean
+  concurrency: number
+  priority: number
+  rate_multiplier: number
+}
+
+export interface SupplierAccount {
+  id: number
+  supplier_id: number
+  local_sub2api_account_id: number
+  local_account_name: string
+  local_account_platform: string
+  local_account_type: string
+  supplier_account_identifier?: string
+  supplier_account_label?: string
+  organization_id?: string
+  project_id?: string
+  rate_profile?: string
+  configured_concurrency: number
+  observed_max_concurrency: number
+  balance_threshold_cents: number
+  balance_cents: number
+  balance_currency: string
+  has_usable_balance: boolean
+  runtime_status: SupplierRuntimeStatus
+  health_status: SupplierHealthStatus
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateSupplierAccountPayload {
+  local_sub2api_account_id: number
+  supplier_account_identifier?: string
+  supplier_account_label?: string
+  organization_id?: string
+  project_id?: string
+  rate_profile?: string
+  configured_concurrency?: number
+  balance_threshold_cents?: number
+  balance_cents?: number
+  balance_currency?: string
+  runtime_status?: SupplierRuntimeStatus
+  health_status?: SupplierHealthStatus
 }
 
 export interface RateSnapshotEntryPayload {
@@ -312,6 +367,25 @@ export async function updateSupplierStatus(id: number, payload: UpdateSupplierSt
   return data
 }
 
+export async function listLocalSub2APIAccounts(params?: { q?: string; limit?: number }): Promise<AdminPlusListResponse<LocalSub2APIAccount>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<LocalSub2APIAccount>>('/admin-plus/sub2api/accounts', { params })
+  return data
+}
+
+export async function listSupplierAccounts(supplierId: number): Promise<AdminPlusListResponse<SupplierAccount>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<SupplierAccount>>(`/admin-plus/suppliers/${supplierId}/accounts`)
+  return data
+}
+
+export async function createSupplierAccount(supplierId: number, payload: CreateSupplierAccountPayload): Promise<SupplierAccount> {
+  const { data } = await apiClient.post<SupplierAccount>(`/admin-plus/suppliers/${supplierId}/accounts`, payload)
+  return data
+}
+
+export async function deleteSupplierAccount(supplierId: number, accountId: number): Promise<void> {
+  await apiClient.delete(`/admin-plus/suppliers/${supplierId}/accounts/${accountId}`)
+}
+
 export async function recordRateSnapshot(payload: {
   supplier_id: number
   source?: string
@@ -523,6 +597,10 @@ export const adminPlusAPI = {
   listSuppliers,
   createSupplier,
   updateSupplierStatus,
+  listLocalSub2APIAccounts,
+  listSupplierAccounts,
+  createSupplierAccount,
+  deleteSupplierAccount,
   recordRateSnapshot,
   listRateSnapshots,
   listRateEvents,
