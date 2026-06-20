@@ -16,8 +16,10 @@ import (
 	reconciliationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/reconciliation"
 	schedulerapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
 	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
+	suppliergroupsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	adminhandler "github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	adminplushandler "github.com/Wei-Shaw/sub2api/internal/handler/adminplus"
@@ -33,6 +35,11 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 	v1 := router.Group("/api/v1")
 	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	supplierGroupService := suppliergroupsapp.NewService(
+		suppliergroupsapp.NewMemoryRepository(),
+		&routeSurfaceSessionReader{},
+		&routeSurfaceGroupReader{},
+	)
 	handlers := &handler.Handlers{
 		Auth:    &handler.AuthHandler{},
 		Setting: &handler.SettingHandler{},
@@ -45,6 +52,7 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 		},
 		AdminPlus: &handler.AdminPlusHandlers{
 			Supplier:       adminplushandler.NewSupplierHandler(supplierService),
+			SupplierGroup:  adminplushandler.NewSupplierGroupHandler(supplierGroupService),
 			Rate:           adminplushandler.NewRateHandler(ratesapp.NewService(newRouteSurfaceRateRepository())),
 			Balance:        adminplushandler.NewBalanceHandler(balancesapp.NewService(balancesapp.NewMemoryRepository())),
 			Promotion:      adminplushandler.NewPromotionHandler(promotionsapp.NewService(promotionsapp.NewMemoryRepository())),
@@ -103,6 +111,8 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin-plus/suppliers/:id/accounts",
 		"POST /api/v1/admin-plus/suppliers/:id/accounts",
 		"DELETE /api/v1/admin-plus/suppliers/:id/accounts/:accountID",
+		"GET /api/v1/admin-plus/suppliers/:id/groups",
+		"POST /api/v1/admin-plus/suppliers/:id/groups/sync",
 		"GET /api/v1/admin-plus/suppliers/:id/session",
 		"POST /api/v1/admin-plus/suppliers/:id/session/probe",
 		"POST /api/v1/admin-plus/suppliers/:id/browser-sessions",
@@ -214,6 +224,18 @@ func registeredRouteSet(router *gin.Engine) map[string]struct{} {
 }
 
 type routeSurfaceRateRepository struct{}
+
+type routeSurfaceSessionReader struct{}
+
+func (r *routeSurfaceSessionReader) DecryptedProbeInput(_ context.Context, supplierID int64) (ports.SessionProbeInput, error) {
+	return ports.SessionProbeInput{SupplierID: supplierID}, nil
+}
+
+type routeSurfaceGroupReader struct{}
+
+func (r *routeSurfaceGroupReader) ReadGroups(_ context.Context, in ports.SessionProbeInput) (*ports.ReadGroupsResult, error) {
+	return &ports.ReadGroupsResult{SupplierID: in.SupplierID, SystemType: "sub2api"}, nil
+}
 
 func newRouteSurfaceRateRepository() *routeSurfaceRateRepository {
 	return &routeSurfaceRateRepository{}

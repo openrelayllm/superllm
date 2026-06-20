@@ -301,10 +301,10 @@ P4/P5 最后收口：
 - 插件任务结果不会保存或回显 `session_bundle_ciphertext` 明文线索。
 - 会话响应只返回 `has_encrypted_bundle`、采集时间、过期时间和摘要。
 - Provider Adapter profile 探测默认只访问用户侧 profile，不访问供应商 `/api/v1/admin/*`。
+- `ReadGroups(session)` 已落地：`POST /api/v1/admin-plus/suppliers/:id/groups/sync` 使用后端 Provider Adapter 读取供应商用户侧分组接口，并 upsert 到 `admin_plus_supplier_groups`；`GET /api/v1/admin-plus/suppliers/:id/groups` 查询本地分组事实表。
 
 下一步仍未完成：
 
-- `ReadGroups(session)`：读取供应商分组和倍率并落本地供应商分组表。
 - `ReadRates(session)`：基于分组/模型/计费项读取真实费率。
 - `ReadBilling(session, date_range)`：读取真实账单明细并进入对账。
 - `CreateKey(session, group, params)`：管理员确认后创建第三方 Key，并同步创建本地 Sub2API 账号。

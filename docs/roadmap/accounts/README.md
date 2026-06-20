@@ -761,6 +761,8 @@ POST /api/v1/admin-plus/suppliers/:id/browser-sessions
 ```http
 GET  /api/v1/admin-plus/suppliers/:id/session
 POST /api/v1/admin-plus/suppliers/:id/session/probe
+POST /api/v1/admin-plus/suppliers/:id/groups/sync
+GET  /api/v1/admin-plus/suppliers/:id/groups
 ```
 
 插件不通过该链路上报已经解析好的分组、费率、余额、账单或第三方密钥创建结果。
@@ -772,6 +774,8 @@ POST /api/v1/admin-plus/suppliers/:id/session/probe
 - 响应只返回脱敏摘要。
 - 支持 `cookies` 字符串和 Chrome cookies 数组。
 - 可通过 `POST /api/v1/admin-plus/suppliers/:id/session/probe` 读取 Sub2API 用户侧 profile/余额并写入余额快照。
+- 可通过 `POST /api/v1/admin-plus/suppliers/:id/groups/sync` 使用后端 Provider Adapter 读取供应商用户侧分组和倍率，并 upsert 到 `admin_plus_supplier_groups`。
+- 可通过 `GET /api/v1/admin-plus/suppliers/:id/groups` 查询本地分组事实表；旧插件 `fetch_groups` 不作为分组同步主路径。
 
 ## 15. 幂等与一致性
 

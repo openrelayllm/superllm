@@ -18,6 +18,7 @@ export type SupplierKind = 'source_account' | 'relay' | 'browser_only' | 'custom
 export type SupplierType = 'openai' | 'anthropic' | 'gemini' | 'sub2api' | 'new_api' | 'browser_only' | 'custom'
 export type SupplierRuntimeStatus = 'monitor_only' | 'candidate' | 'active' | 'disabled'
 export type SupplierHealthStatus = 'normal' | 'unavailable' | 'credential_invalid' | 'paused'
+export type SupplierGroupStatus = 'active' | 'missing' | 'disabled'
 
 export interface SupplierCredentialStatus {
   postgres_configured: boolean
@@ -187,6 +188,39 @@ export interface SupplierAccount {
   health_status: SupplierHealthStatus
   created_at: string
   updated_at: string
+}
+
+export interface SupplierGroup {
+  id: number
+  supplier_id: number
+  external_group_id: string
+  name: string
+  description: string
+  provider_family: string
+  rate_multiplier: number
+  user_rate_multiplier?: number | null
+  effective_rate_multiplier: number
+  rpm_limit?: number | null
+  daily_limit_usd?: number | null
+  weekly_limit_usd?: number | null
+  monthly_limit_usd?: number | null
+  allow_image_generation: boolean
+  is_private: boolean
+  status: SupplierGroupStatus
+  raw_payload?: Record<string, unknown>
+  last_seen_at: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SyncSupplierGroupsResponse {
+  supplier_id: number
+  system_type: string
+  origin: string
+  api_base_url?: string
+  groups: SupplierGroup[]
+  synced_at: string
+  total: number
 }
 
 export interface CreateSupplierAccountPayload {
@@ -621,6 +655,16 @@ export async function upsertSupplierBrowserSession(id: number, payload: UpsertSu
   return data
 }
 
+export async function listSupplierGroups(supplierId: number, params?: { status?: SupplierGroupStatus | ''; q?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<SupplierGroup>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<SupplierGroup>>(`/admin-plus/suppliers/${supplierId}/groups`, { params })
+  return data
+}
+
+export async function syncSupplierGroups(supplierId: number): Promise<SyncSupplierGroupsResponse> {
+  const { data } = await apiClient.post<SyncSupplierGroupsResponse>(`/admin-plus/suppliers/${supplierId}/groups/sync`, {})
+  return data
+}
+
 export async function listLocalSub2APIAccounts(params?: { q?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalSub2APIAccount>> {
   const { data } = await apiClient.get<AdminPlusListResponse<LocalSub2APIAccount>>('/admin-plus/sub2api/accounts', { params })
   return data
@@ -932,6 +976,8 @@ export const adminPlusAPI = {
   getSupplierSession,
   probeSupplierSession,
   upsertSupplierBrowserSession,
+  listSupplierGroups,
+  syncSupplierGroups,
   listLocalSub2APIAccounts,
   listLocalUsageLines,
   listLocalUsageSummary,

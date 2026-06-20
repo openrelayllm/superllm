@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -35,7 +34,7 @@ type Repository interface {
 }
 
 type SessionReader interface {
-	DecryptedBundle(ctx context.Context, supplierID int64) (map[string]any, *adminplusdomain.SupplierBrowserSession, error)
+	DecryptedProbeInput(ctx context.Context, supplierID int64) (ports.SessionProbeInput, error)
 }
 
 type Service struct {
@@ -45,7 +44,7 @@ type Service struct {
 	now     func() time.Time
 }
 
-func NewService(repo Repository, session *sessionsapp.Service, reader ports.SessionGroupAdapter) *Service {
+func NewService(repo Repository, session SessionReader, reader ports.SessionGroupAdapter) *Service {
 	return &Service{
 		repo:    repo,
 		session: session,
@@ -67,16 +66,11 @@ func (s *Service) Sync(ctx context.Context, supplierID int64) (*SyncResult, erro
 	if supplierID <= 0 {
 		return nil, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
 	}
-	bundle, session, err := s.session.DecryptedBundle(ctx, supplierID)
+	input, err := s.session.DecryptedProbeInput(ctx, supplierID)
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.reader.ReadGroups(ctx, ports.SessionProbeInput{
-		SupplierID: supplierID,
-		Origin:     session.Origin,
-		APIBaseURL: session.APIBaseURL,
-		Bundle:     bundle,
-	})
+	result, err := s.reader.ReadGroups(ctx, input)
 	if err != nil {
 		return nil, err
 	}

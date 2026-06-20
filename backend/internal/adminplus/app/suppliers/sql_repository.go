@@ -3,17 +3,14 @@ package suppliers
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/lib/pq"
 )
 
 type SQLRepository struct {
@@ -565,124 +562,6 @@ func (r *SQLRepository) ListLocalAccounts(ctx context.Context, query string, lim
 	return items, nil
 }
 
-func (r *SQLRepository) UpsertGroups(ctx context.Context, groups []*adminplusdomain.SupplierGroup) ([]*adminplusdomain.SupplierGroup, error) {
-	if r == nil || r.db == nil {
-		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
-	}
-	items := make([]*adminplusdomain.SupplierGroup, 0, len(groups))
-	for _, group := range groups {
-		if group == nil {
-			continue
-		}
-		rawPayload := group.RawPayload
-		if rawPayload == nil {
-			rawPayload = map[string]any{}
-		}
-		raw, err := json.Marshal(rawPayload)
-		if err != nil {
-			return nil, err
-		}
-		row := r.db.QueryRowContext(ctx, `
-			INSERT INTO admin_plus_supplier_groups (
-				supplier_id, external_group_id, name, description, rate_multiplier,
-				is_private, provider_family, status, raw_payload, last_seen_at, created_at, updated_at
-			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
-			ON CONFLICT (supplier_id, external_group_id)
-			DO UPDATE SET
-				name = EXCLUDED.name,
-				description = EXCLUDED.description,
-				rate_multiplier = EXCLUDED.rate_multiplier,
-				is_private = EXCLUDED.is_private,
-				provider_family = EXCLUDED.provider_family,
-				status = EXCLUDED.status,
-				raw_payload = EXCLUDED.raw_payload,
-				last_seen_at = EXCLUDED.last_seen_at,
-				updated_at = EXCLUDED.updated_at
-			RETURNING id, supplier_id, external_group_id, name, description, rate_multiplier,
-				is_private, provider_family, status, raw_payload, last_seen_at, created_at, updated_at
-		`,
-			group.SupplierID,
-			group.ExternalGroupID,
-			group.Name,
-			group.Description,
-			group.RateMultiplier,
-			group.IsPrivate,
-			group.ProviderFamily,
-			string(group.Status),
-			string(raw),
-			group.LastSeenAt,
-			group.CreatedAt,
-			group.UpdatedAt,
-		)
-		item, err := scanSupplierGroup(row)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	return items, nil
-}
-
-func (r *SQLRepository) ListGroups(ctx context.Context, supplierID int64, status adminplusdomain.SupplierGroupStatus) ([]*adminplusdomain.SupplierGroup, error) {
-	if r == nil || r.db == nil {
-		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
-	}
-	where := []string{"supplier_id = $1"}
-	args := []any{supplierID}
-	if status != "" {
-		args = append(args, string(status))
-		where = append(where, fmt.Sprintf("status = $%d", len(args)))
-	}
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, supplier_id, external_group_id, name, description, rate_multiplier,
-			is_private, provider_family, status, raw_payload, last_seen_at, created_at, updated_at
-		FROM admin_plus_supplier_groups
-		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY status ASC, id ASC
-	`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	items := make([]*adminplusdomain.SupplierGroup, 0)
-	for rows.Next() {
-		item, err := scanSupplierGroup(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-func (r *SQLRepository) MarkMissingGroups(ctx context.Context, supplierID int64, seenExternalGroupIDs []string, missingAt time.Time) (int, error) {
-	if r == nil || r.db == nil {
-		return 0, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
-	}
-	result, err := r.db.ExecContext(ctx, `
-		UPDATE admin_plus_supplier_groups
-		SET status = 'missing', updated_at = $3
-		WHERE supplier_id = $1
-			AND status <> 'missing'
-			AND NOT (external_group_id = ANY($2))
-	`, supplierID, pq.Array(seenExternalGroupIDs), missingAt)
-	if err != nil {
-		return 0, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return 0, err
-	}
-	return int(affected), nil
-}
-
 func (r *SQLRepository) getLocalAccount(ctx context.Context, id int64) (*adminplusdomain.LocalSub2APIAccount, error) {
 	if r == nil || r.sub2apiDB == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "SUB2API_READ_DB_NOT_CONFIGURED", "sub2api read database is not configured")
@@ -796,43 +675,6 @@ func scanSupplierAccount(scanner supplierScanner) (*adminplusdomain.SupplierAcco
 	account.RuntimeStatus = adminplusdomain.SupplierRuntimeStatus(runtimeStatus)
 	account.HealthStatus = adminplusdomain.SupplierHealthStatus(healthStatus)
 	return &account, nil
-}
-
-func scanSupplierGroup(scanner supplierScanner) (*adminplusdomain.SupplierGroup, error) {
-	var group adminplusdomain.SupplierGroup
-	var status string
-	var raw []byte
-	err := scanner.Scan(
-		&group.ID,
-		&group.SupplierID,
-		&group.ExternalGroupID,
-		&group.Name,
-		&group.Description,
-		&group.RateMultiplier,
-		&group.IsPrivate,
-		&group.ProviderFamily,
-		&status,
-		&raw,
-		&group.LastSeenAt,
-		&group.CreatedAt,
-		&group.UpdatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, err
-	}
-	if err != nil {
-		return nil, err
-	}
-	group.Status = adminplusdomain.SupplierGroupStatus(status)
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &group.RawPayload); err != nil {
-			return nil, err
-		}
-	}
-	if group.RawPayload == nil {
-		group.RawPayload = map[string]any{}
-	}
-	return &group, nil
 }
 
 func translateSupplierAccountCreateError(err error) error {

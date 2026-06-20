@@ -142,6 +142,22 @@ func (s *Service) DecryptedBundle(ctx context.Context, supplierID int64) (map[st
 	return bundle, session, nil
 }
 
+func (s *Service) DecryptedProbeInput(ctx context.Context, supplierID int64) (ports.SessionProbeInput, error) {
+	bundle, session, err := s.DecryptedBundle(ctx, supplierID)
+	if err != nil {
+		return ports.SessionProbeInput{}, err
+	}
+	if err := s.validateSessionScope(ctx, supplierID, session.Origin, session.APIBaseURL, bundle); err != nil {
+		return ports.SessionProbeInput{}, err
+	}
+	return ports.SessionProbeInput{
+		SupplierID: supplierID,
+		Origin:     session.Origin,
+		APIBaseURL: session.APIBaseURL,
+		Bundle:     bundle,
+	}, nil
+}
+
 func (s *Service) ProbeSub2APIUserProfile(ctx context.Context, supplierID int64) (*ports.SessionProbeResult, error) {
 	if s == nil || s.repo == nil {
 		return nil, internalError("supplier browser session service is not configured")
@@ -149,19 +165,11 @@ func (s *Service) ProbeSub2APIUserProfile(ctx context.Context, supplierID int64)
 	if s.prober == nil {
 		return nil, internalError("supplier provider adapter is not configured")
 	}
-	bundle, session, err := s.DecryptedBundle(ctx, supplierID)
+	input, err := s.DecryptedProbeInput(ctx, supplierID)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateSessionScope(ctx, supplierID, session.Origin, session.APIBaseURL, bundle); err != nil {
-		return nil, err
-	}
-	return s.prober.ProbeSub2APIUserProfile(ctx, ports.SessionProbeInput{
-		SupplierID: supplierID,
-		Origin:     session.Origin,
-		APIBaseURL: session.APIBaseURL,
-		Bundle:     bundle,
-	})
+	return s.prober.ProbeSub2APIUserProfile(ctx, input)
 }
 
 func (s *Service) validateSessionScope(ctx context.Context, supplierID int64, origin string, apiBaseURL string, bundle map[string]any) error {

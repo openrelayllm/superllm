@@ -220,7 +220,7 @@
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex min-w-[270px] justify-end gap-2">
+            <div class="flex min-w-[330px] justify-end gap-2">
               <button type="button" class="btn btn-secondary btn-sm" title="编辑" @click="openEditDialog(row)">
                 <Icon name="edit" size="sm" />
                 编辑
@@ -232,6 +232,10 @@
               <button type="button" class="btn btn-secondary btn-sm" title="供应商会话" @click="openSessionDialog(row)">
                 <Icon name="shield" size="sm" />
                 会话
+              </button>
+              <button type="button" class="btn btn-secondary btn-sm" title="供应商分组" @click="openGroupsDialog(row)">
+                <Icon name="database" size="sm" />
+                分组
               </button>
               <button type="button" class="btn btn-secondary btn-sm" title="账号/Key" @click="goSupplierAccounts(row)">
                 <Icon name="link" size="sm" />
@@ -509,6 +513,121 @@
       </template>
     </BaseDialog>
 
+    <BaseDialog :show="groupsDialogOpen" :title="groupsSupplier ? `供应商分组 - ${groupsSupplier.name}` : '供应商分组'" width="wide" @close="groupsDialogOpen = false">
+      <div class="space-y-4">
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <div class="grid flex-1 gap-3 sm:grid-cols-[minmax(180px,1fr)_160px]">
+            <label class="block">
+              <span class="input-label">搜索</span>
+              <div class="relative">
+                <Icon name="search" size="sm" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input v-model.trim="groupFilters.q" class="input pl-9" placeholder="分组名称、平台、ID" />
+              </div>
+            </label>
+            <label class="block">
+              <span class="input-label">状态</span>
+              <select v-model="groupFilters.status" class="input">
+                <option value="">全部</option>
+                <option value="active">有效</option>
+                <option value="missing">已缺失</option>
+                <option value="disabled">停用</option>
+              </select>
+            </label>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" class="btn btn-secondary" :disabled="groupsLoading || !groupsSupplier" @click="loadCurrentGroups">
+              <Icon name="refresh" size="sm" :class="{ 'animate-spin': groupsLoading }" />
+              刷新
+            </button>
+            <button type="button" class="btn btn-primary" :disabled="groupsSyncing || !currentGroupSession?.has_encrypted_bundle" @click="syncCurrentGroups">
+              <Icon name="sync" size="sm" :class="{ 'animate-spin': groupsSyncing }" />
+              同步分组
+            </button>
+          </div>
+        </div>
+
+        <div v-if="groupsError" class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+          {{ groupsError }}
+        </div>
+
+        <DataTable
+          :columns="groupColumns"
+          :data="supplierGroups"
+          :loading="groupsLoading"
+          row-key="id"
+          default-sort-key="effective_rate_multiplier"
+          default-sort-order="asc"
+          :estimate-row-height="72"
+        >
+          <template #cell-name="{ row }">
+            <div class="min-w-[220px]">
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-gray-900 dark:text-white">{{ row.name }}</span>
+                <span v-if="row.is_private" class="badge badge-warning">专属</span>
+                <span v-if="row.allow_image_generation" class="badge badge-primary">图片</span>
+              </div>
+              <div class="mt-1 flex flex-wrap gap-2 text-xs text-gray-500 dark:text-dark-400">
+                <span class="font-mono">#{{ row.external_group_id }}</span>
+                <span v-if="row.description" class="max-w-[260px] truncate" :title="row.description">{{ row.description }}</span>
+              </div>
+            </div>
+          </template>
+
+          <template #cell-provider_family="{ row }">
+            <span class="badge badge-gray">{{ row.provider_family || 'mixed' }}</span>
+          </template>
+
+          <template #cell-rate="{ row }">
+            <div class="min-w-[120px] text-right">
+              <div class="font-medium text-gray-900 dark:text-gray-100">{{ formatMultiplier(row.effective_rate_multiplier) }}</div>
+              <div class="text-xs text-gray-500 dark:text-dark-400">
+                基础 {{ formatMultiplier(row.rate_multiplier) }}
+                <span v-if="row.user_rate_multiplier != null"> / 专属 {{ formatMultiplier(row.user_rate_multiplier) }}</span>
+              </div>
+            </div>
+          </template>
+
+          <template #cell-limits="{ row }">
+            <div class="min-w-[150px] text-xs text-gray-600 dark:text-dark-300">
+              <div>RPM：{{ row.rpm_limit ?? '-' }}</div>
+              <div>日：{{ formatUSDLimit(row.daily_limit_usd) }}</div>
+              <div>月：{{ formatUSDLimit(row.monthly_limit_usd) }}</div>
+            </div>
+          </template>
+
+          <template #cell-status="{ row }">
+            <span class="badge" :class="groupStatusClass(row.status)">{{ groupStatusLabel(row.status) }}</span>
+          </template>
+
+          <template #cell-last_seen_at="{ row }">
+            <div class="min-w-[150px] text-xs text-gray-500 dark:text-dark-400">{{ formatDateTime(row.last_seen_at) }}</div>
+          </template>
+
+          <template #empty>
+            <EmptyState
+              title="暂无供应商分组"
+              description="先通过 Chrome 插件上报供应商会话，再同步分组。"
+              action-text="同步分组"
+              @action="syncCurrentGroups"
+            />
+          </template>
+        </DataTable>
+
+        <Pagination
+          v-if="groupPagination.total > 0"
+          :page="groupPagination.page"
+          :total="groupPagination.total"
+          :page-size="groupPagination.page_size"
+          @update:page="handleGroupPageChange"
+          @update:pageSize="handleGroupPageSizeChange"
+        />
+      </div>
+
+      <template #footer>
+        <button type="button" class="btn btn-secondary" @click="groupsDialogOpen = false">关闭</button>
+      </template>
+    </BaseDialog>
+
     <ConfirmDialog
       :show="deleteDialogOpen"
       title="删除供应商"
@@ -540,12 +659,16 @@ import {
   createSupplier,
   deleteSupplier,
   getSupplierSession,
+  listSupplierGroups,
   listSuppliers,
   probeSupplierSession,
+  syncSupplierGroups,
   updateSupplier,
   updateSupplierStatus,
   type Supplier,
   type SupplierBrowserSession,
+  type SupplierGroup,
+  type SupplierGroupStatus,
   type SupplierHealthStatus,
   type SupplierSessionProbeResult,
   type SupplierKind,
@@ -562,18 +685,24 @@ const statusSubmitting = ref(false)
 const editorOpen = ref(false)
 const statusDialogOpen = ref(false)
 const sessionDialogOpen = ref(false)
+const groupsDialogOpen = ref(false)
 const deleteDialogOpen = ref(false)
 const moreMenuOpen = ref(false)
 const bulkStatusMode = ref(false)
 const bulkDeleteMode = ref(false)
 const editingSupplier = ref<Supplier | null>(null)
 const sessionSupplier = ref<Supplier | null>(null)
+const groupsSupplier = ref<Supplier | null>(null)
 const deletingSupplier = ref<Supplier | null>(null)
 const suppliers = ref<Supplier[]>([])
+const supplierGroups = ref<SupplierGroup[]>([])
 const sessionStore = reactive<Record<number, SupplierBrowserSession | undefined>>({})
 const sessionLoading = ref(false)
 const probingSession = ref(false)
+const groupsLoading = ref(false)
+const groupsSyncing = ref(false)
 const sessionLoadError = ref('')
+const groupsError = ref('')
 const lastProbe = ref<SupplierSessionProbeResult | null>(null)
 
 const filters = reactive({
@@ -589,6 +718,18 @@ const pagination = reactive({
   page_size: getPersistedPageSize(),
   total: 0,
   pages: 0
+})
+
+const groupPagination = reactive({
+  page: 1,
+  page_size: getPersistedPageSize(),
+  total: 0,
+  pages: 0
+})
+
+const groupFilters = reactive({
+  q: '',
+  status: '' as '' | SupplierGroupStatus
 })
 
 const form = reactive({
@@ -629,6 +770,15 @@ const columns: Column[] = [
   { key: 'actions', label: '操作', class: 'text-right' }
 ]
 
+const groupColumns: Column[] = [
+  { key: 'name', label: '分组' },
+  { key: 'provider_family', label: '平台' },
+  { key: 'rate', label: '倍率', class: 'text-right' },
+  { key: 'limits', label: '限制' },
+  { key: 'status', label: '状态' },
+  { key: 'last_seen_at', label: '最后同步', sortable: true }
+]
+
 const filteredSuppliers = computed(() => suppliers.value)
 
 const {
@@ -649,6 +799,11 @@ const selectedRows = computed(() => suppliers.value.filter((item) => selectedIds
 
 const currentSession = computed(() => {
   const supplierID = sessionSupplier.value?.id
+  return supplierID ? sessionStore[supplierID] : undefined
+})
+
+const currentGroupSession = computed(() => {
+  const supplierID = groupsSupplier.value?.id
   return supplierID ? sessionStore[supplierID] : undefined
 })
 
@@ -703,6 +858,20 @@ function formatDateTime(value?: string | null): string {
   if (!value) return '-'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString()
+}
+
+function formatMultiplier(value?: number | null): string {
+  if (typeof value !== 'number') return '-'
+  return `${Number(value).toFixed(4)}x`
+}
+
+function formatUSDLimit(value?: number | null): string {
+  if (typeof value !== 'number') return '-'
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2
+  }).format(value)
 }
 
 function kindLabel(value: SupplierKind): string {
@@ -766,6 +935,19 @@ function sessionStatusLabel(status?: SupplierBrowserSession['status']): string {
 function sessionStatusClass(status?: SupplierBrowserSession['status']): string {
   if (status === 'valid') return 'badge-success'
   if (status === 'expired') return 'badge-warning'
+  return 'badge-gray'
+}
+
+function groupStatusLabel(status?: SupplierGroupStatus): string {
+  if (status === 'active') return '有效'
+  if (status === 'missing') return '已缺失'
+  if (status === 'disabled') return '停用'
+  return '未知'
+}
+
+function groupStatusClass(status?: SupplierGroupStatus): string {
+  if (status === 'active') return 'badge-success'
+  if (status === 'missing') return 'badge-warning'
   return 'badge-gray'
 }
 
@@ -848,6 +1030,15 @@ async function reloadCurrentSession() {
   }
 }
 
+async function reloadGroupSession() {
+  if (!groupsSupplier.value) return
+  try {
+    sessionStore[groupsSupplier.value.id] = await getSupplierSession(groupsSupplier.value.id)
+  } catch {
+    sessionStore[groupsSupplier.value.id] = undefined
+  }
+}
+
 function reloadFirstPage() {
   pagination.page = 1
   void loadSuppliers()
@@ -862,6 +1053,17 @@ function handlePageSizeChange(pageSize: number) {
   pagination.page_size = pageSize
   pagination.page = 1
   void loadSuppliers()
+}
+
+function handleGroupPageChange(page: number) {
+  groupPagination.page = page
+  void loadCurrentGroups()
+}
+
+function handleGroupPageSizeChange(pageSize: number) {
+  groupPagination.page_size = pageSize
+  groupPagination.page = 1
+  void loadCurrentGroups()
 }
 
 function resetFilters() {
@@ -981,6 +1183,17 @@ function openSessionDialog(supplier: Supplier) {
   void reloadCurrentSession()
 }
 
+function openGroupsDialog(supplier: Supplier) {
+  groupsSupplier.value = supplier
+  supplierGroups.value = []
+  groupsError.value = ''
+  groupPagination.page = 1
+  groupFilters.q = ''
+  groupFilters.status = ''
+  groupsDialogOpen.value = true
+  void Promise.all([reloadGroupSession(), loadCurrentGroups()])
+}
+
 async function probeCurrentSession() {
   if (!sessionSupplier.value) return
   probingSession.value = true
@@ -997,6 +1210,46 @@ async function probeCurrentSession() {
     appStore.showError(sessionLoadError.value)
   } finally {
     probingSession.value = false
+  }
+}
+
+async function loadCurrentGroups() {
+  if (!groupsSupplier.value) return
+  groupsLoading.value = true
+  groupsError.value = ''
+  try {
+    const result = await listSupplierGroups(groupsSupplier.value.id, {
+      q: groupFilters.q || undefined,
+      status: groupFilters.status || undefined,
+      page: groupPagination.page,
+      page_size: groupPagination.page_size
+    })
+    supplierGroups.value = result.items
+    groupPagination.total = result.total || 0
+    groupPagination.pages = result.pages || 0
+    groupPagination.page = result.page || groupPagination.page
+    groupPagination.page_size = result.page_size || groupPagination.page_size
+  } catch (error) {
+    groupsError.value = (error as { message?: string }).message || '加载供应商分组失败'
+  } finally {
+    groupsLoading.value = false
+  }
+}
+
+async function syncCurrentGroups() {
+  if (!groupsSupplier.value) return
+  groupsSyncing.value = true
+  groupsError.value = ''
+  try {
+    const result = await syncSupplierGroups(groupsSupplier.value.id)
+    appStore.showSuccess(`已同步 ${result.total} 个供应商分组`)
+    groupPagination.page = 1
+    await Promise.all([reloadGroupSession(), loadCurrentGroups()])
+  } catch (error) {
+    groupsError.value = (error as { message?: string }).message || '同步供应商分组失败'
+    appStore.showError(groupsError.value)
+  } finally {
+    groupsSyncing.value = false
   }
 }
 
@@ -1087,6 +1340,15 @@ watch(
   () => ({ ...filters }),
   () => {
     reloadFirstPage()
+  }
+)
+
+watch(
+  () => ({ ...groupFilters }),
+  () => {
+    if (!groupsDialogOpen.value) return
+    groupPagination.page = 1
+    void loadCurrentGroups()
   }
 )
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -85,26 +84,6 @@ type UpdateSupplierAccountInput struct {
 	HealthStatus              adminplusdomain.SupplierHealthStatus
 }
 
-type UpsertSupplierGroupInput struct {
-	SupplierID      int64
-	ExternalGroupID string
-	Name            string
-	Description     string
-	RateMultiplier  float64
-	IsPrivate       bool
-	ProviderFamily  string
-	Status          adminplusdomain.SupplierGroupStatus
-	RawPayload      map[string]any
-	LastSeenAt      time.Time
-}
-
-type SyncSupplierGroupsResult struct {
-	Items        []*adminplusdomain.SupplierGroup `json:"items"`
-	GroupCount   int                              `json:"group_count"`
-	MissingCount int                              `json:"missing_count"`
-	SyncedAt      time.Time                        `json:"synced_at"`
-}
-
 type UpdateSupplierStatusInput struct {
 	RuntimeStatus adminplusdomain.SupplierRuntimeStatus
 	HealthStatus  adminplusdomain.SupplierHealthStatus
@@ -154,9 +133,6 @@ type Repository interface {
 	UpdateAccount(ctx context.Context, account *adminplusdomain.SupplierAccount) (*adminplusdomain.SupplierAccount, error)
 	DeleteAccount(ctx context.Context, supplierID int64, accountID int64) error
 	ListLocalAccounts(ctx context.Context, query string, limit int) ([]*adminplusdomain.LocalSub2APIAccount, error)
-	UpsertGroups(ctx context.Context, groups []*adminplusdomain.SupplierGroup) ([]*adminplusdomain.SupplierGroup, error)
-	ListGroups(ctx context.Context, supplierID int64, status adminplusdomain.SupplierGroupStatus) ([]*adminplusdomain.SupplierGroup, error)
-	MarkMissingGroups(ctx context.Context, supplierID int64, seenExternalGroupIDs []string, missingAt time.Time) (int, error)
 }
 
 type Service struct {
@@ -707,49 +683,6 @@ func normalizeSupplierInput(in supplierInput) (supplierInput, error) {
 	}, nil
 }
 
-func normalizeSupplierGroupInput(supplierID int64, in UpsertSupplierGroupInput, index int, now time.Time) (*adminplusdomain.SupplierGroup, error) {
-	externalID := strings.TrimSpace(in.ExternalGroupID)
-	if externalID == "" {
-		externalID = strconv.FormatInt(int64(index+1), 10)
-	}
-	name := strings.TrimSpace(in.Name)
-	if name == "" {
-		name = "Group " + externalID
-	}
-	rateMultiplier := in.RateMultiplier
-	if rateMultiplier == 0 {
-		rateMultiplier = 1
-	}
-	if rateMultiplier < 0 {
-		return nil, badRequest("SUPPLIER_GROUP_RATE_INVALID", "supplier group rate multiplier cannot be negative")
-	}
-	status := in.Status
-	if status == "" {
-		status = adminplusdomain.SupplierGroupStatusActive
-	}
-	if !status.Valid() {
-		return nil, badRequest("SUPPLIER_GROUP_STATUS_INVALID", "invalid supplier group status")
-	}
-	lastSeenAt := in.LastSeenAt.UTC()
-	if lastSeenAt.IsZero() {
-		lastSeenAt = now
-	}
-	return &adminplusdomain.SupplierGroup{
-		SupplierID:      supplierID,
-		ExternalGroupID: trimLimit(externalID, 160),
-		Name:            trimLimit(name, 120),
-		Description:     trimLimit(in.Description, 500),
-		RateMultiplier:  rateMultiplier,
-		IsPrivate:       in.IsPrivate,
-		ProviderFamily:  trimLimit(in.ProviderFamily, 60),
-		Status:          status,
-		RawPayload:      cloneAnyMap(in.RawPayload),
-		LastSeenAt:      lastSeenAt,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}, nil
-}
-
 func (s *Service) ListLocalAccounts(ctx context.Context, query string, limit int) ([]*adminplusdomain.LocalSub2APIAccount, error) {
 	if s == nil || s.repo == nil {
 		return nil, internalError("supplier service is not configured")
@@ -758,74 +691,6 @@ func (s *Service) ListLocalAccounts(ctx context.Context, query string, limit int
 		limit = 50
 	}
 	return s.repo.ListLocalAccounts(ctx, strings.TrimSpace(query), limit)
-}
-
-func (s *Service) SyncGroups(ctx context.Context, supplierID int64, groups []UpsertSupplierGroupInput) (*SyncSupplierGroupsResult, error) {
-	if s == nil || s.repo == nil {
-		return nil, internalError("supplier service is not configured")
-	}
-	if supplierID <= 0 {
-		return nil, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
-	}
-	if _, err := s.repo.Get(ctx, supplierID); err != nil {
-		return nil, err
-	}
-	if len(groups) == 0 {
-		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_GROUPS_EMPTY", "provider adapter did not return supplier groups")
-	}
-
-	now := s.now().UTC()
-	seen := make(map[string]struct{}, len(groups))
-	normalized := make([]*adminplusdomain.SupplierGroup, 0, len(groups))
-	for i, group := range groups {
-		item, err := normalizeSupplierGroupInput(supplierID, group, i, now)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := seen[item.ExternalGroupID]; ok {
-			continue
-		}
-		seen[item.ExternalGroupID] = struct{}{}
-		normalized = append(normalized, item)
-	}
-	if len(normalized) == 0 {
-		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_GROUPS_EMPTY", "provider adapter did not return valid supplier groups")
-	}
-
-	items, err := s.repo.UpsertGroups(ctx, normalized)
-	if err != nil {
-		return nil, err
-	}
-	seenIDs := make([]string, 0, len(normalized))
-	for _, item := range normalized {
-		seenIDs = append(seenIDs, item.ExternalGroupID)
-	}
-	missing, err := s.repo.MarkMissingGroups(ctx, supplierID, seenIDs, now)
-	if err != nil {
-		return nil, err
-	}
-	return &SyncSupplierGroupsResult{
-		Items:        items,
-		GroupCount:   len(items),
-		MissingCount: missing,
-		SyncedAt:      now,
-	}, nil
-}
-
-func (s *Service) ListGroups(ctx context.Context, supplierID int64, status adminplusdomain.SupplierGroupStatus) ([]*adminplusdomain.SupplierGroup, error) {
-	if s == nil || s.repo == nil {
-		return nil, internalError("supplier service is not configured")
-	}
-	if supplierID <= 0 {
-		return nil, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
-	}
-	if status != "" && !status.Valid() {
-		return nil, badRequest("SUPPLIER_GROUP_STATUS_INVALID", "invalid supplier group status")
-	}
-	if _, err := s.repo.Get(ctx, supplierID); err != nil {
-		return nil, err
-	}
-	return s.repo.ListGroups(ctx, supplierID, status)
 }
 
 func normalizeOptionalURL(raw string, reason string) (string, error) {
@@ -936,17 +801,6 @@ func maskUsername(value string) string {
 		return v[:1] + "***"
 	}
 	return v[:2] + "***" + v[len(v)-2:]
-}
-
-func cloneAnyMap(in map[string]any) map[string]any {
-	if len(in) == 0 {
-		return map[string]any{}
-	}
-	out := make(map[string]any, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
 }
 
 func badRequest(reason string, message string) error {

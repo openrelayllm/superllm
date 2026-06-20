@@ -25,7 +25,7 @@ describe('AppSidebar Admin Plus navigation', () => {
   })
 
   it('将监控页面收敛到监控一级目录下', () => {
-    const monitorGroupMatch = componentSource.match(/label: '监控',[\s\S]*?children: \[([\s\S]*?)\n    \]/)
+    const monitorGroupMatch = componentSource.match(/label: '监控',[\s\S]*?children: \[([\s\S]*?)\n {4}\]/)
 
     expect(monitorGroupMatch).not.toBeNull()
     expect(monitorGroupMatch?.[1]).toContain("label: t('nav.ops')")
