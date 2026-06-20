@@ -121,6 +121,8 @@ tests
 CLAUDE.md
 .claude
 scripts
+!scripts/
+!scripts/*.sh
 .code-review-state
 #openspec/
 code-reviews/
