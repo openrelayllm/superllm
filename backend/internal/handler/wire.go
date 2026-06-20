@@ -54,8 +54,8 @@ func ProvideAdminSettingHandler(settingService *service.SettingService, opsServi
 }
 
 // ProvideAdminGroupHandler creates the Admin Plus read-only group handler.
-func ProvideAdminGroupHandler(adminService service.AdminService) *admin.GroupHandler {
-	return admin.NewGroupHandler(adminService)
+func ProvideAdminGroupHandler(groupService *service.GroupService) *admin.GroupHandler {
+	return admin.NewGroupHandler(groupService)
 }
 
 // ProvideHandlers creates the Handlers struct

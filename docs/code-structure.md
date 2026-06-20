@@ -271,12 +271,28 @@ current:
   backend/internal/handler/adminplus/*
   backend/internal/server/routes/adminplus.go
   /api/v1/admin-plus/*
+  backend/internal/handler/admin/dashboard*
+  backend/internal/handler/admin/group_handler.go     # 只读 /api/v1/admin/groups/all，直接依赖 GroupService
+  backend/internal/handler/admin/setting_handler.go
+  backend/internal/handler/admin/ops_*
+  backend/internal/handler/admin/system_handler.go
+  backend/internal/server/routes/admin.go             # 仅 Dashboard / Groups(all) / Settings / Ops / System
+  cmd/server runtime cleanup/startup                 # 只启动 Admin Plus 运营任务和必要只读/认证兼容任务
 
 compat:
+  backend/internal/handler/auth_handler.go            # 运行时只挂 login / login2fa / refresh / logout / me
+  backend/internal/handler/auth_profile_response.go   # /auth/me 兼容响应 DTO 映射
+  backend/internal/handler/setting_handler.go          # 公开设置，支撑登录页和前端初始化
+  backend/internal/service/group_service.go            # GroupHandler 只使用只读分组方法，避免回拉 AdminService
+  backend/internal/service/*                           # 原 Sub2API service 仅作为认证、只读分析、运行时依赖和迁移期兼容层保留
   复制自 Sub2API 的 service/repository/schema/cache，只允许为 Admin Plus 读取、认证复用、运行时依赖和后续迁移服务。
 
 dead:
-  用户端 API、支付、公开网关、OAuth 注册、非运营扩展后台页面。不得在这些入口上继续新增 Admin Plus 业务。
+  已删除公开网关 handler、用户端 handler、支付/兑换/订阅/API Key/用量/个人资料 handler。
+  已删除旧后台账号、渠道、用户、支付、兑换、订阅、公告、代理、OAuth、数据导入等 CRUD handler。
+  已删除未注册的 OAuth 注册、邮箱注册、密码找回、用户 TOTP 设置和 revoke-all-sessions 认证分支。
+  注册、找回密码、OAuth 绑定/登录、用户端 TOTP 设置、撤销所有会话等入口不得重新挂载为 Admin Plus 业务入口。
+  原 Sub2API 写运行态后台任务不得进入 Admin Plus cmd/server startup/cleanup 对象图：TokenRefreshService、AccountExpiryService、ProxyExpiryService、SubscriptionExpiryService。
 ```
 
 ## 4. 前端目标结构

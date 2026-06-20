@@ -1,6 +1,6 @@
 [Unit]
-Description=Sub2API - AI API Gateway Platform
-Documentation=https://github.com/Wei-Shaw/sub2api
+Description=Sub2API Admin Plus - operations automation extension
+Documentation=https://github.com/openrelayllm/sub2api-admin-plus
 After=network.target postgresql.service redis.service
 Wants=postgresql.service redis.service
 
@@ -8,20 +8,20 @@ Wants=postgresql.service redis.service
 Type=simple
 User=sub2api
 Group=sub2api
-WorkingDirectory=/opt/sub2api
-ExecStart=/opt/sub2api/sub2api
+WorkingDirectory=/opt/sub2api-admin-plus
+ExecStart=/opt/sub2api-admin-plus/sub2api-admin-plus
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=sub2api
+SyslogIdentifier=sub2api-admin-plus
 
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/opt/sub2api
+ReadWritePaths=/opt/sub2api-admin-plus
 
 # Environment - Server configuration
 # Modify these values to change listen address and port

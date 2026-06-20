@@ -125,11 +125,6 @@ export async function refreshToken(): Promise<RefreshTokenResponse> {
   return data
 }
 
-export async function revokeAllSessions(): Promise<{ message: string }> {
-  const { data } = await apiClient.post<{ message: string }>('/auth/revoke-all-sessions')
-  return data
-}
-
 export function isAuthenticated(): boolean {
   return getAuthToken() !== null
 }
@@ -146,7 +141,6 @@ export const authAPI = {
   getCurrentUser,
   logout,
   refreshToken,
-  revokeAllSessions,
   isAuthenticated,
   setAuthToken,
   setRefreshToken,

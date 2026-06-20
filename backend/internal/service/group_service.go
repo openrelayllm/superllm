@@ -146,6 +146,29 @@ func (s *GroupService) ListActive(ctx context.Context) ([]Group, error) {
 	return groups, nil
 }
 
+// GetAllGroups returns active groups for Admin Plus read-only filters.
+func (s *GroupService) GetAllGroups(ctx context.Context) ([]Group, error) {
+	return s.ListActive(ctx)
+}
+
+// GetAllGroupsByPlatform returns active groups for a specific platform.
+func (s *GroupService) GetAllGroupsByPlatform(ctx context.Context, platform string) ([]Group, error) {
+	groups, err := s.groupRepo.ListActiveByPlatform(ctx, platform)
+	if err != nil {
+		return nil, fmt.Errorf("list active groups by platform: %w", err)
+	}
+	return groups, nil
+}
+
+// GetAllGroupsIncludingInactive returns all groups needed by Admin Plus filters.
+func (s *GroupService) GetAllGroupsIncludingInactive(ctx context.Context) ([]Group, error) {
+	groups, _, err := s.groupRepo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 1000}, "", "", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("list groups including inactive: %w", err)
+	}
+	return groups, nil
+}
+
 // Update 更新分组
 func (s *GroupService) Update(ctx context.Context, id int64, req UpdateGroupRequest) (*Group, error) {
 	group, err := s.groupRepo.GetByID(ctx, id)

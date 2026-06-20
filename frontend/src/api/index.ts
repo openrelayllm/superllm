@@ -9,8 +9,6 @@ export { apiClient } from './client'
 // Auth API
 export { authAPI, isTotp2FARequired, type LoginResponse } from './auth'
 
-export { totpAPI } from './totp'
-
 // Admin APIs
 export { adminAPI } from './admin'
 
