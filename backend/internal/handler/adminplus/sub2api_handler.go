@@ -46,6 +46,21 @@ func (h *Sub2APIHandler) ListLocalUsageSummaries(c *gin.Context) {
 	response.Success(c, paginatedData(paged, total, page))
 }
 
+func (h *Sub2APIHandler) ListLocalAccountUsageSummaries(c *gin.Context) {
+	page := parsePagination(c)
+	filter, ok := parseUsageFilter(c)
+	if !ok {
+		return
+	}
+	filter.Limit = fetchLimitForPagination(page)
+	items, err := h.service.ListLocalAccountUsageSummaries(c.Request.Context(), filter)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
+}
+
 func (h *Sub2APIHandler) ListAccountRuntime(c *gin.Context) {
 	page := parsePagination(c)
 	items, err := h.service.ListAccountRuntime(c.Request.Context(), sub2apiapp.RuntimeFilter{

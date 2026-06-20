@@ -98,6 +98,11 @@ type SupplierAccount struct {
 	LocalAccountType          string                `json:"local_account_type"`
 	SupplierAccountIdentifier string                `json:"supplier_account_identifier,omitempty"`
 	SupplierAccountLabel      string                `json:"supplier_account_label,omitempty"`
+	SupplierGroupID           int64                 `json:"supplier_group_id,omitempty"`
+	SupplierExternalGroupID   string                `json:"supplier_external_group_id,omitempty"`
+	SupplierGroupName         string                `json:"supplier_group_name,omitempty"`
+	SupplierGroupProvider     string                `json:"supplier_group_provider,omitempty"`
+	SupplierGroupRate         float64               `json:"supplier_group_rate,omitempty"`
 	OrganizationID            string                `json:"organization_id,omitempty"`
 	ProjectID                 string                `json:"project_id,omitempty"`
 	RateProfile               string                `json:"rate_profile,omitempty"`

@@ -346,15 +346,19 @@ func (r *SQLRepository) ListAccounts(ctx context.Context, supplierID int64) ([]*
 		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, supplier_id, supplier_key_id, local_sub2api_account_id,
-			local_account_name, local_account_platform, local_account_type,
-			supplier_account_identifier, supplier_account_label, organization_id, project_id, rate_profile,
-			configured_concurrency, observed_max_concurrency,
-			balance_threshold_cents, balance_cents, balance_currency, has_usable_balance,
-			runtime_status, health_status, created_at, updated_at
-		FROM admin_plus_supplier_accounts
-		WHERE supplier_id = $1
-		ORDER BY id ASC
+		SELECT asa.id, asa.supplier_id, asa.supplier_key_id, asa.local_sub2api_account_id,
+			asa.local_account_name, asa.local_account_platform, asa.local_account_type,
+			asa.supplier_account_identifier, asa.supplier_account_label, asa.organization_id, asa.project_id, asa.rate_profile,
+			asa.configured_concurrency, asa.observed_max_concurrency,
+			asa.balance_threshold_cents, asa.balance_cents, asa.balance_currency, asa.has_usable_balance,
+			asa.runtime_status, asa.health_status, asa.created_at, asa.updated_at,
+			COALESCE(sg.id, 0), COALESCE(sg.external_group_id, ''), COALESCE(sg.name, ''),
+			COALESCE(sg.provider_family, ''), COALESCE(sg.effective_rate_multiplier, 0)
+		FROM admin_plus_supplier_accounts asa
+		LEFT JOIN admin_plus_supplier_keys sk ON sk.id = asa.supplier_key_id
+		LEFT JOIN admin_plus_supplier_groups sg ON sg.id = sk.supplier_group_id
+		WHERE asa.supplier_id = $1
+		ORDER BY asa.id ASC
 	`, supplierID)
 	if err != nil {
 		return nil, err
@@ -365,7 +369,7 @@ func (r *SQLRepository) ListAccounts(ctx context.Context, supplierID int64) ([]*
 
 	items := make([]*adminplusdomain.SupplierAccount, 0)
 	for rows.Next() {
-		item, err := scanSupplierAccount(rows)
+		item, err := scanSupplierAccountWithGroup(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -666,6 +670,49 @@ func scanSupplierAccount(scanner supplierScanner) (*adminplusdomain.SupplierAcco
 		&healthStatus,
 		&account.CreatedAt,
 		&account.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, err
+	}
+	if err != nil {
+		return nil, err
+	}
+	account.RuntimeStatus = adminplusdomain.SupplierRuntimeStatus(runtimeStatus)
+	account.HealthStatus = adminplusdomain.SupplierHealthStatus(healthStatus)
+	return &account, nil
+}
+
+func scanSupplierAccountWithGroup(scanner supplierScanner) (*adminplusdomain.SupplierAccount, error) {
+	var account adminplusdomain.SupplierAccount
+	var runtimeStatus, healthStatus string
+	err := scanner.Scan(
+		&account.ID,
+		&account.SupplierID,
+		&account.SupplierKeyID,
+		&account.LocalSub2APIAccountID,
+		&account.LocalAccountName,
+		&account.LocalAccountPlatform,
+		&account.LocalAccountType,
+		&account.SupplierAccountIdentifier,
+		&account.SupplierAccountLabel,
+		&account.OrganizationID,
+		&account.ProjectID,
+		&account.RateProfile,
+		&account.ConfiguredConcurrency,
+		&account.ObservedMaxConcurrency,
+		&account.BalanceThresholdCents,
+		&account.BalanceCents,
+		&account.BalanceCurrency,
+		&account.HasUsableBalance,
+		&runtimeStatus,
+		&healthStatus,
+		&account.CreatedAt,
+		&account.UpdatedAt,
+		&account.SupplierGroupID,
+		&account.SupplierExternalGroupID,
+		&account.SupplierGroupName,
+		&account.SupplierGroupProvider,
+		&account.SupplierGroupRate,
 	)
 	if err == sql.ErrNoRows {
 		return nil, err

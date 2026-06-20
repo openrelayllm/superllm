@@ -42,3 +42,7 @@ ALTER TABLE admin_plus_supplier_accounts
 CREATE INDEX IF NOT EXISTS idx_admin_plus_supplier_accounts_supplier_key
     ON admin_plus_supplier_accounts(supplier_key_id)
     WHERE supplier_key_id > 0;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_plus_supplier_accounts_one_supplier_key
+    ON admin_plus_supplier_accounts(supplier_id, supplier_key_id)
+    WHERE supplier_key_id > 0;

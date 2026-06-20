@@ -34,6 +34,20 @@ type ProvisionKeyInput struct {
 	BalanceCurrency            string
 }
 
+type RepairBindingInput struct {
+	SupplierID                int64
+	KeyID                     int64
+	LocalSub2APIAccountID     int64
+	RuntimeStatus             adminplusdomain.SupplierRuntimeStatus
+	HealthStatus              adminplusdomain.SupplierHealthStatus
+	ConfiguredConcurrency     int
+	BalanceThresholdCents     int64
+	BalanceCents              int64
+	BalanceCurrency           string
+	SupplierAccountIdentifier string
+	SupplierAccountLabel      string
+}
+
 type ProvisionKeyResult struct {
 	Key     *adminplusdomain.SupplierKey     `json:"key"`
 	Binding *adminplusdomain.SupplierAccount `json:"binding"`
@@ -49,6 +63,7 @@ type ListFilter struct {
 type Repository interface {
 	GetSupplier(ctx context.Context, supplierID int64) (*adminplusdomain.Supplier, error)
 	GetGroup(ctx context.Context, supplierID int64, groupID int64) (*adminplusdomain.SupplierGroup, error)
+	GetKey(ctx context.Context, supplierID int64, keyID int64) (*adminplusdomain.SupplierKey, error)
 	FindActiveByGroup(ctx context.Context, supplierID int64, groupID int64) (*adminplusdomain.SupplierKey, error)
 	CreateKey(ctx context.Context, key *adminplusdomain.SupplierKey) (*adminplusdomain.SupplierKey, error)
 	UpdateKeyAfterLocalBind(ctx context.Context, keyID int64, localAccount *service.Account, status adminplusdomain.SupplierKeyStatus, errorCode string, errorMessage string) (*adminplusdomain.SupplierKey, error)
@@ -60,19 +75,20 @@ type SessionReader interface {
 	DecryptedProbeInput(ctx context.Context, supplierID int64) (ports.SessionProbeInput, error)
 }
 
-type LocalAccountCreator interface {
+type LocalAccountService interface {
 	CreateAccount(ctx context.Context, input *service.CreateAccountInput) (*service.Account, error)
+	GetAccount(ctx context.Context, id int64) (*service.Account, error)
 }
 
 type Service struct {
 	repo          Repository
 	session       SessionReader
 	keyAdapter    ports.SessionKeyAdapter
-	localAccounts LocalAccountCreator
+	localAccounts LocalAccountService
 	now           func() time.Time
 }
 
-func NewService(repo Repository, session SessionReader, keyAdapter ports.SessionKeyAdapter, localAccounts LocalAccountCreator) *Service {
+func NewService(repo Repository, session SessionReader, keyAdapter ports.SessionKeyAdapter, localAccounts LocalAccountService) *Service {
 	return &Service{
 		repo:          repo,
 		session:       session,
@@ -239,6 +255,70 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]*adminplusdoma
 	return s.repo.List(ctx, filter)
 }
 
+func (s *Service) RepairBinding(ctx context.Context, in RepairBindingInput) (*ProvisionKeyResult, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("supplier key service is not configured")
+	}
+	if s.localAccounts == nil {
+		return nil, internalError("local Sub2API account service is not configured")
+	}
+	normalized, err := s.normalizeRepairBindingInput(in)
+	if err != nil {
+		return nil, err
+	}
+	key, err := s.repo.GetKey(ctx, normalized.SupplierID, normalized.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	if key.Status != adminplusdomain.SupplierKeyStatusFailed {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_REPAIR_NOT_ALLOWED", "only failed supplier key can be repaired")
+	}
+	if !repairableKeyError(key.ErrorCode) {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_REPAIR_NOT_ALLOWED", "supplier key failure is not a local binding failure")
+	}
+	existing, err := s.repo.FindActiveByGroup(ctx, normalized.SupplierID, key.SupplierGroupID)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil && existing.ID != key.ID {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_GROUP_KEY_ALREADY_BOUND", "supplier group already has a bound or provisioning key")
+	}
+	localAccount, err := s.localAccounts.GetAccount(ctx, normalized.LocalSub2APIAccountID)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	binding := &adminplusdomain.SupplierAccount{
+		SupplierID:                normalized.SupplierID,
+		SupplierKeyID:             key.ID,
+		LocalSub2APIAccountID:     localAccount.ID,
+		LocalAccountName:          localAccount.Name,
+		LocalAccountPlatform:      localAccount.Platform,
+		LocalAccountType:          localAccount.Type,
+		SupplierAccountIdentifier: firstNonEmpty(normalized.SupplierAccountIdentifier, key.ExternalKeyID),
+		SupplierAccountLabel:      firstNonEmpty(normalized.SupplierAccountLabel, key.Name),
+		RateProfile:               key.ProviderFamily,
+		ConfiguredConcurrency:     normalized.ConfiguredConcurrency,
+		BalanceThresholdCents:     normalized.BalanceThresholdCents,
+		BalanceCents:              normalized.BalanceCents,
+		BalanceCurrency:           normalized.BalanceCurrency,
+		HasUsableBalance:          normalized.BalanceCents > 0,
+		RuntimeStatus:             normalized.RuntimeStatus,
+		HealthStatus:              normalized.HealthStatus,
+		CreatedAt:                 now,
+		UpdatedAt:                 now,
+	}
+	savedBinding, err := s.repo.CreateBinding(ctx, binding)
+	if err != nil {
+		return nil, err
+	}
+	savedKey, err := s.repo.UpdateKeyAfterLocalBind(ctx, key.ID, localAccount, adminplusdomain.SupplierKeyStatusBound, "", "")
+	if err != nil {
+		return nil, err
+	}
+	return &ProvisionKeyResult{Key: savedKey, Binding: savedBinding}, nil
+}
+
 func (s *Service) normalizeProvisionInput(in ProvisionKeyInput) (ProvisionKeyInput, error) {
 	if in.SupplierID <= 0 {
 		return ProvisionKeyInput{}, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
@@ -307,6 +387,56 @@ func (s *Service) normalizeProvisionInput(in ProvisionKeyInput) (ProvisionKeyInp
 	in.HealthStatus = healthStatus
 	in.BalanceCurrency = normalizeCurrency(in.BalanceCurrency)
 	return in, nil
+}
+
+func (s *Service) normalizeRepairBindingInput(in RepairBindingInput) (RepairBindingInput, error) {
+	if in.SupplierID <= 0 {
+		return RepairBindingInput{}, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	if in.KeyID <= 0 {
+		return RepairBindingInput{}, badRequest("SUPPLIER_KEY_ID_INVALID", "invalid supplier key id")
+	}
+	if in.LocalSub2APIAccountID <= 0 {
+		return RepairBindingInput{}, badRequest("LOCAL_ACCOUNT_ID_INVALID", "invalid local Sub2API account id")
+	}
+	if in.ConfiguredConcurrency < 0 {
+		return RepairBindingInput{}, badRequest("SUPPLIER_ACCOUNT_CONCURRENCY_INVALID", "configured concurrency cannot be negative")
+	}
+	runtimeStatus := in.RuntimeStatus
+	if runtimeStatus == "" {
+		runtimeStatus = adminplusdomain.SupplierRuntimeStatusMonitorOnly
+	}
+	if !runtimeStatus.Valid() {
+		return RepairBindingInput{}, badRequest("SUPPLIER_ACCOUNT_RUNTIME_STATUS_INVALID", "invalid supplier account runtime status")
+	}
+	healthStatus := in.HealthStatus
+	if healthStatus == "" {
+		healthStatus = adminplusdomain.SupplierHealthStatusNormal
+	}
+	if !healthStatus.Valid() {
+		return RepairBindingInput{}, badRequest("SUPPLIER_ACCOUNT_HEALTH_STATUS_INVALID", "invalid supplier account health status")
+	}
+	if adminplusdomain.IsSwitchableSupplierStatus(runtimeStatus) && in.BalanceCents <= 0 {
+		return RepairBindingInput{}, badRequest("SUPPLIER_ACCOUNT_BALANCE_REQUIRED", "switchable supplier account must have positive balance")
+	}
+	if in.BalanceThresholdCents < 0 || in.BalanceCents < 0 {
+		return RepairBindingInput{}, badRequest("SUPPLIER_ACCOUNT_BALANCE_INVALID", "balance values cannot be negative")
+	}
+	in.RuntimeStatus = runtimeStatus
+	in.HealthStatus = healthStatus
+	in.BalanceCurrency = normalizeCurrency(in.BalanceCurrency)
+	in.SupplierAccountIdentifier = trimLimit(in.SupplierAccountIdentifier, 160)
+	in.SupplierAccountLabel = trimLimit(in.SupplierAccountLabel, 160)
+	return in, nil
+}
+
+func repairableKeyError(errorCode string) bool {
+	switch strings.TrimSpace(errorCode) {
+	case "LOCAL_ACCOUNT_CREATE_FAILED", "SUPPLIER_ACCOUNT_BIND_FAILED":
+		return true
+	default:
+		return false
+	}
 }
 
 func validLocalPlatform(platform string) bool {

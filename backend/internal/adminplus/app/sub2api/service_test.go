@@ -27,6 +27,11 @@ func (r *stubUsageRepository) ListLocalUsageSummaries(_ context.Context, filter 
 	return []*adminplusdomain.LocalUsageSummary{}, nil
 }
 
+func (r *stubUsageRepository) ListLocalAccountUsageSummaries(_ context.Context, filter UsageFilter) ([]*adminplusdomain.LocalAccountUsageSummary, error) {
+	r.filter = filter
+	return []*adminplusdomain.LocalAccountUsageSummary{}, nil
+}
+
 func (r *stubRuntimeRepository) ListAccountRuntime(_ context.Context, filter RuntimeFilter) ([]*adminplusdomain.LocalAccountRuntime, error) {
 	r.filter = filter
 	return []*adminplusdomain.LocalAccountRuntime{}, nil

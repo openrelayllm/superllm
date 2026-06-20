@@ -68,6 +68,16 @@ func (r *MemoryRepository) GetGroup(_ context.Context, supplierID int64, groupID
 	return cloneGroup(group), nil
 }
 
+func (r *MemoryRepository) GetKey(_ context.Context, supplierID int64, keyID int64) (*adminplusdomain.SupplierKey, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key, ok := r.keys[keyID]
+	if !ok || key.SupplierID != supplierID {
+		return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_KEY_NOT_FOUND", "supplier key not found")
+	}
+	return cloneKey(key), nil
+}
+
 func (r *MemoryRepository) FindActiveByGroup(_ context.Context, supplierID int64, groupID int64) (*adminplusdomain.SupplierKey, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -135,6 +145,9 @@ func (r *MemoryRepository) CreateBinding(_ context.Context, account *adminplusdo
 	for _, existing := range r.bindings {
 		if existing.SupplierID == account.SupplierID && existing.LocalSub2APIAccountID == account.LocalSub2APIAccountID {
 			return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_ACCOUNT_ALREADY_BOUND", "local Sub2API account is already bound to this supplier")
+		}
+		if account.SupplierKeyID > 0 && existing.SupplierID == account.SupplierID && existing.SupplierKeyID == account.SupplierKeyID {
+			return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_ALREADY_BOUND", "supplier key is already bound")
 		}
 	}
 	cp := *account

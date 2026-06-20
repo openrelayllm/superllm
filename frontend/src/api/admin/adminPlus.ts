@@ -177,6 +177,11 @@ export interface SupplierAccount {
   local_account_type: string
   supplier_account_identifier?: string
   supplier_account_label?: string
+  supplier_group_id?: number
+  supplier_external_group_id?: string
+  supplier_group_name?: string
+  supplier_group_provider?: string
+  supplier_group_rate?: number
   organization_id?: string
   project_id?: string
   rate_profile?: string
@@ -237,6 +242,18 @@ export interface ProvisionSupplierKeyPayload {
 export interface ProvisionSupplierKeyResponse {
   key: SupplierKey
   binding: SupplierAccount
+}
+
+export interface RepairSupplierKeyBindingPayload {
+  local_sub2api_account_id: number
+  runtime_status?: SupplierRuntimeStatus
+  health_status?: SupplierHealthStatus
+  configured_concurrency?: number
+  balance_threshold_cents?: number
+  balance_cents?: number
+  balance_currency?: string
+  supplier_account_identifier?: string
+  supplier_account_label?: string
 }
 
 export interface SupplierGroup {
@@ -481,6 +498,25 @@ export interface LocalUsageSummary {
   input_tokens: number
   output_tokens: number
   revenue_cents: number
+  account_cost_cents: number
+  original_cost_cents: number
+  avg_first_token_ms: number
+  avg_total_latency_ms: number
+  window_start: string
+  window_end: string
+  last_request_created_at: string
+}
+
+export interface LocalAccountUsageSummary {
+  account_id: number
+  account_name: string
+  account_platform: string
+  request_count: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  revenue_cents: number
+  account_cost_cents: number
   original_cost_cents: number
   avg_first_token_ms: number
   avg_total_latency_ms: number
@@ -721,8 +757,24 @@ export async function listSupplierKeys(supplierId: number, params?: { status?: S
 }
 
 export async function provisionSupplierKey(supplierId: number, payload: ProvisionSupplierKeyPayload): Promise<ProvisionSupplierKeyResponse> {
-  const { data } = await apiClient.post<ProvisionSupplierKeyResponse>(`/admin-plus/suppliers/${supplierId}/keys/provision`, payload)
+  const { data } = await apiClient.post<ProvisionSupplierKeyResponse>(`/admin-plus/suppliers/${supplierId}/keys/provision`, payload, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-key-provision') }
+  })
   return data
+}
+
+export async function repairSupplierKeyBinding(supplierId: number, keyId: number, payload: RepairSupplierKeyBindingPayload): Promise<ProvisionSupplierKeyResponse> {
+  const { data } = await apiClient.post<ProvisionSupplierKeyResponse>(`/admin-plus/suppliers/${supplierId}/keys/${keyId}/repair-binding`, payload, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-key-repair') }
+  })
+  return data
+}
+
+function createAdminPlusIdempotencyKey(prefix: string): string {
+  const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return `${prefix}-${random}`
 }
 
 export async function listLocalSub2APIAccounts(params?: { q?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalSub2APIAccount>> {
@@ -737,6 +789,11 @@ export async function listLocalUsageLines(params?: { account_id?: number; model?
 
 export async function listLocalUsageSummary(params?: { account_id?: number; model?: string; from?: string; to?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalUsageSummary>> {
   const { data } = await apiClient.get<AdminPlusListResponse<LocalUsageSummary>>('/admin-plus/sub2api/usage-summary', { params })
+  return data
+}
+
+export async function listLocalAccountUsageSummary(params?: { account_id?: number; model?: string; from?: string; to?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalAccountUsageSummary>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<LocalAccountUsageSummary>>('/admin-plus/sub2api/account-usage-summary', { params })
   return data
 }
 
@@ -1040,6 +1097,7 @@ export const adminPlusAPI = {
   syncSupplierGroups,
   listSupplierKeys,
   provisionSupplierKey,
+  repairSupplierKeyBinding,
   listLocalSub2APIAccounts,
   listLocalUsageLines,
   listLocalUsageSummary,

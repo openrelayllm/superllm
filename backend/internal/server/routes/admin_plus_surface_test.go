@@ -124,12 +124,14 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"POST /api/v1/admin-plus/suppliers/:id/groups/sync",
 		"GET /api/v1/admin-plus/suppliers/:id/keys",
 		"POST /api/v1/admin-plus/suppliers/:id/keys/provision",
+		"POST /api/v1/admin-plus/suppliers/:id/keys/:keyID/repair-binding",
 		"POST /api/v1/admin-plus/suppliers/:id/rates/sync",
 		"GET /api/v1/admin-plus/suppliers/:id/session",
 		"POST /api/v1/admin-plus/suppliers/:id/session/probe",
 		"POST /api/v1/admin-plus/suppliers/:id/browser-sessions",
 		"GET /api/v1/admin-plus/sub2api/accounts",
 		"GET /api/v1/admin-plus/sub2api/account-runtime",
+		"GET /api/v1/admin-plus/sub2api/account-usage-summary",
 		"GET /api/v1/admin-plus/sub2api/usage-lines",
 		"GET /api/v1/admin-plus/sub2api/usage-summary",
 		"POST /api/v1/admin-plus/rates/snapshots",
@@ -280,6 +282,15 @@ func (r *routeSurfaceLocalAccountCreator) CreateAccount(_ context.Context, input
 	}, nil
 }
 
+func (r *routeSurfaceLocalAccountCreator) GetAccount(_ context.Context, id int64) (*service.Account, error) {
+	return &service.Account{
+		ID:       id,
+		Name:     "route-surface-local",
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+	}, nil
+}
+
 func newRouteSurfaceRateRepository() *routeSurfaceRateRepository {
 	return &routeSurfaceRateRepository{}
 }
@@ -319,6 +330,10 @@ func (r *routeSurfaceSub2APIRepository) ListLocalUsageLines(_ context.Context, _
 }
 
 func (r *routeSurfaceSub2APIRepository) ListLocalUsageSummaries(_ context.Context, _ sub2apiapp.UsageFilter) ([]*adminplusdomain.LocalUsageSummary, error) {
+	return nil, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) ListLocalAccountUsageSummaries(_ context.Context, _ sub2apiapp.UsageFilter) ([]*adminplusdomain.LocalAccountUsageSummary, error) {
 	return nil, nil
 }
 

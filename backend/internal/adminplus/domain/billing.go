@@ -52,6 +52,25 @@ type LocalUsageSummary struct {
 	InputTokens          int64     `json:"input_tokens"`
 	OutputTokens         int64     `json:"output_tokens"`
 	RevenueCents         int64     `json:"revenue_cents"`
+	AccountCostCents     int64     `json:"account_cost_cents"`
+	OriginalCostCents    int64     `json:"original_cost_cents"`
+	AvgFirstTokenMs      int64     `json:"avg_first_token_ms"`
+	AvgTotalLatencyMs    int64     `json:"avg_total_latency_ms"`
+	WindowStart          time.Time `json:"window_start"`
+	WindowEnd            time.Time `json:"window_end"`
+	LastRequestCreatedAt time.Time `json:"last_request_created_at"`
+}
+
+type LocalAccountUsageSummary struct {
+	AccountID            int64     `json:"account_id"`
+	AccountName          string    `json:"account_name"`
+	AccountPlatform      string    `json:"account_platform"`
+	RequestCount         int64     `json:"request_count"`
+	InputTokens          int64     `json:"input_tokens"`
+	OutputTokens         int64     `json:"output_tokens"`
+	TotalTokens          int64     `json:"total_tokens"`
+	RevenueCents         int64     `json:"revenue_cents"`
+	AccountCostCents     int64     `json:"account_cost_cents"`
 	OriginalCostCents    int64     `json:"original_cost_cents"`
 	AvgFirstTokenMs      int64     `json:"avg_first_token_ms"`
 	AvgTotalLatencyMs    int64     `json:"avg_total_latency_ms"`

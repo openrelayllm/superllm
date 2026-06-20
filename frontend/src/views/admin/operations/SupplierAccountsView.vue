@@ -17,7 +17,7 @@
               <span class="input-label">搜索</span>
               <div class="relative">
                 <Icon name="search" size="sm" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input v-model.trim="filters.q" class="input pl-9" placeholder="本地账号、供应商侧标识、标签、费率档案" />
+                <input v-model.trim="filters.q" class="input pl-9" placeholder="本地账号、供应商侧标识、分组、渠道、费率" />
               </div>
             </label>
             <label class="block">
@@ -104,14 +104,17 @@
             </div>
           </template>
 
-          <template #cell-balance="{ row }">
-            <div class="min-w-[150px] text-right">
-              <div class="text-base font-semibold" :class="balanceAmountClass(row)">
-                {{ formatMoney(row.balance_cents, row.balance_currency) }}
+          <template #cell-usage="{ row }">
+            <div class="min-w-[190px] text-right">
+              <div class="text-base font-semibold text-gray-900 dark:text-gray-100">
+                {{ formatMoney(accountUsage(row).last30d.account_cost_cents, 'USD') }}
               </div>
-              <div class="text-xs text-gray-500 dark:text-dark-400">阈值 {{ formatMoney(row.balance_threshold_cents, row.balance_currency) }}</div>
-              <span v-if="row.has_usable_balance" class="badge badge-success mt-1">有额度</span>
-              <span v-else class="badge badge-gray mt-1">无额度</span>
+              <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                近30天 {{ formatInteger(accountUsage(row).last30d.total_tokens) }} tokens
+              </div>
+              <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                今日 {{ formatMoney(accountUsage(row).today.account_cost_cents, 'USD') }} / {{ formatInteger(accountUsage(row).today.total_tokens) }}
+              </div>
             </div>
           </template>
 
@@ -123,11 +126,19 @@
           </template>
 
           <template #cell-rate_profile="{ row }">
-            <div class="min-w-[170px]">
-              <div class="text-base font-semibold text-primary-700 dark:text-primary-300">
-                {{ rateProfileLabel(row.rate_profile) }}
+            <div class="min-w-[240px]">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex items-center rounded-md px-2.5 py-1 text-xs font-semibold" :class="providerPillClass(row)">
+                  {{ groupName(row) }}
+                </span>
+                <span class="inline-flex items-center rounded-md bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700 dark:bg-dark-700 dark:text-dark-200">
+                  {{ formatMultiplier(groupRate(row)) }}
+                </span>
               </div>
-              <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">成本核算优先字段</div>
+              <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-dark-400">
+                <span>{{ providerLabel(groupProvider(row)) }}</span>
+                <span v-if="row.supplier_external_group_id" class="font-mono">#{{ row.supplier_external_group_id }}</span>
+              </div>
             </div>
           </template>
 
@@ -172,7 +183,9 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useAppStore } from '@/stores/app'
 import {
   listSupplierAccounts,
+  listLocalAccountUsageSummary,
   listSuppliers,
+  type LocalAccountUsageSummary,
   type Supplier,
   type SupplierAccount,
   type SupplierHealthStatus,
@@ -187,7 +200,22 @@ const loading = ref(false)
 const loadingBindings = ref(false)
 const suppliers = ref<Supplier[]>([])
 const bindings = ref<SupplierAccount[]>([])
+const usageByAccountID = ref<Record<number, AccountUsageWindow>>({})
 const selectedSupplierID = ref(0)
+
+interface UsageSummary {
+  request_count: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  revenue_cents: number
+  account_cost_cents: number
+}
+
+interface AccountUsageWindow {
+  today: UsageSummary
+  last30d: UsageSummary
+}
 
 const filters = reactive({
   q: '',
@@ -204,8 +232,8 @@ const pagination = reactive({
 
 const columns: Column[] = [
   { key: 'supplier', label: '供应商父级' },
-  { key: 'rate_profile', label: '费率', class: 'font-semibold' },
-  { key: 'balance', label: '余额', class: 'text-right' },
+  { key: 'rate_profile', label: '分组 / 费率', class: 'font-semibold' },
+  { key: 'usage', label: '用量 / 金额', class: 'text-right' },
   { key: 'status', label: '状态' },
   { key: 'local_account', label: '本地 Sub2API 账号', sortable: true },
   { key: 'supplier_account', label: '供应商侧账号/Key' },
@@ -225,6 +253,9 @@ const filteredBindings = computed(() => {
         item.local_account_type,
         item.supplier_account_identifier || '',
         item.supplier_account_label || '',
+        item.supplier_group_name || '',
+        item.supplier_group_provider || '',
+        item.supplier_external_group_id || '',
         item.organization_id || '',
         item.project_id || '',
         item.rate_profile || ''
@@ -246,6 +277,15 @@ function formatMoney(cents: number, currency: string): string {
     currency: currency || 'CNY',
     minimumFractionDigits: 2
   }).format((cents || 0) / 100)
+}
+
+function formatInteger(value: number): string {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value || 0)
+}
+
+function formatMultiplier(value?: number | null): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '-'
+  return `${value.toFixed(4)}x`
 }
 
 function formatDateTime(value?: string | null): string {
@@ -297,30 +337,76 @@ function healthClass(status: SupplierHealthStatus): string {
   return 'badge-danger'
 }
 
-function rateProfileLabel(value?: string): string {
-  return value?.trim() || 'default'
+function emptyUsage(): UsageSummary {
+  return {
+    request_count: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    total_tokens: 0,
+    revenue_cents: 0,
+    account_cost_cents: 0
+  }
 }
 
-function balanceAmountClass(row: SupplierAccount): string {
-  if (row.has_usable_balance) return 'text-emerald-700 dark:text-emerald-300'
-  if ((row.balance_cents || 0) <= 0) return 'text-red-600 dark:text-red-300'
-  return 'text-gray-900 dark:text-gray-100'
+function accountUsage(row: SupplierAccount): AccountUsageWindow {
+  return usageByAccountID.value[row.local_sub2api_account_id] || {
+    today: emptyUsage(),
+    last30d: emptyUsage()
+  }
+}
+
+function groupName(row: SupplierAccount): string {
+  return row.supplier_group_name?.trim() || row.rate_profile?.trim() || '未同步分组'
+}
+
+function groupProvider(row: SupplierAccount): string {
+  return row.supplier_group_provider?.trim() || row.rate_profile?.trim() || 'mixed'
+}
+
+function groupRate(row: SupplierAccount): number {
+  if (typeof row.supplier_group_rate === 'number' && row.supplier_group_rate > 0) return row.supplier_group_rate
+  return 1
+}
+
+function providerLabel(value?: string): string {
+  const provider = (value || 'mixed').toLowerCase()
+  if (provider.includes('anthropic') || provider.includes('claude')) return 'Anthropic / Claude'
+  if (provider.includes('gemini') || provider.includes('google')) return 'Gemini'
+  if (provider.includes('openai') || provider.includes('gpt')) return 'OpenAI'
+  if (provider.includes('image')) return 'Image'
+  return provider === 'mixed' ? '混合渠道' : value || '混合渠道'
+}
+
+function providerPillClass(row: SupplierAccount): string {
+  const provider = groupProvider(row).toLowerCase()
+  if (provider.includes('anthropic') || provider.includes('claude')) {
+    return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+  }
+  if (provider.includes('gemini') || provider.includes('google')) {
+    return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+  }
+  if (provider.includes('openai') || provider.includes('gpt')) {
+    return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+  }
+  if (provider.includes('image')) {
+    return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
+  }
+  return 'bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-dark-200'
 }
 
 function switchStateLabel(row: SupplierAccount): string {
-  if (row.runtime_status === 'active' && row.health_status === 'normal' && row.has_usable_balance) return '当前承载流量'
-  if (row.runtime_status === 'candidate' && row.health_status === 'normal' && row.has_usable_balance) return '可进入候选'
+  if (row.runtime_status === 'active' && row.health_status === 'normal') return '当前承载流量'
+  if (row.runtime_status === 'candidate' && row.health_status === 'normal') return '可进入候选'
   if (row.runtime_status === 'monitor_only') return '仅监控，不切换'
-  if (!row.has_usable_balance) return '余额不足，不切换'
   if (row.health_status !== 'normal') return '健康异常，不切换'
   return '不可切换'
 }
 
 function switchStateClass(row: SupplierAccount): string {
-  if ((row.runtime_status === 'active' || row.runtime_status === 'candidate') && row.health_status === 'normal' && row.has_usable_balance) {
+  if ((row.runtime_status === 'active' || row.runtime_status === 'candidate') && row.health_status === 'normal') {
     return 'text-emerald-700 dark:text-emerald-300'
   }
-  if (!row.has_usable_balance || row.health_status !== 'normal') {
+  if (row.health_status !== 'normal') {
     return 'text-red-600 dark:text-red-300'
   }
   return 'text-gray-500 dark:text-dark-400'
@@ -347,6 +433,7 @@ async function loadBindings() {
     if (selectedSupplierID.value) {
       const result = await listSupplierAccounts(selectedSupplierID.value, { page: 1, page_size: 1000 })
       bindings.value = result.items
+      await loadUsageSummaries()
       syncBindingPagination()
       return
     }
@@ -356,11 +443,61 @@ async function loadBindings() {
       all.push(...result.items)
     }
     bindings.value = all
+    await loadUsageSummaries()
     syncBindingPagination()
   } catch (error) {
     appStore.showError((error as { message?: string }).message || '加载账号/Key 绑定失败')
   } finally {
     loadingBindings.value = false
+  }
+}
+
+async function loadUsageSummaries() {
+  const now = new Date()
+  const todayStart = new Date(now)
+  todayStart.setHours(0, 0, 0, 0)
+  const last30dStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+  const [todayResult, last30dResult] = await Promise.all([
+    listLocalAccountUsageSummary({
+      from: todayStart.toISOString(),
+      to: now.toISOString(),
+      page: 1,
+      page_size: 1000
+    }),
+    listLocalAccountUsageSummary({
+      from: last30dStart.toISOString(),
+      to: now.toISOString(),
+      page: 1,
+      page_size: 1000
+    })
+  ])
+
+  const next: Record<number, AccountUsageWindow> = {}
+  for (const row of bindings.value) {
+    next[row.local_sub2api_account_id] = {
+      today: emptyUsage(),
+      last30d: emptyUsage()
+    }
+  }
+  for (const item of todayResult.items) {
+    if (!next[item.account_id]) next[item.account_id] = { today: emptyUsage(), last30d: emptyUsage() }
+    next[item.account_id].today = normalizeUsageSummary(item)
+  }
+  for (const item of last30dResult.items) {
+    if (!next[item.account_id]) next[item.account_id] = { today: emptyUsage(), last30d: emptyUsage() }
+    next[item.account_id].last30d = normalizeUsageSummary(item)
+  }
+  usageByAccountID.value = next
+}
+
+function normalizeUsageSummary(item: LocalAccountUsageSummary): UsageSummary {
+  return {
+    request_count: item.request_count || 0,
+    input_tokens: item.input_tokens || 0,
+    output_tokens: item.output_tokens || 0,
+    total_tokens: item.total_tokens || item.input_tokens + item.output_tokens,
+    revenue_cents: item.revenue_cents || 0,
+    account_cost_cents: item.account_cost_cents || 0
   }
 }
 

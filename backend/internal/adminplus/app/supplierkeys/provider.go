@@ -5,13 +5,13 @@ import (
 	"github.com/google/wire"
 )
 
-func UseLocalAccountCreator(admin service.AdminService) LocalAccountCreator {
+func UseLocalAccountService(admin service.AdminService) LocalAccountService {
 	return admin
 }
 
 var ProviderSet = wire.NewSet(
 	NewSQLRepository,
 	wire.Bind(new(Repository), new(*SQLRepository)),
-	UseLocalAccountCreator,
+	UseLocalAccountService,
 	NewService,
 )

@@ -54,6 +54,22 @@ func (r *SQLRepository) GetGroup(ctx context.Context, supplierID int64, groupID 
 	return scanSupplierGroup(row)
 }
 
+func (r *SQLRepository) GetKey(ctx context.Context, supplierID int64, keyID int64) (*adminplusdomain.SupplierKey, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, supplier_id, supplier_group_id, external_group_id, external_key_id,
+			name, key_fingerprint, key_last4, status, provider_family,
+			local_sub2api_account_id, local_account_name, local_account_platform, local_account_type,
+			provision_request, provision_response, error_code, error_message,
+			created_at, updated_at
+		FROM admin_plus_supplier_keys
+		WHERE supplier_id = $1 AND id = $2
+	`, supplierID, keyID)
+	return scanSupplierKey(row)
+}
+
 func (r *SQLRepository) FindActiveByGroup(ctx context.Context, supplierID int64, groupID int64) (*adminplusdomain.SupplierKey, error) {
 	if r == nil || r.db == nil {
 		return nil, dbNotConfigured()
@@ -166,7 +182,11 @@ func (r *SQLRepository) UpdateKeyAfterLocalBind(ctx context.Context, keyID int64
 		errorCode,
 		errorMessage,
 	)
-	return scanSupplierKey(row)
+	item, err := scanSupplierKey(row)
+	if err != nil {
+		return nil, translateKeyCreateError(err)
+	}
+	return item, nil
 }
 
 func (r *SQLRepository) CreateBinding(ctx context.Context, account *adminplusdomain.SupplierAccount) (*adminplusdomain.SupplierAccount, error) {
@@ -189,12 +209,7 @@ func (r *SQLRepository) CreateBinding(ctx context.Context, account *adminplusdom
 			$14, $15, $16, $17,
 			$18, $19, $20, $21
 		)
-		RETURNING id, supplier_id, supplier_key_id, local_sub2api_account_id,
-			local_account_name, local_account_platform, local_account_type,
-			supplier_account_identifier, supplier_account_label, organization_id, project_id, rate_profile,
-			configured_concurrency, observed_max_concurrency,
-			balance_threshold_cents, balance_cents, balance_currency, has_usable_balance,
-			runtime_status, health_status, created_at, updated_at
+		RETURNING id
 	`,
 		account.SupplierID,
 		account.SupplierKeyID,
@@ -218,11 +233,33 @@ func (r *SQLRepository) CreateBinding(ctx context.Context, account *adminplusdom
 		account.CreatedAt,
 		account.UpdatedAt,
 	)
-	item, err := scanSupplierAccount(row)
+	var createdID int64
+	if err := row.Scan(&createdID); err != nil {
+		return nil, translateBindingCreateError(err)
+	}
+	item, err := r.getBinding(ctx, account.SupplierID, createdID)
 	if err != nil {
 		return nil, translateBindingCreateError(err)
 	}
 	return item, nil
+}
+
+func (r *SQLRepository) getBinding(ctx context.Context, supplierID int64, bindingID int64) (*adminplusdomain.SupplierAccount, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT asa.id, asa.supplier_id, asa.supplier_key_id, asa.local_sub2api_account_id,
+			asa.local_account_name, asa.local_account_platform, asa.local_account_type,
+			asa.supplier_account_identifier, asa.supplier_account_label, asa.organization_id, asa.project_id, asa.rate_profile,
+			asa.configured_concurrency, asa.observed_max_concurrency,
+			asa.balance_threshold_cents, asa.balance_cents, asa.balance_currency, asa.has_usable_balance,
+			asa.runtime_status, asa.health_status, asa.created_at, asa.updated_at,
+			COALESCE(sg.id, 0), COALESCE(sg.external_group_id, ''), COALESCE(sg.name, ''),
+			COALESCE(sg.provider_family, ''), COALESCE(sg.effective_rate_multiplier, 0)
+		FROM admin_plus_supplier_accounts asa
+		LEFT JOIN admin_plus_supplier_keys sk ON sk.id = asa.supplier_key_id
+		LEFT JOIN admin_plus_supplier_groups sg ON sg.id = sk.supplier_group_id
+		WHERE asa.supplier_id = $1 AND asa.id = $2
+	`, supplierID, bindingID)
+	return scanSupplierAccountWithGroup(row)
 }
 
 func (r *SQLRepository) List(ctx context.Context, filter ListFilter) ([]*adminplusdomain.SupplierKey, error) {
@@ -452,6 +489,46 @@ func scanSupplierAccount(scanner scanner) (*adminplusdomain.SupplierAccount, err
 		&healthStatus,
 		&account.CreatedAt,
 		&account.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	account.RuntimeStatus = adminplusdomain.SupplierRuntimeStatus(runtimeStatus)
+	account.HealthStatus = adminplusdomain.SupplierHealthStatus(healthStatus)
+	return &account, nil
+}
+
+func scanSupplierAccountWithGroup(scanner scanner) (*adminplusdomain.SupplierAccount, error) {
+	var account adminplusdomain.SupplierAccount
+	var runtimeStatus, healthStatus string
+	err := scanner.Scan(
+		&account.ID,
+		&account.SupplierID,
+		&account.SupplierKeyID,
+		&account.LocalSub2APIAccountID,
+		&account.LocalAccountName,
+		&account.LocalAccountPlatform,
+		&account.LocalAccountType,
+		&account.SupplierAccountIdentifier,
+		&account.SupplierAccountLabel,
+		&account.OrganizationID,
+		&account.ProjectID,
+		&account.RateProfile,
+		&account.ConfiguredConcurrency,
+		&account.ObservedMaxConcurrency,
+		&account.BalanceThresholdCents,
+		&account.BalanceCents,
+		&account.BalanceCurrency,
+		&account.HasUsableBalance,
+		&runtimeStatus,
+		&healthStatus,
+		&account.CreatedAt,
+		&account.UpdatedAt,
+		&account.SupplierGroupID,
+		&account.SupplierExternalGroupID,
+		&account.SupplierGroupName,
+		&account.SupplierGroupProvider,
+		&account.SupplierGroupRate,
 	)
 	if err != nil {
 		return nil, err

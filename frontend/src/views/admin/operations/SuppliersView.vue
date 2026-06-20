@@ -151,7 +151,6 @@
             <div class="min-w-[220px]">
               <div class="flex items-center gap-2">
                 <span class="font-medium text-gray-900 dark:text-white">{{ row.name }}</span>
-                <span v-if="isSwitchable(row)" class="badge badge-success">可切换</span>
               </div>
               <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-dark-400">
                 <span class="font-mono">#{{ row.id }}</span>
@@ -169,16 +168,28 @@
           </template>
 
           <template #cell-status="{ row }">
-            <div class="flex min-w-[110px] flex-col gap-1">
-              <span class="badge w-fit" :class="runtimeClass(row.runtime_status)">{{ runtimeLabel(row.runtime_status) }}</span>
-              <span class="badge w-fit" :class="healthClass(row.health_status)">{{ healthLabel(row.health_status) }}</span>
+            <div class="flex min-w-[170px] flex-col gap-1.5">
+              <div class="flex flex-wrap gap-1.5">
+                <span class="badge w-fit" :class="runtimeClass(row.runtime_status)">{{ runtimeLabel(row.runtime_status) }}</span>
+                <span class="badge w-fit" :class="healthClass(row.health_status)">{{ healthLabel(row.health_status) }}</span>
+              </div>
+              <span class="text-xs font-medium" :class="supplierSwitchStateClass(row)">
+                {{ supplierSwitchStateLabel(row) }}
+              </span>
             </div>
           </template>
 
           <template #cell-balance="{ row }">
-            <div class="min-w-[130px] text-right">
-              <div class="font-medium text-gray-900 dark:text-gray-100">{{ formatMoney(row.balance_cents, row.balance_currency) }}</div>
-              <div class="text-xs text-gray-500 dark:text-dark-400">{{ formatDateTime(row.balance_updated_at) }}</div>
+            <div class="min-w-[170px] text-right">
+              <div class="text-base font-semibold" :class="supplierBalanceAmountClass(row)">
+                {{ formatMoney(row.balance_cents, row.balance_currency) }}
+              </div>
+              <div class="mt-1 flex justify-end">
+                <span class="badge" :class="supplierBalanceBadgeClass(row)">
+                  {{ supplierBalanceLabel(row) }}
+                </span>
+              </div>
+              <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ formatDateTime(row.balance_updated_at) }}</div>
             </div>
           </template>
 
@@ -620,16 +631,26 @@
           </template>
 
           <template #cell-group_actions="{ row }">
-            <div class="flex min-w-[130px] justify-end">
+            <div class="flex min-w-[190px] justify-end gap-2">
               <button
                 type="button"
                 class="btn btn-secondary btn-sm"
                 :disabled="Boolean(groupKey(row)) || row.status !== 'active'"
-                :title="groupKey(row) ? '该分组已绑定 Key 和本地账号' : '开通第三方 Key 并同步创建本地账号'"
+                :title="groupKey(row) ? '该分组已有 Key 记录' : '开通第三方 Key 并同步创建本地账号'"
                 @click="openProvisionDialog(row)"
               >
                 <Icon name="key" size="sm" />
                 开通
+              </button>
+              <button
+                v-if="canRepairKey(groupKey(row))"
+                type="button"
+                class="btn btn-secondary btn-sm"
+                title="绑定已有本地 Sub2API 账号"
+                @click="openRepairDialog(groupKey(row))"
+              >
+                <Icon name="link" size="sm" />
+                修复
               </button>
             </div>
           </template>
@@ -770,6 +791,88 @@
       </template>
     </BaseDialog>
 
+    <BaseDialog :show="repairDialogOpen" :title="repairKey ? `修复绑定 - ${repairKey.name}` : '修复绑定'" width="normal" @close="closeRepairDialog">
+      <form id="supplier-key-repair-form" class="space-y-5" @submit.prevent="submitRepairBinding">
+        <div class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+          第三方 Key 已创建，但本地账号绑定未完成。请选择已手动补好的本地 Sub2API 账号完成绑定。
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+            <div class="text-xs text-gray-500 dark:text-dark-400">供应商侧 Key</div>
+            <div class="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">{{ repairKey?.name || '-' }}</div>
+            <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+              <span v-if="repairKey?.external_key_id">#{{ repairKey.external_key_id }}</span>
+              <span v-if="repairKey?.key_last4" class="ml-2 font-mono">****{{ repairKey.key_last4 }}</span>
+            </div>
+          </div>
+          <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+            <div class="text-xs text-gray-500 dark:text-dark-400">失败原因</div>
+            <div class="mt-2 text-sm font-medium text-red-700 dark:text-red-300">{{ repairKey?.error_code || '-' }}</div>
+            <div class="mt-1 truncate text-xs text-gray-500 dark:text-dark-400" :title="repairKey?.error_message">{{ repairKey?.error_message || '-' }}</div>
+          </div>
+        </div>
+
+        <label class="block">
+          <span class="input-label">本地 Sub2API 账号</span>
+          <select v-model.number="repairForm.local_sub2api_account_id" class="input" required :disabled="repairAccountsLoading">
+            <option :value="0">{{ repairAccountsLoading ? '加载账号中...' : '请选择账号' }}</option>
+            <option v-for="account in localAccounts" :key="account.id" :value="account.id">
+              #{{ account.id }} · {{ account.name }} · {{ account.platform }}/{{ account.type }}
+            </option>
+          </select>
+        </label>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="block">
+            <span class="input-label">运行状态</span>
+            <select v-model="repairForm.runtime_status" class="input">
+              <option value="monitor_only">仅监控</option>
+              <option value="candidate">候选</option>
+              <option value="active">当前使用</option>
+              <option value="disabled">停用</option>
+            </select>
+          </label>
+          <label class="block">
+            <span class="input-label">健康状态</span>
+            <select v-model="repairForm.health_status" class="input">
+              <option value="normal">正常</option>
+              <option value="unavailable">不可用</option>
+              <option value="credential_invalid">凭据失效</option>
+              <option value="paused">暂停</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-3">
+          <label class="block">
+            <span class="input-label">配置并发</span>
+            <input v-model.number="repairForm.configured_concurrency" type="number" min="0" step="1" class="input" />
+          </label>
+          <label class="block">
+            <span class="input-label">余额</span>
+            <input v-model.number="repairForm.balance_yuan" type="number" min="0" step="0.01" class="input" />
+          </label>
+          <label class="block">
+            <span class="input-label">低余额阈值</span>
+            <input v-model.number="repairForm.balance_threshold_yuan" type="number" min="0" step="0.01" class="input" />
+          </label>
+        </div>
+
+        <div v-if="repairError" class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+          {{ repairError }}
+        </div>
+      </form>
+
+      <template #footer>
+        <button type="button" class="btn btn-secondary" @click="closeRepairDialog">取消</button>
+        <button type="submit" form="supplier-key-repair-form" class="btn btn-primary" :disabled="repairSubmitting || repairAccountsLoading">
+          <Icon name="link" size="sm" :class="{ 'animate-spin': repairSubmitting }" />
+          {{ repairSubmitting ? '修复中...' : '完成绑定' }}
+        </button>
+      </template>
+    </BaseDialog>
+
     <ConfirmDialog
       :show="deleteDialogOpen"
       title="删除供应商"
@@ -800,14 +903,17 @@ import {
   createSupplier,
   deleteSupplier,
   getSupplierSession,
+  listLocalSub2APIAccounts,
   listSupplierKeys,
   listSupplierGroups,
   listSuppliers,
   probeSupplierSession,
   provisionSupplierKey,
+  repairSupplierKeyBinding,
   syncSupplierGroups,
   updateSupplier,
   updateSupplierStatus,
+  type LocalSub2APIAccount,
   type Supplier,
   type SupplierBrowserSession,
   type SupplierGroup,
@@ -827,11 +933,13 @@ const loading = ref(false)
 const submitting = ref(false)
 const statusSubmitting = ref(false)
 const provisionSubmitting = ref(false)
+const repairSubmitting = ref(false)
 const editorOpen = ref(false)
 const statusDialogOpen = ref(false)
 const sessionDialogOpen = ref(false)
 const groupsDialogOpen = ref(false)
 const provisionDialogOpen = ref(false)
+const repairDialogOpen = ref(false)
 const deleteDialogOpen = ref(false)
 const moreMenuOpen = ref(false)
 const bulkStatusMode = ref(false)
@@ -840,18 +948,22 @@ const editingSupplier = ref<Supplier | null>(null)
 const sessionSupplier = ref<Supplier | null>(null)
 const groupsSupplier = ref<Supplier | null>(null)
 const provisionGroup = ref<SupplierGroup | null>(null)
+const repairKey = ref<SupplierKey | null>(null)
 const deletingSupplier = ref<Supplier | null>(null)
 const suppliers = ref<Supplier[]>([])
 const supplierGroups = ref<SupplierGroup[]>([])
 const supplierKeys = ref<SupplierKey[]>([])
+const localAccounts = ref<LocalSub2APIAccount[]>([])
 const sessionStore = reactive<Record<number, SupplierBrowserSession | undefined>>({})
 const sessionLoading = ref(false)
 const probingSession = ref(false)
 const groupsLoading = ref(false)
 const groupsSyncing = ref(false)
+const repairAccountsLoading = ref(false)
 const sessionLoadError = ref('')
 const groupsError = ref('')
 const provisionError = ref('')
+const repairError = ref('')
 const lastProbe = ref<SupplierSessionProbeResult | null>(null)
 
 const filters = reactive({
@@ -923,12 +1035,22 @@ const provisionForm = reactive({
   balance_currency: 'USD'
 })
 
+const repairForm = reactive({
+  local_sub2api_account_id: 0,
+  runtime_status: 'monitor_only' as SupplierRuntimeStatus,
+  health_status: 'normal' as SupplierHealthStatus,
+  configured_concurrency: 0,
+  balance_yuan: 0,
+  balance_threshold_yuan: 0,
+  balance_currency: 'USD'
+})
+
 const columns: Column[] = [
   { key: 'select', label: '', class: 'w-10' },
   { key: 'name', label: '供应商', sortable: true },
-  { key: 'kind_type', label: '归类 / 类型' },
-  { key: 'status', label: '状态' },
   { key: 'balance', label: '余额', class: 'text-right' },
+  { key: 'status', label: '状态' },
+  { key: 'kind_type', label: '归类 / 类型' },
   { key: 'credential', label: '采集凭据' },
   { key: 'session', label: '浏览器会话' },
   { key: 'address', label: '地址' },
@@ -1105,6 +1227,38 @@ function healthClass(status: SupplierHealthStatus): string {
   return 'badge-danger'
 }
 
+function supplierBalanceAmountClass(supplier: Supplier): string {
+  if (supplier.balance_cents > 0 && isSwitchableRuntimeStatus(supplier.runtime_status)) return 'text-emerald-700 dark:text-emerald-300'
+  if (supplier.balance_cents <= 0) return 'text-red-600 dark:text-red-300'
+  return 'text-gray-900 dark:text-gray-100'
+}
+
+function supplierBalanceBadgeClass(supplier: Supplier): string {
+  if (supplier.balance_cents <= 0) return 'badge-danger'
+  if (isSwitchableRuntimeStatus(supplier.runtime_status)) return 'badge-success'
+  return 'badge-gray'
+}
+
+function supplierBalanceLabel(supplier: Supplier): string {
+  if (supplier.balance_cents <= 0) return '无余额'
+  if (isSwitchableRuntimeStatus(supplier.runtime_status)) return '可用余额'
+  return '仅监控余额'
+}
+
+function supplierSwitchStateLabel(supplier: Supplier): string {
+  if (isSwitchable(supplier)) return supplier.runtime_status === 'active' ? '当前承载流量' : '可进入候选'
+  if (supplier.runtime_status === 'monitor_only') return '仅监控，不切换'
+  if (supplier.balance_cents <= 0) return '余额不足，不切换'
+  if (supplier.health_status !== 'normal') return '健康异常，不切换'
+  return '不可切换'
+}
+
+function supplierSwitchStateClass(supplier: Supplier): string {
+  if (isSwitchable(supplier)) return 'text-emerald-700 dark:text-emerald-300'
+  if (supplier.balance_cents <= 0 || supplier.health_status !== 'normal') return 'text-red-600 dark:text-red-300'
+  return 'text-gray-500 dark:text-dark-400'
+}
+
 function sessionStatusLabel(status?: SupplierBrowserSession['status']): string {
   if (status === 'valid') return '有效'
   if (status === 'expired') return '已过期'
@@ -1149,6 +1303,10 @@ function supplierKeyStatusClass(status?: SupplierKeyStatus): string {
 
 function groupKey(group: SupplierGroup): SupplierKey | undefined {
   return supplierKeysByGroupID.value.get(group.id)
+}
+
+function canRepairKey(key?: SupplierKey): key is SupplierKey {
+  return key?.status === 'failed' && ['LOCAL_ACCOUNT_CREATE_FAILED', 'SUPPLIER_ACCOUNT_BIND_FAILED'].includes(key.error_code || '')
 }
 
 function sessionBadgeText(supplierID: number): string {
@@ -1466,6 +1624,22 @@ function closeProvisionDialog() {
   provisionError.value = ''
 }
 
+function openRepairDialog(key?: SupplierKey) {
+  if (!key || !groupsSupplier.value) return
+  repairKey.value = key
+  repairError.value = ''
+  fillRepairForm(key)
+  repairDialogOpen.value = true
+  void loadRepairLocalAccounts()
+}
+
+function closeRepairDialog() {
+  repairDialogOpen.value = false
+  repairKey.value = null
+  repairError.value = ''
+  repairForm.local_sub2api_account_id = 0
+}
+
 function fillProvisionForm(group: SupplierGroup) {
   const supplier = groupsSupplier.value
   const name = defaultProvisionName(supplier, group)
@@ -1483,6 +1657,17 @@ function fillProvisionForm(group: SupplierGroup) {
   provisionForm.balance_yuan = yuanFromCents(supplier?.balance_cents || 0)
   provisionForm.balance_threshold_yuan = 0
   provisionForm.balance_currency = supplier?.balance_currency || 'USD'
+}
+
+function fillRepairForm(key: SupplierKey) {
+  const supplier = groupsSupplier.value
+  repairForm.local_sub2api_account_id = key.local_sub2api_account_id || 0
+  repairForm.runtime_status = 'monitor_only'
+  repairForm.health_status = 'normal'
+  repairForm.configured_concurrency = 0
+  repairForm.balance_yuan = yuanFromCents(supplier?.balance_cents || 0)
+  repairForm.balance_threshold_yuan = 0
+  repairForm.balance_currency = supplier?.balance_currency || 'USD'
 }
 
 function defaultProvisionName(supplier: Supplier | null, group: SupplierGroup): string {
@@ -1560,6 +1745,51 @@ async function submitProvision() {
     appStore.showError(provisionError.value)
   } finally {
     provisionSubmitting.value = false
+  }
+}
+
+async function loadRepairLocalAccounts() {
+  repairAccountsLoading.value = true
+  try {
+    const result = await listLocalSub2APIAccounts({ page: 1, page_size: 200 })
+    localAccounts.value = result.items
+  } catch (error) {
+    repairError.value = (error as { message?: string }).message || '加载本地账号失败'
+  } finally {
+    repairAccountsLoading.value = false
+  }
+}
+
+async function submitRepairBinding() {
+  if (!groupsSupplier.value || !repairKey.value) return
+  if (!repairForm.local_sub2api_account_id) {
+    repairError.value = '请选择本地 Sub2API 账号'
+    return
+  }
+  if (isSwitchableRuntimeStatus(repairForm.runtime_status) && centsFromYuan(repairForm.balance_yuan) <= 0) {
+    repairError.value = '候选或使用中账号必须有可用余额'
+    return
+  }
+  repairSubmitting.value = true
+  repairError.value = ''
+  try {
+    await repairSupplierKeyBinding(groupsSupplier.value.id, repairKey.value.id, {
+      local_sub2api_account_id: repairForm.local_sub2api_account_id,
+      runtime_status: repairForm.runtime_status,
+      health_status: repairForm.health_status,
+      configured_concurrency: Number(repairForm.configured_concurrency || 0),
+      balance_threshold_cents: centsFromYuan(repairForm.balance_threshold_yuan),
+      balance_cents: centsFromYuan(repairForm.balance_yuan),
+      balance_currency: repairForm.balance_currency || 'USD'
+    })
+    appStore.showSuccess('已修复 Key 与本地账号绑定')
+    closeRepairDialog()
+    await loadCurrentGroups()
+  } catch (error) {
+    repairError.value = (error as { message?: string }).message || '修复绑定失败'
+    appStore.showError(repairError.value)
+  } finally {
+    repairSubmitting.value = false
   }
 }
 

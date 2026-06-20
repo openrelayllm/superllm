@@ -3,6 +3,7 @@ package adminplus
 import (
 	"context"
 	"net/http"
+	"strconv"
 
 	supplierkeysapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/supplierkeys"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
@@ -35,6 +36,18 @@ type provisionSupplierKeyRequest struct {
 	BalanceThresholdCents      int64    `json:"balance_threshold_cents"`
 	BalanceCents               int64    `json:"balance_cents"`
 	BalanceCurrency            string   `json:"balance_currency"`
+}
+
+type repairSupplierKeyBindingRequest struct {
+	LocalSub2APIAccountID     int64  `json:"local_sub2api_account_id" binding:"required"`
+	RuntimeStatus             string `json:"runtime_status"`
+	HealthStatus              string `json:"health_status"`
+	ConfiguredConcurrency     int    `json:"configured_concurrency"`
+	BalanceThresholdCents     int64  `json:"balance_threshold_cents"`
+	BalanceCents              int64  `json:"balance_cents"`
+	BalanceCurrency           string `json:"balance_currency"`
+	SupplierAccountIdentifier string `json:"supplier_account_identifier"`
+	SupplierAccountLabel      string `json:"supplier_account_label"`
 }
 
 func (h *SupplierKeyHandler) Provision(c *gin.Context) {
@@ -71,6 +84,38 @@ func (h *SupplierKeyHandler) Provision(c *gin.Context) {
 	})
 }
 
+func (h *SupplierKeyHandler) RepairBinding(c *gin.Context) {
+	supplierID, ok := parseSupplierID(c)
+	if !ok {
+		return
+	}
+	keyID, ok := parseSupplierKeyID(c)
+	if !ok {
+		return
+	}
+	var req repairSupplierKeyBindingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	input := supplierkeysapp.RepairBindingInput{
+		SupplierID:                supplierID,
+		KeyID:                     keyID,
+		LocalSub2APIAccountID:     req.LocalSub2APIAccountID,
+		RuntimeStatus:             adminplusdomain.NormalizeSupplierRuntimeStatus(req.RuntimeStatus),
+		HealthStatus:              adminplusdomain.NormalizeSupplierHealthStatus(req.HealthStatus),
+		ConfiguredConcurrency:     req.ConfiguredConcurrency,
+		BalanceThresholdCents:     req.BalanceThresholdCents,
+		BalanceCents:              req.BalanceCents,
+		BalanceCurrency:           req.BalanceCurrency,
+		SupplierAccountIdentifier: req.SupplierAccountIdentifier,
+		SupplierAccountLabel:      req.SupplierAccountLabel,
+	}
+	executeAdminPlusIdempotentJSON(c, "admin-plus.supplier-key.repair-binding", input, 0, http.StatusOK, func(ctx context.Context) (any, error) {
+		return h.service.RepairBinding(ctx, input)
+	})
+}
+
 func (h *SupplierKeyHandler) List(c *gin.Context) {
 	supplierID, ok := parseSupplierID(c)
 	if !ok {
@@ -88,4 +133,13 @@ func (h *SupplierKeyHandler) List(c *gin.Context) {
 	}
 	paged, total := paginateSlice(items, page)
 	response.Success(c, paginatedData(paged, total, page))
+}
+
+func parseSupplierKeyID(c *gin.Context) (int64, bool) {
+	id, err := strconv.ParseInt(c.Param("keyID"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, http.StatusBadRequest, "invalid supplier key id")
+		return 0, false
+	}
+	return id, true
 }

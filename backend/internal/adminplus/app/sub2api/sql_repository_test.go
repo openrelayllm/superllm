@@ -87,6 +87,7 @@ func TestSQLRepositoryListLocalUsageSummariesGroupsByAccountAndModel(t *testing.
 			"input_tokens",
 			"output_tokens",
 			"revenue_cents",
+			"account_cost_cents",
 			"original_cost_cents",
 			"avg_first_token_ms",
 			"avg_total_latency_ms",
@@ -102,6 +103,7 @@ func TestSQLRepositoryListLocalUsageSummariesGroupsByAccountAndModel(t *testing.
 			int64(3000),
 			int64(1500),
 			int64(456),
+			int64(420),
 			int64(300),
 			int64(800),
 			int64(2400),
@@ -121,7 +123,65 @@ func TestSQLRepositoryListLocalUsageSummariesGroupsByAccountAndModel(t *testing.
 	require.Len(t, items, 1)
 	require.Equal(t, int64(3), items[0].RequestCount)
 	require.Equal(t, int64(456), items[0].RevenueCents)
+	require.Equal(t, int64(420), items[0].AccountCostCents)
 	require.Equal(t, int64(800), items[0].AvgFirstTokenMs)
+}
+
+func TestSQLRepositoryListLocalAccountUsageSummariesGroupsByAccount(t *testing.T) {
+	db, mock := newSub2APISQLMock(t)
+	repo := NewSQLRepository(ReadDB{DB: db})
+	from := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+	to := from.Add(24 * time.Hour)
+
+	mock.ExpectQuery(`GROUP BY ul\.account_id, a\.name, a\.platform\s+ORDER BY request_count DESC`).
+		WithArgs(from, to, int64(7), 20).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"account_id",
+			"name",
+			"platform",
+			"request_count",
+			"input_tokens",
+			"output_tokens",
+			"total_tokens",
+			"revenue_cents",
+			"account_cost_cents",
+			"original_cost_cents",
+			"avg_first_token_ms",
+			"avg_total_latency_ms",
+			"window_start",
+			"window_end",
+			"last_request_created_at",
+		}).AddRow(
+			int64(7),
+			"OpenAI Production",
+			"openai",
+			int64(3),
+			int64(3000),
+			int64(1500),
+			int64(4500),
+			int64(456),
+			int64(420),
+			int64(300),
+			int64(800),
+			int64(2400),
+			from,
+			to.Add(-time.Hour),
+			to.Add(-time.Hour),
+		))
+
+	items, err := repo.ListLocalAccountUsageSummaries(context.Background(), UsageFilter{
+		AccountID: 7,
+		From:      from,
+		To:        to,
+		Limit:     20,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, int64(7), items[0].AccountID)
+	require.Equal(t, int64(4500), items[0].TotalTokens)
+	require.Equal(t, int64(456), items[0].RevenueCents)
+	require.Equal(t, int64(420), items[0].AccountCostCents)
 }
 
 func TestRuntimeRepositoryListAccountRuntimeReadsSQLAndRedis(t *testing.T) {

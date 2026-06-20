@@ -21,6 +21,7 @@ type UsageFilter struct {
 type Repository interface {
 	ListLocalUsageLines(ctx context.Context, filter UsageFilter) ([]*adminplusdomain.LocalUsageLine, error)
 	ListLocalUsageSummaries(ctx context.Context, filter UsageFilter) ([]*adminplusdomain.LocalUsageSummary, error)
+	ListLocalAccountUsageSummaries(ctx context.Context, filter UsageFilter) ([]*adminplusdomain.LocalAccountUsageSummary, error)
 }
 
 type RuntimeReader interface {
@@ -61,6 +62,17 @@ func (s *Service) ListLocalUsageSummaries(ctx context.Context, filter UsageFilte
 		return nil, err
 	}
 	return s.repo.ListLocalUsageSummaries(ctx, normalized)
+}
+
+func (s *Service) ListLocalAccountUsageSummaries(ctx context.Context, filter UsageFilter) ([]*adminplusdomain.LocalAccountUsageSummary, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("sub2api service is not configured")
+	}
+	normalized, err := s.normalizeFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ListLocalAccountUsageSummaries(ctx, normalized)
 }
 
 func (s *Service) ListAccountRuntime(ctx context.Context, filter RuntimeFilter) ([]*adminplusdomain.LocalAccountRuntime, error) {

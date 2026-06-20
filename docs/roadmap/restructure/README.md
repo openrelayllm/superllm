@@ -286,7 +286,7 @@ P3 之后：
 - [x] 实现第三方 Key 创建基础 capability。
 - [x] 实现本地 Sub2API Admin API 创建账号基础编排。
 - [x] `keys/provision` 接入 `Idempotency-Key` 去重和同分组唯一 Key 守卫。
-- [ ] 实现绑定补偿和修复入口。
+- [x] 实现本地落地失败后的 `keys/:keyID/repair-binding` 修复入口。
 
 P4/P5 最后收口：
 
@@ -302,6 +302,7 @@ P4/P5 最后收口：
 - `POST /api/v1/admin-plus/suppliers/:id/rates/sync`：基于已保存会话访问同源 Sub2API 供应商用户侧费率/渠道接口，归一化后写入 `admin_plus_rate_snapshots` 和变更事件。
 - `POST /api/v1/admin-plus/suppliers/:id/keys/provision`：管理员确认后基于已保存会话创建第三方 Key，再调用本地 Sub2API Admin API 创建账号，并写入 `admin_plus_supplier_keys` 和 `admin_plus_supplier_accounts` 绑定。
 - `POST /api/v1/admin-plus/suppliers/:id/keys/provision` 已接入通用 `Idempotency-Key`：相同 key 和 payload 会重放首次成功结果，不会重复调用供应商创建 Key API；同一供应商分组还通过数据库唯一索引限制只能存在一个 `provisioning` / `bound` / `manual_secret_required` Key。
+- `POST /api/v1/admin-plus/suppliers/:id/keys/:keyID/repair-binding`：只修复本地账号创建或绑定失败的 Key，选择已有本地 Sub2API account 建立绑定并更新 Key 为 `bound`；该接口不调用 Provider Adapter，不创建新的第三方 Key。
 - 前端供应商页面已显示浏览器会话状态，并支持手动刷新会话与读取供应商余额。
 
 安全边界已实现：
@@ -318,7 +319,7 @@ P4/P5 最后收口：
 下一步仍未完成：
 
 - `ReadBilling(session, date_range)`：读取真实账单明细并进入对账。
-- 第三方 Key 真实供应商联调、失败补偿、修复入口和操作审计。
+- 第三方 Key 真实供应商联调、失败告警和操作审计。
 
 - [ ] 重排导航。
 - [ ] 完善所有列表分页和 CRUD UI。

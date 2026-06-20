@@ -156,6 +156,82 @@ func TestServiceProvisionRejectsGroupWithExistingBoundKeyBeforeProviderCall(t *t
 	require.Empty(t, keyAdapter.calls)
 }
 
+func TestServiceRepairBindingBindsFailedKeyToExistingLocalAccount(t *testing.T) {
+	repo := NewMemoryRepository()
+	repo.PutSupplier(&adminplusdomain.Supplier{
+		ID:            7,
+		Name:          "Relay",
+		Type:          adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus: adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:  adminplusdomain.SupplierHealthStatusNormal,
+	})
+	repo.PutGroup(&adminplusdomain.SupplierGroup{
+		ID:              10,
+		SupplierID:      7,
+		ExternalGroupID: "88",
+		Name:            "Low Cost",
+		ProviderFamily:  "openai",
+		Status:          adminplusdomain.SupplierGroupStatusActive,
+	})
+	key, err := repo.CreateKey(context.Background(), &adminplusdomain.SupplierKey{
+		SupplierID:      7,
+		SupplierGroupID: 10,
+		ExternalGroupID: "88",
+		ExternalKeyID:   "99",
+		Name:            "failed-key",
+		KeyFingerprint:  "fingerprint",
+		KeyLast4:        "cret",
+		Status:          adminplusdomain.SupplierKeyStatusProvisioning,
+		ProviderFamily:  "openai",
+		CreatedAt:       time.Now().UTC(),
+		UpdatedAt:       time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	_, err = repo.UpdateKeyAfterLocalBind(context.Background(), key.ID, nil, adminplusdomain.SupplierKeyStatusFailed, "LOCAL_ACCOUNT_CREATE_FAILED", "local account unavailable")
+	require.NoError(t, err)
+
+	local := &stubLocalAccountCreator{
+		accounts: map[int64]*service.Account{
+			2002: {
+				ID:       2002,
+				Name:     "manual-local",
+				Platform: service.PlatformOpenAI,
+				Type:     service.AccountTypeAPIKey,
+			},
+		},
+	}
+	keyAdapter := &stubKeyAdapter{
+		result: &ports.ProviderKeyResult{
+			SupplierID:    7,
+			ExternalKeyID: "should-not-be-called",
+			Secret:        "sk-provider-secret",
+		},
+	}
+	svc := NewService(repo, &stubSessionReader{}, keyAdapter, local)
+
+	result, err := svc.RepairBinding(context.Background(), RepairBindingInput{
+		SupplierID:            7,
+		KeyID:                 key.ID,
+		LocalSub2APIAccountID: 2002,
+		RuntimeStatus:         adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:          adminplusdomain.SupplierHealthStatusNormal,
+		BalanceCurrency:       "USD",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Key)
+	require.NotNil(t, result.Binding)
+	require.Equal(t, adminplusdomain.SupplierKeyStatusBound, result.Key.Status)
+	require.Equal(t, int64(2002), result.Key.LocalSub2APIAccountID)
+	require.Equal(t, "manual-local", result.Key.LocalAccountName)
+	require.Equal(t, int64(2002), result.Binding.LocalSub2APIAccountID)
+	require.Equal(t, "99", result.Binding.SupplierAccountIdentifier)
+	require.Equal(t, "failed-key", result.Binding.SupplierAccountLabel)
+	require.Empty(t, result.Key.ErrorCode)
+	require.Empty(t, keyAdapter.calls)
+	require.Equal(t, []int64{2002}, local.getCalls)
+}
+
 type stubSessionReader struct {
 	input ports.SessionProbeInput
 }
@@ -175,7 +251,9 @@ func (s *stubKeyAdapter) CreateKey(_ context.Context, _ ports.SessionProbeInput,
 }
 
 type stubLocalAccountCreator struct {
-	input service.CreateAccountInput
+	input    service.CreateAccountInput
+	accounts map[int64]*service.Account
+	getCalls []int64
 }
 
 func (s *stubLocalAccountCreator) CreateAccount(_ context.Context, input *service.CreateAccountInput) (*service.Account, error) {
@@ -186,5 +264,19 @@ func (s *stubLocalAccountCreator) CreateAccount(_ context.Context, input *servic
 		Platform:    input.Platform,
 		Type:        input.Type,
 		Credentials: input.Credentials,
+	}, nil
+}
+
+func (s *stubLocalAccountCreator) GetAccount(_ context.Context, id int64) (*service.Account, error) {
+	s.getCalls = append(s.getCalls, id)
+	if account, ok := s.accounts[id]; ok {
+		cp := *account
+		return &cp, nil
+	}
+	return &service.Account{
+		ID:       id,
+		Name:     "local-upstream",
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
 	}, nil
 }

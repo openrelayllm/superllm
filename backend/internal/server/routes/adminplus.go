@@ -32,6 +32,7 @@ func RegisterAdminPlusRoutes(
 			suppliers.POST("/:id/groups/sync", h.AdminPlus.SupplierGroup.Sync)
 			suppliers.GET("/:id/keys", h.AdminPlus.SupplierKey.List)
 			suppliers.POST("/:id/keys/provision", h.AdminPlus.SupplierKey.Provision)
+			suppliers.POST("/:id/keys/:keyID/repair-binding", h.AdminPlus.SupplierKey.RepairBinding)
 			suppliers.POST("/:id/rates/sync", h.AdminPlus.Rate.SyncSupplierRates)
 			suppliers.GET("/:id/session", h.AdminPlus.Session.Get)
 			suppliers.POST("/:id/session/probe", h.AdminPlus.Session.Probe)
@@ -44,6 +45,7 @@ func RegisterAdminPlusRoutes(
 			sub2api.GET("/account-runtime", h.AdminPlus.Sub2API.ListAccountRuntime)
 			sub2api.GET("/usage-lines", h.AdminPlus.Sub2API.ListLocalUsageLines)
 			sub2api.GET("/usage-summary", h.AdminPlus.Sub2API.ListLocalUsageSummaries)
+			sub2api.GET("/account-usage-summary", h.AdminPlus.Sub2API.ListLocalAccountUsageSummaries)
 		}
 
 		rates := adminPlus.Group("/rates")

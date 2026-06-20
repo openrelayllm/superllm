@@ -669,6 +669,75 @@ func TestSupplierKeyProvisionReplaysWithIdempotencyKey(t *testing.T) {
 	require.NotContains(t, second.Body.String(), "sk-provider-secret")
 }
 
+func TestSupplierKeyRepairBindingBindsFailedKeyWithoutProviderCall(t *testing.T) {
+	var providerCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "/api/v1/api-keys", req.URL.Path)
+		providerCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": {
+				"id": 99,
+				"name": "ops-key",
+				"key": "sk-provider-secret",
+				"group_id": 10,
+				"status": "active"
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	localAccounts := &operationsLocalAccountCreator{createErr: errors.New("local account store unavailable")}
+	router := newOperationsHandlerTestRouterWithDependencies(server.URL, server.URL, localAccounts)
+	created := performJSON(t, router, http.MethodPost, "/suppliers/1/browser-sessions", `{
+		"origin": "`+server.URL+`",
+		"session_bundle": {
+			"origin": "`+server.URL+`",
+			"tokens": {"access_token": "secret-token"},
+			"required_headers": {"cookie": "sid=secret-cookie"},
+			"context": {"api_base_url": "`+server.URL+`"}
+		}
+	}`)
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+
+	provisioned := performJSON(t, router, http.MethodPost, "/suppliers/1/keys/provision", `{
+		"supplier_group_id": 10,
+		"name": "ops-key",
+		"quota_usd": 25,
+		"local_account_platform": "openai",
+		"local_account_name": "local-upstream",
+		"local_account_base_url": "`+server.URL+`/v1",
+		"balance_currency": "USD"
+	}`)
+	require.Equal(t, http.StatusBadGateway, provisioned.Code, provisioned.Body.String())
+	require.Equal(t, 1, providerCalls)
+	require.NotContains(t, provisioned.Body.String(), "sk-provider-secret")
+
+	localAccounts.createErr = nil
+	localAccounts.accounts = make(map[int64]*service.Account)
+	localAccounts.accounts[2002] = &service.Account{
+		ID:       2002,
+		Name:     "manual-local",
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+	}
+	repaired := performJSON(t, router, http.MethodPost, "/suppliers/1/keys/1/repair-binding", `{
+		"local_sub2api_account_id": 2002,
+		"runtime_status": "monitor_only",
+		"health_status": "normal",
+		"balance_currency": "USD"
+	}`)
+	require.Equal(t, http.StatusOK, repaired.Code, repaired.Body.String())
+	require.Equal(t, 1, providerCalls)
+	require.Contains(t, repaired.Body.String(), `"status":"bound"`)
+	require.Contains(t, repaired.Body.String(), `"local_sub2api_account_id":2002`)
+	require.Contains(t, repaired.Body.String(), `"supplier_key_id":1`)
+	require.NotContains(t, repaired.Body.String(), "sk-provider-secret")
+	require.NotContains(t, repaired.Body.String(), "secret-token")
+	require.NotContains(t, repaired.Body.String(), "secret-cookie")
+}
+
 func TestExtensionHandlerManifestAndPackage(t *testing.T) {
 	router := newOperationsHandlerTestRouter()
 
@@ -795,6 +864,10 @@ func newOperationsHandlerTestRouter() *gin.Engine {
 }
 
 func newOperationsHandlerTestRouterWithSupplierURLs(dashboardURL string, apiBaseURL string) *gin.Engine {
+	return newOperationsHandlerTestRouterWithDependencies(dashboardURL, apiBaseURL, &operationsLocalAccountCreator{})
+}
+
+func newOperationsHandlerTestRouterWithDependencies(dashboardURL string, apiBaseURL string, localAccounts *operationsLocalAccountCreator) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 
 	supplierRepo := suppliersapp.NewMemoryRepository()
@@ -852,7 +925,7 @@ func newOperationsHandlerTestRouterWithSupplierURLs(dashboardURL string, apiBase
 		keyRepo,
 		sessionSvc,
 		sub2apiprovider.NewSessionProfileClient(http.DefaultClient),
-		&operationsLocalAccountCreator{},
+		localAccounts,
 	))
 	processor := extensionapp.NewIngestProcessorWithCipher(nil, nil, nil, nil, nil, sessionSvc, plainSessionCipher{})
 	extensionHandler := NewExtensionHandler(extensionapp.NewServiceWithDependencies(extensionapp.NewMemoryRepository(), processor, supplierSvc))
@@ -883,6 +956,7 @@ func newOperationsHandlerTestRouterWithSupplierURLs(dashboardURL string, apiBase
 	router.POST("/suppliers/:id/groups/sync", supplierGroupHandler.Sync)
 	router.GET("/suppliers/:id/keys", supplierKeyHandler.List)
 	router.POST("/suppliers/:id/keys/provision", supplierKeyHandler.Provision)
+	router.POST("/suppliers/:id/keys/:keyID/repair-binding", supplierKeyHandler.RepairBinding)
 	router.POST("/suppliers/:id/rates/sync", rateHandler.SyncSupplierRates)
 	router.POST("/billing/lines/import", billingHandler.ImportBillLines)
 	router.GET("/billing/lines", billingHandler.ListBillLines)
@@ -1074,16 +1148,37 @@ func cloneOperationsIdempotencyRecord(in *service.IdempotencyRecord) *service.Id
 	return &out
 }
 
-type operationsLocalAccountCreator struct{}
+type operationsLocalAccountCreator struct {
+	createErr error
+	accounts  map[int64]*service.Account
+}
 
 func (c *operationsLocalAccountCreator) CreateAccount(_ context.Context, input *service.CreateAccountInput) (*service.Account, error) {
-	return &service.Account{
+	if c.createErr != nil {
+		return nil, c.createErr
+	}
+	account := &service.Account{
 		ID:          1001,
 		Name:        input.Name,
 		Platform:    input.Platform,
 		Type:        input.Type,
 		Credentials: input.Credentials,
-	}, nil
+	}
+	if c.accounts == nil {
+		c.accounts = make(map[int64]*service.Account)
+	}
+	c.accounts[account.ID] = account
+	return account, nil
+}
+
+func (c *operationsLocalAccountCreator) GetAccount(_ context.Context, id int64) (*service.Account, error) {
+	if c.accounts != nil {
+		if account, ok := c.accounts[id]; ok {
+			cp := *account
+			return &cp, nil
+		}
+	}
+	return nil, errors.New("account not found")
 }
 
 func newOperationsRateRepository() *operationsRateRepository {
