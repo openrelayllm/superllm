@@ -433,7 +433,9 @@ extension/
       admin-plus-client.js
       storage.js
     content/
+      parser.js
       sub2api.js
+  test-parser.cjs
 ```
 
 插件只负责浏览器侧能力：
@@ -445,7 +447,7 @@ extension/
 
 插件不保存 Sub2API 管理员身份，不参与 Admin Plus 用户权限体系。
 
-当前 `extension/` 是最小 MV3 执行器：可从 Admin Plus 页面读取本域 `auth_token`、领取任务、按租约读取供应商凭据、打开供应商后台，并尝试解析真实页面。通用解析失败时会标记任务失败，不会生成 mock 成功数据。后续需要按真实供应商后台补专用 adapter。
+当前 `extension/` 是最小 MV3 执行器：可从 Admin Plus 页面读取本域 `auth_token`、领取任务、按租约读取供应商凭据、打开供应商后台，并尝试解析真实页面。`parser.js` 抽出费率、余额、优惠、账单和并发解析纯函数，`test-parser.cjs` 覆盖基础样例。通用解析失败时会标记任务失败，不会生成 mock 成功数据。后续需要按真实供应商后台补专用 adapter。
 
 ## 6. 认证复用
 

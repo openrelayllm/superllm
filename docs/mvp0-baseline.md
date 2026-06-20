@@ -80,6 +80,7 @@ Generated artifacts are intentionally ignored:
 - 已完成插件任务结果摄取，结构化结果可写入费率、余额、优惠、健康和账单业务表。
 - 已完成供应商浏览器登录凭据加密持久化，只有持有有效插件任务租约的执行器可以读取明文凭据。
 - 已创建 `extension/` Chrome MV3 最小执行器，可领取任务、读取凭据、打开供应商后台、解析真实页面数据并回写成功或失败。
+- 已抽出 Chrome 插件页面解析纯函数，并通过 `node extension/test-parser.cjs` 覆盖费率、余额、优惠、账单和并发基础样例。
 - 已完成本地 Sub2API 真实只读数据能力：
   - 读取 `accounts`。
   - 读取 `usage_logs` 明细。

@@ -23,6 +23,7 @@ Implemented:
 - Chrome extension task result ingestion into rate, balance, promotion, health, and billing tables.
 - Browser login credentials encrypted at rest and exposed only through a valid extension task lease.
 - Minimal Chrome extension executor in `extension/`.
+- Chrome extension parser smoke tests in `extension/test-parser.cjs`.
 - Local Sub2API read adapter for real `accounts` and `usage_logs`.
 - Local Sub2API Redis read adapter for account concurrency and waiting queue runtime.
 - Admin Plus operation pages, including supplier bindings, account runtime, billing reconciliation, and local usage.
@@ -102,7 +103,7 @@ It can:
 - open the supplier dashboard and run generic Sub2API/New API-like DOM extraction;
 - complete the task only when real page data is parsed, otherwise fail the task.
 
-Generic DOM extraction is intentionally conservative. Production support still requires supplier-specific adapters for each real dashboard shape.
+Generic DOM extraction is intentionally conservative and covered by `node extension/test-parser.cjs`. Production support still requires supplier-specific adapters for each real dashboard shape.
 
 ## Sub2API Read Integration
 

@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	adminplussub2api "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -36,6 +37,8 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		opsSystemLogSinkSvc,
 		emailQueueSvc,
 		billingCacheSvc,
+		adminplussub2api.Sub2APIRedis{},
+		nil,
 	)
 
 	require.NotPanics(t, func() {
