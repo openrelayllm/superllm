@@ -50,7 +50,7 @@ backend/
       config/                       # Admin Plus 自有配置解析
       domain/                       # Admin Plus 领域模型、枚举、业务错误
       app/
-        suppliers/                  # 供应商台账、供应商账号映射
+        suppliers/                  # 供应商父级台账、供应商下挂账号/Key 子级绑定
         rates/                      # 费率抓取、快照、变更事件
         promotions/                 # 优惠活动监控、充值建议
         billing/                    # 账单导入、账单明细归一化
@@ -121,7 +121,16 @@ admin_plus_suppliers
 
 - `monitor_only` 允许无余额，用于无充值供应商的优惠/费率监控。
 - `candidate` 和 `active` 必须有正余额，否则不允许作为切换候选。
-- 凭据响应只返回是否配置和脱敏值，不返回 Admin API Key、PostgreSQL DSN 或 Redis DSN 明文。
+- 凭据响应只返回是否配置和脱敏值，不返回浏览器登录密码、临时 token、PostgreSQL DSN、Redis DSN 或可选管理 API Key 明文。
+
+后续供应商模型必须保持父子结构：
+
+```text
+admin_plus_suppliers               # 供应商父级，保存供应商后台、类型、运行状态和采集凭据状态
+admin_plus_supplier_accounts       # 账号/Key 子级，绑定本地 Sub2API accounts.id
+```
+
+父级供应商不直接保存单个本地账号绑定字段。成本、余额、健康、并发、对账和切换建议可以按父级聚合，但实际可调度候选必须落到 `admin_plus_supplier_accounts` 子级。
 
 当前已落地费率快照与变更事件最小闭环：
 
@@ -396,12 +405,15 @@ sub2api_admin_plus
 ```text
 admin_plus_suppliers
 admin_plus_supplier_accounts
+admin_plus_supplier_credentials
 admin_plus_rate_snapshots
 admin_plus_rate_change_events
-admin_plus_promotions
-admin_plus_supplier_bill_lines
+admin_plus_promotion_events
+admin_plus_bill_imports
+admin_plus_bill_items
 admin_plus_reconciliation_runs
-admin_plus_health_samples
+admin_plus_usage_reconciliation_items
+admin_plus_health_metrics
 admin_plus_action_recommendations
 admin_plus_extension_tasks
 admin_plus_audit_logs
@@ -494,12 +506,14 @@ MVP 1 优先实现：
 
 ### `suppliers`
 
-- 供应商 CRUD。
+- 供应商父级 CRUD。
 - 供应商类型：`source_account`、`relay`、`browser_only`、`custom`。
 - 供应商运行状态：`monitor_only`、`candidate`、`active`、`disabled`。
-- 本地账号与供应商账号映射。
+- 供应商后台登录凭据状态：账号、密码、临时 token、只读 DB、只读 Redis。
+- 供应商下挂账号/Key 子级绑定。
+- 子级绑定本地 Sub2API `accounts.id`，并缓存账号名称、平台、类型和调度状态快照。
 
-无余额供应商只能监控费率和优惠，不能进入切换候选。
+无余额供应商只能监控费率和优惠，不能进入切换候选。切换候选实际落在子账号/Key 维度，父级供应商和子级都必须满足余额、健康和运行状态规则。
 
 ### `rates`
 
@@ -531,7 +545,7 @@ MVP 1 优先实现：
 
 - 采集首 token 时间、总耗时、错误率、可用率。
 - 采集余额、额度、可并发数。
-- 计算供应商和账号健康分。
+- 计算供应商父级和账号/Key 子级健康分。
 
 ### `actions`
 
@@ -556,7 +570,8 @@ MVP 1 优先实现：
 ```text
 /api/admin-plus/auth/*
 /api/admin-plus/suppliers
-/api/admin-plus/supplier-accounts
+/api/admin-plus/suppliers/:id/accounts
+/api/admin-plus/sub2api/accounts
 /api/admin-plus/rates
 /api/admin-plus/promotions
 /api/admin-plus/bills
@@ -638,13 +653,15 @@ Chrome 插件 -> Sub2API 管理员 token
 7. 建立 Sub2API Admin API client。
 8. 建立 Sub2API 只读 DB/Redis adapter。
 9. 实现供应商台账。
-10. 实现 Sub2API 源站账号读取适配。
-11. 实现 Sub2API 供应商费率抓取。
-12. 实现费率快照和变更事件。
-13. 实现余额、优惠和健康采集。
-14. 实现账单导入和对账。
-15. 实现自动化建议和管理员确认执行。
-16. 实现 Chrome 插件任务协议。
+10. 实现供应商下挂账号/Key 子级绑定。
+11. 实现本地 Sub2API 账号选择读取接口。
+12. 实现 Sub2API 源站账号读取适配。
+13. 实现 Sub2API 供应商费率抓取。
+14. 实现费率快照和变更事件。
+15. 实现余额、优惠和健康采集。
+16. 实现账单导入和对账。
+17. 实现自动化建议和管理员确认执行。
+18. 实现 Chrome 插件任务协议。
 
 ## 14. 代码审查重点
 
@@ -655,7 +672,7 @@ Chrome 插件 -> Sub2API 管理员 token
 - 是否绕过 Admin API 修改 Sub2API 状态。
 - 是否记录敏感操作审计。
 - 是否对凭据加密和脱敏。
-- 是否把无余额供应商加入切换候选。
+- 是否把无余额供应商或无余额账号/Key 子级加入切换候选。
 - 是否误做 OpenAI、Anthropic、Gemini 源站账号添加功能。
 - 是否保存了源站账号 API Key、OAuth、Cookie 等应由 Sub2API 管理的凭据。
 - 是否把账号采购预留模块误做成下单、付款、售后系统。

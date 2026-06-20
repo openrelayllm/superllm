@@ -45,30 +45,41 @@ const (
 )
 
 type SupplierCredentialStatus struct {
-	AdminAPIKeyConfigured bool   `json:"admin_api_key_configured"`
-	PostgresConfigured    bool   `json:"postgres_configured"`
-	RedisConfigured       bool   `json:"redis_configured"`
-	BrowserLoginEnabled   bool   `json:"browser_login_enabled"`
-	MaskedAdminAPIKey     string `json:"masked_admin_api_key,omitempty"`
+	AdminAPIKeyConfigured          bool   `json:"admin_api_key_configured"`
+	PostgresConfigured             bool   `json:"postgres_configured"`
+	RedisConfigured                bool   `json:"redis_configured"`
+	BrowserLoginEnabled            bool   `json:"browser_login_enabled"`
+	BrowserLoginUsernameConfigured bool   `json:"browser_login_username_configured"`
+	BrowserLoginPasswordConfigured bool   `json:"browser_login_password_configured"`
+	BrowserLoginTokenConfigured    bool   `json:"browser_login_token_configured"`
+	MaskedAdminAPIKey              string `json:"masked_admin_api_key,omitempty"`
+	MaskedBrowserLoginUsername     string `json:"masked_browser_login_username,omitempty"`
 }
 
 type Supplier struct {
-	ID               int64                    `json:"id"`
-	Name             string                   `json:"name"`
-	Kind             SupplierKind             `json:"kind"`
-	Type             SupplierType             `json:"type"`
-	RuntimeStatus    SupplierRuntimeStatus    `json:"runtime_status"`
-	HealthStatus     SupplierHealthStatus     `json:"health_status"`
-	DashboardURL     string                   `json:"dashboard_url,omitempty"`
-	APIBaseURL       string                   `json:"api_base_url,omitempty"`
-	Contact          string                   `json:"contact,omitempty"`
-	Notes            string                   `json:"notes,omitempty"`
-	Credential       SupplierCredentialStatus `json:"credential"`
-	BalanceCents     int64                    `json:"balance_cents"`
-	BalanceCurrency  string                   `json:"balance_currency"`
-	BalanceUpdatedAt *time.Time               `json:"balance_updated_at,omitempty"`
-	CreatedAt        time.Time                `json:"created_at"`
-	UpdatedAt        time.Time                `json:"updated_at"`
+	ID                   int64                    `json:"id"`
+	Name                 string                   `json:"name"`
+	Kind                 SupplierKind             `json:"kind"`
+	Type                 SupplierType             `json:"type"`
+	RuntimeStatus        SupplierRuntimeStatus    `json:"runtime_status"`
+	HealthStatus         SupplierHealthStatus     `json:"health_status"`
+	BoundAccountID       int64                    `json:"bound_account_id,omitempty"`
+	BoundAccountName     string                   `json:"bound_account_name,omitempty"`
+	BoundAccountPlatform string                   `json:"bound_account_platform,omitempty"`
+	BoundAccountType     string                   `json:"bound_account_type,omitempty"`
+	DashboardURL         string                   `json:"dashboard_url,omitempty"`
+	APIBaseURL           string                   `json:"api_base_url,omitempty"`
+	Contact              string                   `json:"contact,omitempty"`
+	Notes                string                   `json:"notes,omitempty"`
+	BrowserLoginUsername string                   `json:"-"`
+	BrowserLoginPassword string                   `json:"-"`
+	BrowserLoginToken    string                   `json:"-"`
+	Credential           SupplierCredentialStatus `json:"credential"`
+	BalanceCents         int64                    `json:"balance_cents"`
+	BalanceCurrency      string                   `json:"balance_currency"`
+	BalanceUpdatedAt     *time.Time               `json:"balance_updated_at,omitempty"`
+	CreatedAt            time.Time                `json:"created_at"`
+	UpdatedAt            time.Time                `json:"updated_at"`
 }
 
 func (k SupplierKind) Valid() bool {
