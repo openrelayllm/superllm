@@ -129,10 +129,19 @@ admin_plus_suppliers
 
 ```text
 admin_plus_suppliers               # 供应商父级，保存供应商后台、类型、运行状态和采集凭据状态
-admin_plus_supplier_accounts       # 账号/Key 子级，绑定本地 Sub2API accounts.id
+admin_plus_supplier_groups         # 供应商真实分组，由 Provider Adapter 同步
+admin_plus_supplier_keys           # 第三方 Key 脱敏元数据，按供应商分组创建
+admin_plus_supplier_accounts       # 账号/Key 子级，绑定第三方 Key 和本地 Sub2API accounts.id
 ```
 
 父级供应商不直接保存单个本地账号绑定字段。成本、余额、健康、并发、对账和切换建议可以按父级聚合，但实际可调度候选必须落到 `admin_plus_supplier_accounts` 子级。
+
+当前账号落地主路径已经收敛到供应商管理页的“分组”弹窗：
+
+- `GET /api/v1/admin-plus/suppliers/:id/groups` 读取分组事实表。
+- `GET /api/v1/admin-plus/suppliers/:id/keys` 读取该供应商已开通 Key，并按 `supplier_group_id` 映射到分组行。
+- 未绑定分组行通过 `POST /api/v1/admin-plus/suppliers/:id/keys/provision` 创建第三方 Key、同步创建本地 Sub2API 账号，并写入 `admin_plus_supplier_keys` 和 `admin_plus_supplier_accounts`。
+- 独立账号/Key 绑定页只作为失败修复、审计和历史绑定入口，不再作为新增主路径。
 
 当前已落地费率快照与变更事件最小闭环：
 
@@ -526,6 +535,8 @@ sub2api_admin_plus
 
 ```text
 admin_plus_suppliers
+admin_plus_supplier_groups
+admin_plus_supplier_keys
 admin_plus_supplier_accounts
 admin_plus_supplier_credentials
 admin_plus_rate_snapshots
