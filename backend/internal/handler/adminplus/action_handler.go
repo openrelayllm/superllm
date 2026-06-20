@@ -1,6 +1,9 @@
 package adminplus
 
 import (
+	"net/http"
+	"strconv"
+
 	actionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -34,6 +37,10 @@ type supplierSignalDTO struct {
 	EffectiveCostCents int64  `json:"effective_cost_cents"`
 }
 
+type updateActionStatusRequest struct {
+	Status string `json:"status" binding:"required"`
+}
+
 func (h *ActionHandler) Generate(c *gin.Context) {
 	var req generateActionsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -64,4 +71,44 @@ func (h *ActionHandler) Generate(c *gin.Context) {
 		return
 	}
 	response.Success(c, result)
+}
+
+func (h *ActionHandler) ListRecommendations(c *gin.Context) {
+	items, err := h.service.ListRecommendations(c.Request.Context(), actionsapp.RecommendationFilter{
+		SupplierID: parseInt64Query(c, "supplier_id"),
+		Status:     adminplusdomain.ActionStatus(c.Query("status")),
+		Severity:   adminplusdomain.ActionSeverity(c.Query("severity")),
+		Type:       adminplusdomain.ActionType(c.Query("type")),
+		Limit:      parseIntQuery(c, "limit"),
+	})
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, gin.H{"items": items, "total": len(items)})
+}
+
+func (h *ActionHandler) UpdateRecommendationStatus(c *gin.Context) {
+	id, ok := parseActionRecommendationID(c)
+	if !ok {
+		return
+	}
+	var req updateActionStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	item, err := h.service.UpdateRecommendationStatus(c.Request.Context(), id, adminplusdomain.ActionStatus(req.Status))
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, item)
+}
+
+func parseActionRecommendationID(c *gin.Context) (int64, bool) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, http.StatusBadRequest, "invalid action recommendation id")
+		return 0, false
+	}
+	return id, true
 }

@@ -29,10 +29,24 @@ func ProvideAdminHandlers(
 func ProvideAdminPlusHandlers(
 	supplierHandler *adminplushandler.SupplierHandler,
 	rateHandler *adminplushandler.RateHandler,
+	balanceHandler *adminplushandler.BalanceHandler,
+	promotionHandler *adminplushandler.PromotionHandler,
+	healthHandler *adminplushandler.HealthHandler,
+	billingHandler *adminplushandler.BillingHandler,
+	extensionHandler *adminplushandler.ExtensionHandler,
+	actionHandler *adminplushandler.ActionHandler,
+	reconciliationHandler *adminplushandler.ReconciliationHandler,
 ) *AdminPlusHandlers {
 	return &AdminPlusHandlers{
-		Supplier: supplierHandler,
-		Rate:     rateHandler,
+		Supplier:       supplierHandler,
+		Rate:           rateHandler,
+		Balance:        balanceHandler,
+		Promotion:      promotionHandler,
+		Health:         healthHandler,
+		Billing:        billingHandler,
+		Extension:      extensionHandler,
+		Action:         actionHandler,
+		Reconciliation: reconciliationHandler,
 	}
 }
 
@@ -87,6 +101,13 @@ var ProviderSet = wire.NewSet(
 	ProvideSystemHandler,
 	adminplushandler.NewSupplierHandler,
 	adminplushandler.NewRateHandler,
+	adminplushandler.NewBalanceHandler,
+	adminplushandler.NewPromotionHandler,
+	adminplushandler.NewHealthHandler,
+	adminplushandler.NewBillingHandler,
+	adminplushandler.NewExtensionHandler,
+	adminplushandler.NewActionHandler,
+	adminplushandler.NewReconciliationHandler,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,

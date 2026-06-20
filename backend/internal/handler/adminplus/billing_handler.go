@@ -75,6 +75,17 @@ func (h *BillingHandler) ImportBillLines(c *gin.Context) {
 	response.Created(c, gin.H{"items": items, "total": len(items)})
 }
 
+func (h *BillingHandler) ListBillLines(c *gin.Context) {
+	items, err := h.service.ListBillLines(c.Request.Context(), billingapp.BillLineFilter{
+		SupplierID: parseInt64Query(c, "supplier_id"),
+		Limit:      parseIntQuery(c, "limit"),
+	})
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, gin.H{"items": items, "total": len(items)})
+}
+
 func parseRequiredTime(c *gin.Context, field string, value string) (*time.Time, bool) {
 	if value == "" {
 		response.BadRequest(c, field+" is required")

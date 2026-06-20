@@ -6,7 +6,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	actionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
+	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
+	billingapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/billing"
+	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
+	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
+	promotionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/promotions"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
+	reconciliationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/reconciliation"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -33,8 +40,15 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 			System:    &adminhandler.SystemHandler{},
 		},
 		AdminPlus: &handler.AdminPlusHandlers{
-			Supplier: adminplushandler.NewSupplierHandler(suppliersapp.NewService(suppliersapp.NewMemoryRepository())),
-			Rate:     adminplushandler.NewRateHandler(ratesapp.NewService(newRouteSurfaceRateRepository())),
+			Supplier:       adminplushandler.NewSupplierHandler(suppliersapp.NewService(suppliersapp.NewMemoryRepository())),
+			Rate:           adminplushandler.NewRateHandler(ratesapp.NewService(newRouteSurfaceRateRepository())),
+			Balance:        adminplushandler.NewBalanceHandler(balancesapp.NewService(balancesapp.NewMemoryRepository())),
+			Promotion:      adminplushandler.NewPromotionHandler(promotionsapp.NewService(promotionsapp.NewMemoryRepository())),
+			Health:         adminplushandler.NewHealthHandler(healthapp.NewService(healthapp.NewMemoryRepository())),
+			Billing:        adminplushandler.NewBillingHandler(billingapp.NewService(billingapp.NewMemoryRepository())),
+			Extension:      adminplushandler.NewExtensionHandler(extensionapp.NewService(extensionapp.NewMemoryRepository())),
+			Action:         adminplushandler.NewActionHandler(actionsapp.NewRuleService()),
+			Reconciliation: adminplushandler.NewReconciliationHandler(reconciliationapp.NewService()),
 		},
 	}
 
@@ -83,6 +97,29 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin-plus/rates/snapshots",
 		"GET /api/v1/admin-plus/rates/events",
 		"PATCH /api/v1/admin-plus/rates/events/:id/ack",
+		"POST /api/v1/admin-plus/balances/snapshots",
+		"GET /api/v1/admin-plus/balances/snapshots",
+		"GET /api/v1/admin-plus/balances/events",
+		"PATCH /api/v1/admin-plus/balances/events/:id/ack",
+		"POST /api/v1/admin-plus/promotions",
+		"GET /api/v1/admin-plus/promotions",
+		"PATCH /api/v1/admin-plus/promotions/:id/ack",
+		"POST /api/v1/admin-plus/health/samples",
+		"GET /api/v1/admin-plus/health/samples",
+		"GET /api/v1/admin-plus/health/events",
+		"PATCH /api/v1/admin-plus/health/events/:id/ack",
+		"POST /api/v1/admin-plus/billing/lines/import",
+		"GET /api/v1/admin-plus/billing/lines",
+		"POST /api/v1/admin-plus/extension/tasks",
+		"GET /api/v1/admin-plus/extension/tasks",
+		"POST /api/v1/admin-plus/extension/tasks/claim",
+		"POST /api/v1/admin-plus/extension/tasks/:id/heartbeat",
+		"POST /api/v1/admin-plus/extension/tasks/:id/complete",
+		"POST /api/v1/admin-plus/extension/tasks/:id/fail",
+		"POST /api/v1/admin-plus/reconciliation/run",
+		"POST /api/v1/admin-plus/actions/generate",
+		"GET /api/v1/admin-plus/actions/recommendations",
+		"PATCH /api/v1/admin-plus/actions/recommendations/:id/status",
 	}
 
 	for _, route := range currentRoutes {

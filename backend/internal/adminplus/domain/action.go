@@ -47,3 +47,30 @@ type ActionRecommendation struct {
 	Signals          []string       `json:"signals,omitempty"`
 	CreatedAt        time.Time      `json:"created_at"`
 }
+
+func (t ActionType) Valid() bool {
+	switch t {
+	case ActionTypeSwitchSupplier, ActionTypePauseSupplier, ActionTypeDegradeSupplier, ActionTypeIncreaseWeight, ActionTypeRechargeSupplier, ActionTypeInvestigateProfit, ActionTypeReviewCredential:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s ActionSeverity) Valid() bool {
+	switch s {
+	case ActionSeverityInfo, ActionSeverityWarning, ActionSeverityCritical:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s ActionStatus) Valid() bool {
+	switch s {
+	case ActionStatusOpen, ActionStatusAcknowledged, ActionStatusApproved, ActionStatusExecuted, ActionStatusRejected:
+		return true
+	default:
+		return false
+	}
+}

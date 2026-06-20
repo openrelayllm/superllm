@@ -35,15 +35,37 @@ type GenerateResult struct {
 	Total int                                     `json:"total"`
 }
 
+type RecommendationFilter struct {
+	SupplierID int64
+	Status     adminplusdomain.ActionStatus
+	Severity   adminplusdomain.ActionSeverity
+	Type       adminplusdomain.ActionType
+	Limit      int
+}
+
+type Repository interface {
+	CreateRecommendation(ctx context.Context, action *adminplusdomain.ActionRecommendation) (*adminplusdomain.ActionRecommendation, error)
+	ListRecommendations(ctx context.Context, filter RecommendationFilter) ([]*adminplusdomain.ActionRecommendation, error)
+	UpdateRecommendationStatus(ctx context.Context, id int64, status adminplusdomain.ActionStatus) (*adminplusdomain.ActionRecommendation, error)
+}
+
 type Service struct {
-	now func() time.Time
+	repo Repository
+	now  func() time.Time
 }
 
-func NewService() *Service {
-	return &Service{now: time.Now}
+func NewService(repo Repository) *Service {
+	return &Service{
+		repo: repo,
+		now:  time.Now,
+	}
 }
 
-func (s *Service) Generate(_ context.Context, in GenerateInput) (*GenerateResult, error) {
+func NewRuleService() *Service {
+	return NewService(nil)
+}
+
+func (s *Service) Generate(ctx context.Context, in GenerateInput) (*GenerateResult, error) {
 	if len(in.Suppliers) == 0 {
 		return nil, badRequest("ACTION_SUPPLIERS_REQUIRED", "supplier signals are required")
 	}
@@ -61,7 +83,51 @@ func (s *Service) Generate(_ context.Context, in GenerateInput) (*GenerateResult
 	sort.SliceStable(items, func(i, j int) bool {
 		return severityRank(items[i].Severity) > severityRank(items[j].Severity)
 	})
+	if s.repo != nil {
+		stored := make([]*adminplusdomain.ActionRecommendation, 0, len(items))
+		for _, item := range items {
+			created, err := s.repo.CreateRecommendation(ctx, item)
+			if err != nil {
+				return nil, err
+			}
+			stored = append(stored, created)
+		}
+		items = stored
+	}
 	return &GenerateResult{Items: items, Total: len(items)}, nil
+}
+
+func (s *Service) ListRecommendations(ctx context.Context, filter RecommendationFilter) ([]*adminplusdomain.ActionRecommendation, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("action repository is not configured")
+	}
+	if filter.SupplierID < 0 {
+		return nil, badRequest("ACTION_SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	if filter.Status != "" && !filter.Status.Valid() {
+		return nil, badRequest("ACTION_STATUS_INVALID", "invalid action status")
+	}
+	if filter.Severity != "" && !filter.Severity.Valid() {
+		return nil, badRequest("ACTION_SEVERITY_INVALID", "invalid action severity")
+	}
+	if filter.Type != "" && !filter.Type.Valid() {
+		return nil, badRequest("ACTION_TYPE_INVALID", "invalid action type")
+	}
+	filter.Limit = normalizeLimit(filter.Limit)
+	return s.repo.ListRecommendations(ctx, filter)
+}
+
+func (s *Service) UpdateRecommendationStatus(ctx context.Context, id int64, status adminplusdomain.ActionStatus) (*adminplusdomain.ActionRecommendation, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("action repository is not configured")
+	}
+	if id <= 0 {
+		return nil, badRequest("ACTION_RECOMMENDATION_ID_INVALID", "invalid action recommendation id")
+	}
+	if !status.Valid() {
+		return nil, badRequest("ACTION_STATUS_INVALID", "invalid action status")
+	}
+	return s.repo.UpdateRecommendationStatus(ctx, id, status)
 }
 
 func (s *Service) actionsFromSuppliers(now time.Time, suppliers []SupplierSignal, bestCandidate *SupplierSignal) []*adminplusdomain.ActionRecommendation {
@@ -233,6 +299,20 @@ func severityRank(severity adminplusdomain.ActionSeverity) int {
 	}
 }
 
+func normalizeLimit(limit int) int {
+	if limit <= 0 {
+		return 200
+	}
+	if limit > 1000 {
+		return 1000
+	}
+	return limit
+}
+
 func badRequest(reason string, message string) error {
 	return infraerrors.New(http.StatusBadRequest, reason, message)
+}
+
+func internalError(message string) error {
+	return infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", message)
 }

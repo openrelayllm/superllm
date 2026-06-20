@@ -3,6 +3,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,33 +16,61 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type userHandlerRepoStub struct {
+	service.UserRepository
+	user       *service.User
+	avatar     *service.UserAvatar
+	identities []service.UserAuthIdentityRecord
+}
+
+func (r *userHandlerRepoStub) GetByID(_ context.Context, id int64) (*service.User, error) {
+	if r.user == nil || r.user.ID != id {
+		return nil, service.ErrUserNotFound
+	}
+	clone := *r.user
+	return &clone, nil
+}
+
+func (r *userHandlerRepoStub) GetUserAvatar(_ context.Context, _ int64) (*service.UserAvatar, error) {
+	return r.avatar, nil
+}
+
+func (r *userHandlerRepoStub) ListUserAuthIdentities(_ context.Context, userID int64) ([]service.UserAuthIdentityRecord, error) {
+	if r.user == nil || r.user.ID != userID {
+		return nil, service.ErrUserNotFound
+	}
+	return r.identities, nil
+}
+
 func TestAuthHandlerGetCurrentUserReturnsProfileCompatibilityFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	verifiedAt := time.Date(2026, 4, 20, 8, 30, 0, 0, time.UTC)
 	repo := &userHandlerRepoStub{
 		user: &service.User{
-			ID:           31,
-			Email:        "me@example.com",
-			Username:     "linuxdo-handle",
-			Role:         service.RoleUser,
-			Status:       service.StatusActive,
-			AvatarURL:    "https://cdn.example.com/linuxdo.png",
-			AvatarSource: "remote_url",
+			ID:       31,
+			Email:    "me@example.com",
+			Username: "linuxdo-handle",
+			Role:     service.RoleUser,
+			Status:   service.StatusActive,
 		},
-			identities: []service.UserAuthIdentityRecord{
-				{
-					ProviderType:    "linuxdo",
-					ProviderKey:     "linuxdo",
-					ProviderSubject: "linuxdo-subject-31",
-					VerifiedAt:      &verifiedAt,
-					Metadata: map[string]any{
-						"username":   "linuxdo-handle",
-						"avatar_url": "https://cdn.example.com/linuxdo.png",
-					},
+		avatar: &service.UserAvatar{
+			StorageProvider: "linuxdo",
+			URL:             "https://cdn.example.com/linuxdo.png",
+		},
+		identities: []service.UserAuthIdentityRecord{
+			{
+				ProviderType:    "linuxdo",
+				ProviderKey:     "linuxdo",
+				ProviderSubject: "linuxdo-subject-31",
+				VerifiedAt:      &verifiedAt,
+				Metadata: map[string]any{
+					"username":   "linuxdo-handle",
+					"avatar_url": "https://cdn.example.com/linuxdo.png",
 				},
 			},
-		}
+		},
+	}
 
 	handler := &AuthHandler{
 		userService: service.NewUserService(repo, nil, nil, nil),

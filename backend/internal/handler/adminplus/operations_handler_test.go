@@ -56,6 +56,12 @@ func TestBillingHandlerImportBillLines(t *testing.T) {
 	require.Equal(t, int64(1), body.Data.Items[0].ID)
 	require.Equal(t, "chrome", body.Data.Items[0].Source)
 	require.Equal(t, "USD", body.Data.Items[0].Currency)
+
+	list := httptest.NewRecorder()
+	listReq := httptest.NewRequest(http.MethodGet, "/billing/lines?supplier_id=7", nil)
+	router.ServeHTTP(list, listReq)
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	require.Contains(t, list.Body.String(), `"external_request_id":"req-1"`)
 }
 
 func TestExtensionHandlerTaskLifecycle(t *testing.T) {
@@ -150,10 +156,11 @@ func newOperationsHandlerTestRouter() *gin.Engine {
 
 	billingHandler := NewBillingHandler(billingapp.NewService(billingapp.NewMemoryRepository()))
 	extensionHandler := NewExtensionHandler(extensionapp.NewService(extensionapp.NewMemoryRepository()))
-	actionHandler := NewActionHandler(actionsapp.NewService())
+	actionHandler := NewActionHandler(actionsapp.NewRuleService())
 
 	router := gin.New()
 	router.POST("/billing/lines/import", billingHandler.ImportBillLines)
+	router.GET("/billing/lines", billingHandler.ListBillLines)
 	router.POST("/extension/tasks", extensionHandler.CreateTask)
 	router.POST("/extension/tasks/claim", extensionHandler.ClaimTask)
 	router.POST("/extension/tasks/:id/heartbeat", extensionHandler.Heartbeat)

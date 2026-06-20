@@ -12,13 +12,7 @@ import (
 	"github.com/lib/pq"
 )
 
-type ActionFilter struct {
-	SupplierID int64
-	Status     adminplusdomain.ActionStatus
-	Severity   adminplusdomain.ActionSeverity
-	Type       adminplusdomain.ActionType
-	Limit      int
-}
+type ActionFilter = RecommendationFilter
 
 type SQLRepository struct {
 	db *sql.DB

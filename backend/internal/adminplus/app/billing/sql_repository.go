@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
@@ -53,6 +55,49 @@ func (r *SQLRepository) CreateBillLine(ctx context.Context, line *adminplusdomai
 		line.CreatedAt,
 	)
 	return scanSupplierBillLine(row)
+}
+
+func (r *SQLRepository) ListBillLines(ctx context.Context, filter BillLineFilter) ([]*adminplusdomain.SupplierBillLine, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	where := []string{"1=1"}
+	args := make([]any, 0, 2)
+	addArg := func(value any) string {
+		args = append(args, value)
+		return fmt.Sprintf("$%d", len(args))
+	}
+	if filter.SupplierID > 0 {
+		where = append(where, "supplier_id = "+addArg(filter.SupplierID))
+	}
+	limitRef := addArg(filter.Limit)
+	query := `
+		SELECT id, supplier_id, source, external_bill_id, external_request_id,
+			model, currency, cost_cents, input_tokens, output_tokens, started_at,
+			ended_at, raw_payload, created_at
+		FROM admin_plus_supplier_bill_lines
+		WHERE ` + strings.Join(where, " AND ") + `
+		ORDER BY started_at DESC, id DESC
+		LIMIT ` + limitRef
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	items := make([]*adminplusdomain.SupplierBillLine, 0)
+	for rows.Next() {
+		item, err := scanSupplierBillLine(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 type billLineScanner interface {

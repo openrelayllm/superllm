@@ -25,8 +25,14 @@ type ImportBillLineInput struct {
 	RawPayload        map[string]any
 }
 
+type BillLineFilter struct {
+	SupplierID int64
+	Limit      int
+}
+
 type Repository interface {
 	CreateBillLine(ctx context.Context, line *adminplusdomain.SupplierBillLine) (*adminplusdomain.SupplierBillLine, error)
+	ListBillLines(ctx context.Context, filter BillLineFilter) ([]*adminplusdomain.SupplierBillLine, error)
 }
 
 type Service struct {
@@ -64,6 +70,17 @@ func (s *Service) ImportBillLines(ctx context.Context, lines []ImportBillLineInp
 		created = append(created, stored)
 	}
 	return created, nil
+}
+
+func (s *Service) ListBillLines(ctx context.Context, filter BillLineFilter) ([]*adminplusdomain.SupplierBillLine, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("billing service is not configured")
+	}
+	if filter.SupplierID < 0 {
+		return nil, badRequest("BILLING_SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	filter.Limit = normalizeLimit(filter.Limit)
+	return s.repo.ListBillLines(ctx, filter)
 }
 
 func (s *Service) buildLine(in ImportBillLineInput) (*adminplusdomain.SupplierBillLine, error) {
@@ -136,6 +153,16 @@ func cloneTime(in *time.Time) *time.Time {
 	}
 	v := in.UTC()
 	return &v
+}
+
+func normalizeLimit(limit int) int {
+	if limit <= 0 {
+		return 200
+	}
+	if limit > 1000 {
+		return 1000
+	}
+	return limit
 }
 
 func badRequest(reason string, message string) error {

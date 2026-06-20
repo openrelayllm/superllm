@@ -16,11 +16,15 @@ type AdminHandlers struct {
 
 // AdminPlusHandlers contains Admin Plus business HTTP handlers.
 type AdminPlusHandlers struct {
-	Supplier  *adminplushandler.SupplierHandler
-	Rate      *adminplushandler.RateHandler
-	Balance   *adminplushandler.BalanceHandler
-	Promotion *adminplushandler.PromotionHandler
-	Health    *adminplushandler.HealthHandler
+	Supplier       *adminplushandler.SupplierHandler
+	Rate           *adminplushandler.RateHandler
+	Balance        *adminplushandler.BalanceHandler
+	Promotion      *adminplushandler.PromotionHandler
+	Health         *adminplushandler.HealthHandler
+	Billing        *adminplushandler.BillingHandler
+	Extension      *adminplushandler.ExtensionHandler
+	Action         *adminplushandler.ActionHandler
+	Reconciliation *adminplushandler.ReconciliationHandler
 }
 
 // Handlers contains all HTTP handlers

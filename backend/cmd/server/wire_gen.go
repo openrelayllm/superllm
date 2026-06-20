@@ -9,7 +9,14 @@ package main
 import (
 	"context"
 	"github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/billing"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/promotions"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/reconciliation"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -114,7 +121,27 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	ratesSQLRepository := rates.NewSQLRepository(db)
 	ratesService := rates.NewService(ratesSQLRepository)
 	rateHandler := adminplus.NewRateHandler(ratesService)
-	adminPlusHandlers := handler.ProvideAdminPlusHandlers(supplierHandler, rateHandler)
+	balancesSQLRepository := balances.NewSQLRepository(db)
+	balancesService := balances.NewService(balancesSQLRepository)
+	balanceHandler := adminplus.NewBalanceHandler(balancesService)
+	promotionsSQLRepository := promotions.NewSQLRepository(db)
+	promotionsService := promotions.NewService(promotionsSQLRepository)
+	promotionHandler := adminplus.NewPromotionHandler(promotionsService)
+	healthSQLRepository := health.NewSQLRepository(db)
+	healthService := health.NewService(healthSQLRepository)
+	healthHandler := adminplus.NewHealthHandler(healthService)
+	billingSQLRepository := billing.NewSQLRepository(db)
+	billingService := billing.NewService(billingSQLRepository)
+	billingHandler := adminplus.NewBillingHandler(billingService)
+	extensionSQLRepository := extension.NewSQLRepository(db)
+	extensionService := extension.NewService(extensionSQLRepository)
+	extensionHandler := adminplus.NewExtensionHandler(extensionService)
+	actionsSQLRepository := actions.NewSQLRepository(db)
+	actionsService := actions.NewService(actionsSQLRepository)
+	actionHandler := adminplus.NewActionHandler(actionsService)
+	reconciliationService := reconciliation.NewService()
+	reconciliationHandler := adminplus.NewReconciliationHandler(reconciliationService)
+	adminPlusHandlers := handler.ProvideAdminPlusHandlers(supplierHandler, rateHandler, balanceHandler, promotionHandler, healthHandler, billingHandler, extensionHandler, actionHandler, reconciliationHandler)
 	notificationEmailService := service.NewNotificationEmailService(settingRepository, emailService)
 	handlerSettingHandler := handler.ProvideSettingHandler(settingService, buildInfo, notificationEmailService)
 	handlers := handler.ProvideHandlers(authHandler, adminHandlers, adminPlusHandlers, handlerSettingHandler)

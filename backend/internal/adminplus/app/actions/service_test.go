@@ -9,7 +9,7 @@ import (
 )
 
 func TestServiceGenerateSwitchesFromDepletedActiveSupplierToEligibleCandidate(t *testing.T) {
-	svc := NewService()
+	svc := NewRuleService()
 
 	result, err := svc.Generate(context.Background(), GenerateInput{
 		Suppliers: []SupplierSignal{
@@ -40,7 +40,7 @@ func TestServiceGenerateSwitchesFromDepletedActiveSupplierToEligibleCandidate(t 
 }
 
 func TestServiceGenerateDoesNotSwitchToMonitorOnlyPromotionSupplier(t *testing.T) {
-	svc := NewService()
+	svc := NewRuleService()
 
 	result, err := svc.Generate(context.Background(), GenerateInput{
 		Suppliers: []SupplierSignal{
@@ -66,7 +66,7 @@ func TestServiceGenerateDoesNotSwitchToMonitorOnlyPromotionSupplier(t *testing.T
 }
 
 func TestServiceGeneratePausesAndSwitchesFromFailingActiveSupplier(t *testing.T) {
-	svc := NewService()
+	svc := NewRuleService()
 
 	result, err := svc.Generate(context.Background(), GenerateInput{
 		Suppliers: []SupplierSignal{
@@ -100,7 +100,7 @@ func TestServiceGeneratePausesAndSwitchesFromFailingActiveSupplier(t *testing.T)
 }
 
 func TestServiceGenerateDegradesSlowOrSaturatedSupplier(t *testing.T) {
-	svc := NewService()
+	svc := NewRuleService()
 
 	result, err := svc.Generate(context.Background(), GenerateInput{
 		Suppliers: []SupplierSignal{
@@ -125,7 +125,7 @@ func TestServiceGenerateDegradesSlowOrSaturatedSupplier(t *testing.T) {
 }
 
 func TestServiceGenerateInvestigatesLowProfitMargin(t *testing.T) {
-	svc := NewService()
+	svc := NewRuleService()
 
 	result, err := svc.Generate(context.Background(), GenerateInput{
 		Suppliers: []SupplierSignal{
