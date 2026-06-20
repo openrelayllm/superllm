@@ -21,8 +21,10 @@ import (
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
 	suppliergroupsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
+	supplierkeysapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/supplierkeys"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -529,6 +531,76 @@ func TestSupplierRateSyncReadsProviderSession(t *testing.T) {
 	require.NotContains(t, synced.Body.String(), "secret-cookie")
 }
 
+func TestSupplierKeyProvisionCreatesProviderKeyLocalAccountAndBinding(t *testing.T) {
+	var seenAuth string
+	var seenCookie string
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "/api/v1/api-keys", req.URL.Path)
+		seenAuth = req.Header.Get("Authorization")
+		seenCookie = req.Header.Get("Cookie")
+		require.NoError(t, json.NewDecoder(req.Body).Decode(&payload))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": {
+				"id": 99,
+				"name": "ops-key",
+				"key": "sk-provider-secret",
+				"group_id": 10,
+				"status": "active"
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	router := newOperationsHandlerTestRouterWithSupplierURLs(server.URL, server.URL)
+	created := performJSON(t, router, http.MethodPost, "/suppliers/1/browser-sessions", `{
+		"origin": "`+server.URL+`",
+		"session_bundle": {
+			"origin": "`+server.URL+`",
+			"tokens": {"access_token": "secret-token"},
+			"required_headers": {"cookie": "sid=secret-cookie"},
+			"context": {"api_base_url": "`+server.URL+`"}
+		}
+	}`)
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+
+	provisioned := performJSON(t, router, http.MethodPost, "/suppliers/1/keys/provision", `{
+		"supplier_group_id": 10,
+		"name": "ops-key",
+		"quota_usd": 25,
+		"local_account_platform": "openai",
+		"local_account_name": "local-upstream",
+		"local_account_base_url": "`+server.URL+`/v1",
+		"local_account_concurrency": 3,
+		"local_account_priority": 40,
+		"balance_currency": "USD"
+	}`)
+	require.Equal(t, http.StatusCreated, provisioned.Code, provisioned.Body.String())
+	require.Equal(t, "Bearer secret-token", seenAuth)
+	require.Equal(t, "sid=secret-cookie", seenCookie)
+	require.Equal(t, "ops-key", payload["name"])
+	require.Equal(t, float64(10), payload["group_id"])
+	require.Equal(t, float64(25), payload["quota"])
+	require.Contains(t, provisioned.Body.String(), `"status":"bound"`)
+	require.Contains(t, provisioned.Body.String(), `"external_key_id":"99"`)
+	require.Contains(t, provisioned.Body.String(), `"key_last4":"cret"`)
+	require.Contains(t, provisioned.Body.String(), `"supplier_key_id":1`)
+	require.Contains(t, provisioned.Body.String(), `"local_sub2api_account_id":1001`)
+	require.NotContains(t, provisioned.Body.String(), "sk-provider-secret")
+	require.NotContains(t, provisioned.Body.String(), "secret-token")
+	require.NotContains(t, provisioned.Body.String(), "secret-cookie")
+
+	listed := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/suppliers/1/keys?page=1&page_size=10", nil)
+	router.ServeHTTP(listed, req)
+	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+	require.Contains(t, listed.Body.String(), `"total":1`)
+	require.Contains(t, listed.Body.String(), `"external_key_id":"99"`)
+	require.NotContains(t, listed.Body.String(), "sk-provider-secret")
+}
+
 func TestExtensionHandlerManifestAndPackage(t *testing.T) {
 	router := newOperationsHandlerTestRouter()
 
@@ -690,6 +762,30 @@ func newOperationsHandlerTestRouterWithSupplierURLs(dashboardURL string, apiBase
 		sessionSvc,
 		sessionGroupClient,
 	))
+	keyRepo := supplierkeysapp.NewMemoryRepository()
+	keyRepo.PutSupplier(&adminplusdomain.Supplier{
+		ID:            1,
+		Name:          "Relay",
+		Type:          adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus: adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:  adminplusdomain.SupplierHealthStatusNormal,
+		DashboardURL:  dashboardURL,
+		APIBaseURL:    apiBaseURL,
+	})
+	keyRepo.PutGroup(&adminplusdomain.SupplierGroup{
+		ID:              10,
+		SupplierID:      1,
+		ExternalGroupID: "10",
+		Name:            "GPT-5.5 Low Cost",
+		ProviderFamily:  "openai",
+		Status:          adminplusdomain.SupplierGroupStatusActive,
+	})
+	supplierKeyHandler := NewSupplierKeyHandler(supplierkeysapp.NewService(
+		keyRepo,
+		sessionSvc,
+		sub2apiprovider.NewSessionProfileClient(http.DefaultClient),
+		&operationsLocalAccountCreator{},
+	))
 	processor := extensionapp.NewIngestProcessorWithCipher(nil, nil, nil, nil, nil, sessionSvc, plainSessionCipher{})
 	extensionHandler := NewExtensionHandler(extensionapp.NewServiceWithDependencies(extensionapp.NewMemoryRepository(), processor, supplierSvc))
 	actionHandler := NewActionHandler(actionsapp.NewRuleService())
@@ -717,6 +813,8 @@ func newOperationsHandlerTestRouterWithSupplierURLs(dashboardURL string, apiBase
 	router.POST("/suppliers/:id/browser-sessions", sessionHandler.Upsert)
 	router.GET("/suppliers/:id/groups", supplierGroupHandler.List)
 	router.POST("/suppliers/:id/groups/sync", supplierGroupHandler.Sync)
+	router.GET("/suppliers/:id/keys", supplierKeyHandler.List)
+	router.POST("/suppliers/:id/keys/provision", supplierKeyHandler.Provision)
 	router.POST("/suppliers/:id/rates/sync", rateHandler.SyncSupplierRates)
 	router.POST("/billing/lines/import", billingHandler.ImportBillLines)
 	router.GET("/billing/lines", billingHandler.ListBillLines)
@@ -751,6 +849,18 @@ type operationsRateRepository struct {
 	nextEventID    int64
 	snapshots      []*adminplusdomain.RateSnapshot
 	events         []*adminplusdomain.RateChangeEvent
+}
+
+type operationsLocalAccountCreator struct{}
+
+func (c *operationsLocalAccountCreator) CreateAccount(_ context.Context, input *service.CreateAccountInput) (*service.Account, error) {
+	return &service.Account{
+		ID:          1001,
+		Name:        input.Name,
+		Platform:    input.Platform,
+		Type:        input.Type,
+		Credentials: input.Credentials,
+	}, nil
 }
 
 func newOperationsRateRepository() *operationsRateRepository {

@@ -126,7 +126,7 @@ func TestSessionProfileClientCreateKey(t *testing.T) {
 	require.Equal(t, "ops-key", result.Name)
 	require.Equal(t, "sk-supplier-secret", result.Secret)
 	require.Equal(t, "active", result.Status)
-	require.Equal(t, "sk-supplier-secret", result.RawPayload["key"])
+	require.NotContains(t, result.RawPayload, "key")
 }
 
 func TestSessionProfileClientReadGroups(t *testing.T) {

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -11,6 +12,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/google/wire"
+	"github.com/imroc/req/v3"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -71,6 +73,16 @@ func ProvideEmailQueueService(emailService *EmailService) *EmailQueueService {
 // ProvideOAuthRefreshAPI creates OAuthRefreshAPI with the default lock TTL.
 func ProvideOAuthRefreshAPI(accountRepo AccountRepository, tokenCache GeminiTokenCache) *OAuthRefreshAPI {
 	return NewOAuthRefreshAPI(accountRepo, tokenCache)
+}
+
+func ProvidePrivacyClientFactory() PrivacyClientFactory {
+	return func(proxyURL string) (*req.Client, error) {
+		client := req.C().SetTimeout(15 * time.Second)
+		if trimmed := strings.TrimSpace(proxyURL); trimmed != "" {
+			client.SetProxyURL(trimmed)
+		}
+		return client, nil
+	}
 }
 
 // ProvideOpenAIOAuthService creates OpenAIOAuthService with privacy/account enrichment support.
@@ -550,6 +562,7 @@ var ProviderSet = wire.NewSet(
 	NewOpenAIGatewayService,
 	wire.Bind(new(AccountRuntimeBlocker), new(*OpenAIGatewayService)),
 	NewOAuthService,
+	ProvidePrivacyClientFactory,
 	ProvideOpenAIOAuthService,
 	NewGeminiOAuthService,
 	NewGeminiQuotaService,

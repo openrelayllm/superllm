@@ -51,6 +51,8 @@ backend/
       domain/                       # Admin Plus 领域模型、枚举、业务错误
       app/
         suppliers/                  # 供应商父级台账、供应商下挂账号/Key 子级绑定
+        suppliergroups/             # 供应商分组事实表，Provider Adapter 同步后落库
+        supplierkeys/               # 第三方 Key 元数据、本地账号创建和绑定编排
         rates/                      # 费率抓取、快照、变更事件
         promotions/                 # 优惠活动监控、充值建议
         billing/                    # 账单导入、账单明细归一化
@@ -220,6 +222,10 @@ GET    /api/v1/admin-plus/suppliers/:id/accounts
 POST   /api/v1/admin-plus/suppliers/:id/accounts
 PUT    /api/v1/admin-plus/suppliers/:id/accounts/:accountID
 DELETE /api/v1/admin-plus/suppliers/:id/accounts/:accountID
+GET    /api/v1/admin-plus/suppliers/:id/groups
+POST   /api/v1/admin-plus/suppliers/:id/groups/sync
+GET    /api/v1/admin-plus/suppliers/:id/keys
+POST   /api/v1/admin-plus/suppliers/:id/keys/provision
 GET    /api/v1/admin-plus/sub2api/accounts
 GET    /api/v1/admin-plus/sub2api/account-runtime
 GET    /api/v1/admin-plus/sub2api/usage-lines
@@ -318,12 +324,8 @@ Chrome 插件任务规则：
 - SQL repository 领取任务使用 `FOR UPDATE SKIP LOCKED` 原子更新，避免多个 Chrome 设备同时领取同一任务。
 - 心跳会刷新租约并把任务推进到 `running`。
 - 完成任务写入结果并进入 `succeeded`。
-- 完成任务时，后端会按任务类型把插件回传的结构化 `result` 摄取到业务表：
-  - `fetch_rates` 写入费率快照和变更事件。
-  - `fetch_balance` 写入余额快照和余额事件。
-  - `fetch_promotions` 写入优惠事件。
-  - `fetch_health` 写入健康样本和健康事件。
-  - `export_bills` 写入供应商账单明细。
+- 完成 `capture_supplier_session` 后，余额、分组、费率和第三方 Key 创建主路径都由后端 Provider Adapter 使用已保存会话执行；插件不解析和上报业务结果。
+- `fetch_rates`、`fetch_balance`、`fetch_promotions`、`fetch_health`、`export_bills` 的结构化结果摄取仅保留为 compat 路径，不再作为插件 Popup 或新能力的主交互继续增强。
 - 失败任务在未超过 `max_attempts` 前回到 `pending`，超过后进入 `failed`。
 - 当前 `MemoryRepository` 仅用于单元测试，不进入运行时对象图。
 
@@ -378,6 +380,8 @@ Chrome 插件任务规则：
 current:
   backend/internal/adminplus/domain/*
   backend/internal/adminplus/app/suppliers/*
+  backend/internal/adminplus/app/suppliergroups/*
+  backend/internal/adminplus/app/supplierkeys/*
   backend/internal/adminplus/app/rates/*
   backend/internal/adminplus/app/balances/*
   backend/internal/adminplus/app/promotions/*

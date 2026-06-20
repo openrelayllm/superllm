@@ -1,13 +1,17 @@
 package supplierkeys
 
 import (
-	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/wire"
 )
+
+func UseLocalAccountCreator(admin service.AdminService) LocalAccountCreator {
+	return admin
+}
 
 var ProviderSet = wire.NewSet(
 	NewSQLRepository,
 	wire.Bind(new(Repository), new(*SQLRepository)),
-	wire.Bind(new(SessionReader), new(*sessionsapp.Service)),
+	UseLocalAccountCreator,
 	NewService,
 )

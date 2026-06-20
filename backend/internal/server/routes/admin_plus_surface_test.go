@@ -17,6 +17,7 @@ import (
 	schedulerapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
 	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	suppliergroupsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
+	supplierkeysapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/supplierkeys"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
@@ -24,6 +25,7 @@ import (
 	adminhandler "github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	adminplushandler "github.com/Wei-Shaw/sub2api/internal/handler/adminplus"
 	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -40,6 +42,12 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 		&routeSurfaceSessionReader{},
 		&routeSurfaceGroupReader{},
 	)
+	supplierKeyService := supplierkeysapp.NewService(
+		supplierkeysapp.NewMemoryRepository(),
+		&routeSurfaceSessionReader{},
+		&routeSurfaceKeyAdapter{},
+		&routeSurfaceLocalAccountCreator{},
+	)
 	handlers := &handler.Handlers{
 		Auth:    &handler.AuthHandler{},
 		Setting: &handler.SettingHandler{},
@@ -53,6 +61,7 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 		AdminPlus: &handler.AdminPlusHandlers{
 			Supplier:       adminplushandler.NewSupplierHandler(supplierService),
 			SupplierGroup:  adminplushandler.NewSupplierGroupHandler(supplierGroupService),
+			SupplierKey:    adminplushandler.NewSupplierKeyHandler(supplierKeyService),
 			Rate:           adminplushandler.NewRateHandler(ratesapp.NewServiceWithDependencies(newRouteSurfaceRateRepository(), nil, &routeSurfaceSessionReader{}, &routeSurfaceRateReader{})),
 			Balance:        adminplushandler.NewBalanceHandler(balancesapp.NewService(balancesapp.NewMemoryRepository())),
 			Promotion:      adminplushandler.NewPromotionHandler(promotionsapp.NewService(promotionsapp.NewMemoryRepository())),
@@ -113,6 +122,8 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"DELETE /api/v1/admin-plus/suppliers/:id/accounts/:accountID",
 		"GET /api/v1/admin-plus/suppliers/:id/groups",
 		"POST /api/v1/admin-plus/suppliers/:id/groups/sync",
+		"GET /api/v1/admin-plus/suppliers/:id/keys",
+		"POST /api/v1/admin-plus/suppliers/:id/keys/provision",
 		"POST /api/v1/admin-plus/suppliers/:id/rates/sync",
 		"GET /api/v1/admin-plus/suppliers/:id/session",
 		"POST /api/v1/admin-plus/suppliers/:id/session/probe",
@@ -242,6 +253,31 @@ type routeSurfaceRateReader struct{}
 
 func (r *routeSurfaceRateReader) ReadRates(_ context.Context, in ports.SessionProbeInput) (*ports.ReadRatesResult, error) {
 	return &ports.ReadRatesResult{SupplierID: in.SupplierID, SystemType: "sub2api"}, nil
+}
+
+type routeSurfaceKeyAdapter struct{}
+
+func (r *routeSurfaceKeyAdapter) CreateKey(_ context.Context, in ports.SessionProbeInput, request ports.CreateProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	return &ports.ProviderKeyResult{
+		SupplierID:      in.SupplierID,
+		ExternalGroupID: request.ExternalGroupID,
+		ExternalKeyID:   "route-surface-key",
+		Name:            request.Name,
+		Secret:          "sk-route-surface-secret",
+		Status:          "active",
+		RawPayload:      map[string]any{},
+	}, nil
+}
+
+type routeSurfaceLocalAccountCreator struct{}
+
+func (r *routeSurfaceLocalAccountCreator) CreateAccount(_ context.Context, input *service.CreateAccountInput) (*service.Account, error) {
+	return &service.Account{
+		ID:       1,
+		Name:     input.Name,
+		Platform: input.Platform,
+		Type:     input.Type,
+	}, nil
 }
 
 func newRouteSurfaceRateRepository() *routeSurfaceRateRepository {

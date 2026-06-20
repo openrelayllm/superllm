@@ -477,7 +477,7 @@ func parseSub2APIKeyCreateResponse(data []byte) (*ports.ProviderKeyResult, error
 		Name:            stringFromAny(raw["name"]),
 		Secret:          secret,
 		Status:          firstNonEmpty(stringFromAny(raw["status"]), "active"),
-		RawPayload:      raw,
+		RawPayload:      sanitizeProviderKeyPayload(raw),
 	}
 	if result.ExternalKeyID == "0" {
 		result.ExternalKeyID = ""
@@ -486,6 +486,22 @@ func parseSub2APIKeyCreateResponse(data []byte) (*ports.ProviderKeyResult, error
 		result.ExternalGroupID = ""
 	}
 	return result, nil
+}
+
+func sanitizeProviderKeyPayload(raw map[string]any) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(raw))
+	for key, value := range raw {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "key", "api_key", "apikey", "token", "secret":
+			continue
+		default:
+			out[key] = value
+		}
+	}
+	return out
 }
 
 func parseRateEntriesResponse(data []byte) []ports.ProviderRateEntry {

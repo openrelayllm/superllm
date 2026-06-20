@@ -139,7 +139,7 @@ flowchart TD
 - 失败时写入明确错误：`session_required`、`session_expired`、`permission_denied`、`capability_missing`、`provider_unreachable`。
 - 不生成 mock 成功数据。
 
-### P3：账号开通和本地落地
+### P3：分组弹窗内开通 Key 和本地落地
 
 目标：从供应商出发完成第三方 Key 创建、本地 Sub2API 账号创建和绑定。
 
@@ -149,8 +149,11 @@ flowchart TD
 flowchart TD
   A[供应商已创建] --> B[插件上报有效会话]
   B --> C[Provider Adapter 同步分组]
-  C --> D[运营者选择分组和密钥参数]
-  D --> E{Adapter 是否支持创建 Key}
+  C --> D[供应商分组弹窗展示绑定状态]
+  D --> D1{分组是否已绑定}
+  D1 -- 是 --> D2[展示 Key 和本地账号，不重复开通]
+  D1 -- 否 --> D3[运营者在分组行点击开通]
+  D3 --> E{Adapter 是否支持创建 Key}
   E -- 否 --> E1[人工处理或补适配器]
   E -- 是 --> F[Adapter 创建第三方 Key]
   F --> G{是否拿到密钥明文}
@@ -164,7 +167,8 @@ flowchart TD
 
 - 本地 Sub2API 写入只走 Admin API。
 - 第三方 Key 明文默认只在内存中流转；失败暂存必须加密和短 TTL。
-- 绑定后能在账号/Key 子级看到余额、健康、成本和最近采集状态。
+- 绑定后能在供应商分组弹窗看到第三方 Key、本地账号 ID、状态和失败原因。
+- 账号/Key 独立页只作为修复、审计和历史绑定入口，不作为开通主路径。
 
 ### P4：前端导航和页面重新设计
 
@@ -174,8 +178,7 @@ flowchart TD
 
 - 供应商
   - 供应商管理
-  - 账号/Key 绑定
-  - 分组同步
+  - 账号/Key 绑定（修复/审计）
 - 采集监控
   - 任务调度
   - 插件任务
@@ -196,9 +199,9 @@ flowchart TD
 
 页面原则：
 
-- 供应商管理页只管父级。
-- 账号/Key 绑定页只管子级和本地账号绑定。
-- 分组同步页或供应商详情页展示分组，不混到账号编辑表单里。
+- 供应商管理页负责父级、会话、分组同步和分组行开通 Key/账号主流程。
+- 分组弹窗内展示分组、第三方 Key、本地账号绑定和开通动作。
+- 账号/Key 绑定页只管失败修复、审计和历史绑定，不承担新增主流程。
 - 费率、余额、健康、优惠、账单页面各自服务不同任务，不做重复表格换标题。
 - 表单、弹窗、工具栏、分页、批量操作继续参考 Sub2API 后台现有交互。
 
@@ -280,8 +283,8 @@ P1/P2 紧随其后：
 
 P3 之后：
 
-- [ ] 实现第三方 Key 创建 capability。
-- [ ] 实现本地 Sub2API Admin API 创建账号。
+- [x] 实现第三方 Key 创建基础 capability。
+- [x] 实现本地 Sub2API Admin API 创建账号基础编排。
 - [ ] 实现绑定补偿和修复入口。
 
 P4/P5 最后收口：
@@ -295,6 +298,8 @@ P4/P5 最后收口：
 - `POST /api/v1/admin-plus/suppliers/:id/browser-sessions`：管理员登录态下直接写入供应商浏览器会话，主要用于调试、手动导入和插件联调，不替代短租约主路径。
 - `GET /api/v1/admin-plus/suppliers/:id/session`：查询供应商会话脱敏状态，只返回摘要和是否已加密保存，不回显 token/cookie。
 - `POST /api/v1/admin-plus/suppliers/:id/session/probe`：基于已保存会话访问同源 Sub2API 供应商用户侧 `/api/v1/user/profile`，读取当前下游用户余额并写入余额快照。
+- `POST /api/v1/admin-plus/suppliers/:id/rates/sync`：基于已保存会话访问同源 Sub2API 供应商用户侧费率/渠道接口，归一化后写入 `admin_plus_rate_snapshots` 和变更事件。
+- `POST /api/v1/admin-plus/suppliers/:id/keys/provision`：管理员确认后基于已保存会话创建第三方 Key，再调用本地 Sub2API Admin API 创建账号，并写入 `admin_plus_supplier_keys` 和 `admin_plus_supplier_accounts` 绑定。
 - 前端供应商页面已显示浏览器会话状态，并支持手动刷新会话与读取供应商余额。
 
 安全边界已实现：
@@ -305,12 +310,13 @@ P4/P5 最后收口：
 - 会话响应只返回 `has_encrypted_bundle`、采集时间、过期时间和摘要。
 - Provider Adapter profile 探测默认只访问用户侧 profile，不访问供应商 `/api/v1/admin/*`。
 - `ReadGroups(session)` 已落地：`POST /api/v1/admin-plus/suppliers/:id/groups/sync` 使用后端 Provider Adapter 读取供应商用户侧分组接口，并 upsert 到 `admin_plus_supplier_groups`；`GET /api/v1/admin-plus/suppliers/:id/groups` 查询本地分组事实表。
+- `ReadRates(session)` 已落地：旧插件 `fetch_rates` 只保留 compat，不作为费率主路径。
+- `CreateKey(session, group, params)` 基础链路已落地：第三方 Key 明文只在 Adapter -> Service -> 本地 Sub2API Admin API 的内存链路中流转，响应和 `provision_response` 不保存明文 key/token/secret。
 
 下一步仍未完成：
 
-- `ReadRates(session)`：基于分组/模型/计费项读取真实费率。
 - `ReadBilling(session, date_range)`：读取真实账单明细并进入对账。
-- `CreateKey(session, group, params)`：管理员确认后创建第三方 Key，并同步创建本地 Sub2API 账号。
+- 第三方 Key 真实供应商联调、幂等补偿、失败修复入口和操作审计。
 
 - [ ] 重排导航。
 - [ ] 完善所有列表分页和 CRUD UI。

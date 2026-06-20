@@ -14,7 +14,7 @@
 3. Chrome 插件登录或复用已登录的供应商后台会话。
 4. Chrome 插件把供应商 token、cookie、CSRF、组织信息、页面上下文等会话包上报给 Admin Plus。
 5. Admin Plus Provider Adapter 基于会话包读取供应商分组。
-6. 运营者选择供应商分组和密钥参数。
+6. 运营者在供应商分组弹窗的某个分组行选择“开通 Key/账号”，填写密钥和本地账号参数。
 7. Admin Plus Provider Adapter 基于会话包创建第三方密钥。
 8. Admin Plus 使用本地 Sub2API Admin API 同步创建本地 Sub2API 账号。
 9. Admin Plus 建立供应商父级、第三方密钥、本地 Sub2API 账号之间的绑定。
@@ -24,8 +24,9 @@
 
 - 供应商是父级。
 - 第三方分组属于供应商。
-- 第三方密钥属于供应商分组。
+- 第三方密钥由供应商创建，创建时选择供应商分组；Admin Plus 不创建供应商分组。
 - 本地 Sub2API 账号是第三方密钥在本地网关中的落地实体。
+- MVP 中按“一组一个可调度 Key/本地账号绑定”收敛；未绑定分组不能作为切换候选。
 - Admin Plus 绑定关系只关联事实，不伪造第三方密钥，也不直接写本地 Sub2API 数据库。
 - 写本地 Sub2API 必须走本地 Sub2API Admin API；读取可以走 Admin API、只读 DB 或只读 Redis。
 - Chrome 插件只负责作为浏览器桥梁：识别供应商站点、采集浏览器会话和第三方供应商页面上下文、上报给 Admin Plus。
@@ -82,7 +83,7 @@ flowchart TD
 
 插件只负责提交候选信息，不能静默创建供应商，也不能直接写数据库。创建动作由 Admin Plus 后端在管理员登录态下完成。
 
-### 4.2 账号开通总流程
+### 4.2 分组弹窗开通总流程
 
 ```mermaid
 flowchart TD
@@ -94,8 +95,11 @@ flowchart TD
   F -- 否 --> F1[标记能力缺失并提示补适配器]
   F -- 是 --> G[Provider Adapter 读取分组]
   G --> H[Admin Plus 保存分组快照]
-  H --> I[运营者选择分组和密钥参数]
-  I --> J{能否创建第三方密钥}
+  H --> I[供应商分组弹窗展示分组和绑定状态]
+  I --> I1{该分组是否已绑定}
+  I1 -- 是 --> I2[展示第三方 Key 和本地账号，不重复开通]
+  I1 -- 否 --> I3[运营者点击开通 Key/账号]
+  I3 --> J{能否创建第三方密钥}
   J -- 否 --> J1[标记能力缺失并提示补适配器]
   J -- 是 --> K[Provider Adapter 创建第三方密钥]
   K --> L{是否拿到密钥明文}
@@ -106,6 +110,24 @@ flowchart TD
   N -- 是 --> O[创建 Admin Plus 账号绑定]
   O --> P[Provider Adapter 触发初次采集]
   P --> Q[进入调度与运营闭环]
+```
+
+### 4.3 UI 与后端责任图
+
+```mermaid
+flowchart LR
+  W[供应商管理页] --> G[分组弹窗]
+  G --> GL[GET /suppliers/:id/groups]
+  G --> KL[GET /suppliers/:id/keys]
+  G --> P[开通 Key/账号弹窗]
+  P --> KP[POST /suppliers/:id/keys/provision]
+  KP --> A[SupplierKeys Service]
+  A --> S[Sub2API Provider Adapter]
+  S --> U[供应商用户侧 API]
+  A --> L[本地 Sub2API AdminService.CreateAccount]
+  A --> D[(Admin Plus DB)]
+  D --> K[admin_plus_supplier_keys]
+  D --> B[admin_plus_supplier_accounts]
 ```
 
 ## 5. 数据关系图
@@ -202,7 +224,7 @@ sequenceDiagram
   A-->>W: Web 可刷新查看分组
 
   O->>W: 选择分组并发起创建密钥
-  W->>A: POST /suppliers/:id/provision-keys
+  W->>A: POST /suppliers/:id/keys/provision
   A->>S: Provider Adapter 使用供应商 API 创建密钥
   S-->>A: 返回 key id 和密钥明文或能力缺失错误
   A->>L: 创建本地 Sub2API 账号
@@ -241,21 +263,21 @@ sequenceDiagram
   participant L as 本地 Sub2API
   participant D as Admin Plus DB
 
-  O->>W: 选择供应商分组、密钥名称、额度、有效期
-  W->>A: 提交创建密钥请求
-  A->>D: 创建 provisioning 记录，状态 pending
+  O->>W: 在供应商分组弹窗点击某行开通
+  W->>A: 提交创建密钥和本地账号请求
+  A->>D: 创建 supplier_key 记录，状态 provisioning
   A->>S: Provider Adapter 使用已保存会话探测 can_create_key
   alt Provider Adapter 可创建密钥
     A->>S: 调用供应商 API 创建密钥
     S-->>A: key id + secret + group id
   else Provider Adapter 不可创建密钥
-    A->>D: 标记 capability_missing
+    A->>D: 标记 failed
     A-->>W: 提示补供应商适配器或人工处理
   end
   alt 已拿到密钥明文
     A->>L: 创建本地 Sub2API 账号，写入 secret
     L-->>A: local_account_id
-    A->>D: 保存 key 指纹、last4、local_account_id、绑定
+    A->>D: 保存 key 指纹、last4、local_account_id、绑定，状态 bound
     A-->>W: 完成
   else 供应商不返回明文或创建失败
     A->>D: 标记 failed 或 manual_secret_required
@@ -342,7 +364,7 @@ flowchart TD
   E --> F[解析 external_group_id/name/倍率/私有标记/描述]
   F --> G[按 supplier_id + external_group_id upsert]
   G --> H[标记新增/变更/下线]
-  H --> I[账号开通向导展示可选分组]
+  H --> I[供应商分组弹窗展示绑定状态和开通按钮]
 ```
 
 ### 9.3 获取余额流程
@@ -485,17 +507,19 @@ flowchart TD
 - 展示插件登录状态、分组同步状态、最后会话探测时间。
 - 提供“登录供应商并同步分组”动作。
 
-### 11.2 供应商详情或账号开通向导
+### 11.2 供应商分组弹窗内开通 Key/账号
 
-账号开通不应只在“账号/Key 绑定”页手工选本地账号，应提供向导：
+MVP 主路径不再跳转到独立“账号/Key 绑定”页手工选本地账号，而是在供应商管理页的“分组”弹窗内完成：
 
-1. 选择供应商。
-2. 同步并选择供应商分组。
-3. 设置第三方密钥名称、额度、有效期、备注。
-4. 系统通过 Provider Adapter 创建第三方密钥。
-5. 系统同步创建本地 Sub2API 账号。
-6. 系统创建绑定并展示结果。
-7. 如果适配器能力缺失，页面展示需要补适配器或人工处理的明确原因。
+1. 打开供应商父级的“分组”弹窗。
+2. 同步并查看供应商真实分组。
+3. 每个分组行展示当前第三方 Key、本地 Sub2API 账号和绑定状态。
+4. 未绑定分组显示“未开通”，提供“开通”按钮。
+5. 开通表单设置第三方密钥名称、额度、有效期、本地账号名称、平台、Base URL、并发、优先级、倍率、余额和状态。
+6. 系统通过 Provider Adapter 创建第三方密钥。
+7. 系统同步创建本地 Sub2API 账号。
+8. 系统创建绑定并在该分组行展示结果。
+9. 如果适配器能力缺失，页面展示需要补适配器或人工处理的明确原因。
 
 ### 11.3 账号/Key 绑定页
 
@@ -504,32 +528,22 @@ flowchart TD
 - 自动开通结果列表：展示供应商、分组、第三方 key、local_account_id、状态、余额、健康、成本。
 - 手动修复入口：当自动同步失败时，允许选择已有本地账号或补录第三方 key 元数据完成绑定。
 
-不再把“选择已有本地账号”作为唯一主路径。
+不再把“选择已有本地账号”作为主路径。该页面降级为修复、审计和历史绑定入口。
 
 ## 12. 后端模块建议
 
 ```text
-backend/internal/adminplus/app/accounts/
-  provisioning_service.go        # 账号开通编排
-  group_service.go               # 分组同步和变更检测
-  supplier_key_service.go        # 第三方密钥元数据和补偿
-  repository.go
-  sql_repository.go
+backend/internal/adminplus/app/supplierkeys/
+  service.go                     # 第三方 Key 创建、本地账号创建和绑定编排
+  sql_repository.go              # admin_plus_supplier_keys + admin_plus_supplier_accounts 写入
+  memory_repository.go           # 单元测试仓储
+  provider.go                    # Wire provider
 
-backend/internal/adminplus/integration/provider/sub2api/
-  capabilities.go                # 供应商能力探测：分组、密钥、账单、余额等能力矩阵
-  groups.go                      # Sub2API 供应商分组读取
-  keys.go                        # Sub2API 供应商密钥创建，优先使用会话 API
-  rates.go                       # 费率采集
-  balances.go                    # 余额采集：优先读取供应商用户侧 profile，不把本地账号 quota 当供应商余额
-  billing.go                     # 账单采集
-  session_client.go              # 使用插件上报的会话构造受限 HTTP client
-
-backend/internal/adminplus/integration/local/sub2apiadmin/
-  accounts_client.go             # 本地 Sub2API Admin API 账号创建
+backend/internal/adminplus/adapters/sub2api/provider/
+  session_profile.go             # Sub2API 供应商用户侧 profile、分组、费率和 Key 创建
 
 backend/internal/handler/adminplus/
-  account_provisioning_handler.go
+  supplier_key_handler.go        # GET keys / POST keys/provision
 ```
 
 保持边界：
@@ -575,9 +589,14 @@ unique(supplier_id, external_group_id)
 | `name` | text | 第三方 key 名称 |
 | `key_fingerprint` | text | 密钥指纹 |
 | `key_last4` | text | 密钥末 4 位 |
-| `status` | text | pending / active / failed / revoked |
-| `created_by_plugin_device_id` | text | 执行插件设备 |
-| `raw_payload` | jsonb | 原始结果 |
+| `status` | text | provisioning / bound / manual_secret_required / failed / disabled |
+| `local_sub2api_account_id` | bigint | 本地 Sub2API 账号 ID |
+| `local_account_name` | text | 本地账号名称快照 |
+| `local_account_platform` | text | 本地账号平台快照 |
+| `provision_request` | jsonb | 开通请求脱敏快照 |
+| `provision_response` | jsonb | 第三方响应脱敏快照 |
+| `error_code` | text | 失败码 |
+| `error_message` | text | 失败原因 |
 | `created_at` | timestamptz | 创建时间 |
 
 Admin Plus 默认不长期保存第三方密钥明文。只有本地 Sub2API 创建失败时，可以加密暂存明文并设置短 TTL。
@@ -692,11 +711,18 @@ POST /api/v1/admin-plus/suppliers/:id/groups/sync
 GET /api/v1/admin-plus/suppliers/:id/groups?page=1&page_size=50
 ```
 
-### 14.5 创建第三方密钥并同步本地账号
+### 14.5 查询供应商 Key
 
 ```http
-POST /api/v1/admin-plus/suppliers/:id/account-provisionings
-Idempotency-Key: supplier-1-group-12-key-main-20260621
+GET /api/v1/admin-plus/suppliers/:id/keys?page=1&page_size=1000
+```
+
+作用：供应商分组弹窗加载分组后，同时查询 Key 列表并按 `supplier_group_id` 建立映射。每个分组行展示“已绑定/未开通/失败”等状态。
+
+### 14.6 创建第三方密钥并同步本地账号
+
+```http
+POST /api/v1/admin-plus/suppliers/:id/keys/provision
 ```
 
 请求：
@@ -704,17 +730,21 @@ Idempotency-Key: supplier-1-group-12-key-main-20260621
 ```json
 {
   "supplier_group_id": 12,
-  "key_name": "sub2api-plus-20260621-main",
-  "quota_cents": 0,
-  "expires_at": null,
-  "local_account": {
-    "name": "supplier-a / PRO 0.12 / main",
-    "platform": "openai",
-    "type": "api_key",
-    "priority": 50,
-    "concurrency": 5,
-    "schedulable": true
-  }
+  "name": "sub2api-plus-20260621-main",
+  "quota_usd": 25,
+  "expires_in_days": null,
+  "local_account_name": "supplier-a / PRO 0.12 / main",
+  "local_account_platform": "openai",
+  "local_account_base_url": "https://supplier.example.com/v1",
+  "local_account_priority": 50,
+  "local_account_concurrency": 5,
+  "local_account_rate_multiplier": 0.8,
+  "local_account_group_ids": [1],
+  "runtime_status": "monitor_only",
+  "health_status": "normal",
+  "balance_threshold_cents": 0,
+  "balance_cents": 0,
+  "balance_currency": "USD"
 }
 ```
 
@@ -722,13 +752,29 @@ Idempotency-Key: supplier-1-group-12-key-main-20260621
 
 ```json
 {
-  "provisioning_run_id": "ap_01J...",
-  "status": "creating_with_provider",
-  "mode": "provider_adapter"
+  "key": {
+    "id": 88,
+    "supplier_id": 123,
+    "supplier_group_id": 12,
+    "external_key_id": "99",
+    "key_fingerprint": "sha256...",
+    "key_last4": "abcd",
+    "status": "bound",
+    "local_sub2api_account_id": 456
+  },
+  "binding": {
+    "id": 77,
+    "supplier_id": 123,
+    "supplier_key_id": 88,
+    "local_sub2api_account_id": 456,
+    "runtime_status": "monitor_only"
+  }
 }
 ```
 
-### 14.6 插件上报供应商会话
+当前已落地的是同步返回的基础链路。第三方 Key 明文只用于创建本地 Sub2API 账号，不在接口响应、`provision_response` 或列表接口中回显。幂等 run、失败补偿和人工修复入口仍是后续工作。
+
+### 14.7 插件上报供应商会话
 
 ```http
 POST /api/v1/admin-plus/extension/session/capture-task
@@ -771,6 +817,9 @@ GET  /api/v1/admin-plus/suppliers/:id/session
 POST /api/v1/admin-plus/suppliers/:id/session/probe
 POST /api/v1/admin-plus/suppliers/:id/groups/sync
 GET  /api/v1/admin-plus/suppliers/:id/groups
+POST /api/v1/admin-plus/suppliers/:id/rates/sync
+POST /api/v1/admin-plus/suppliers/:id/keys/provision
+GET  /api/v1/admin-plus/suppliers/:id/keys
 ```
 
 插件不通过该链路上报已经解析好的分组、费率、余额、账单或第三方密钥创建结果。
@@ -784,6 +833,9 @@ GET  /api/v1/admin-plus/suppliers/:id/groups
 - 可通过 `POST /api/v1/admin-plus/suppliers/:id/session/probe` 读取 Sub2API 用户侧 profile/余额并写入余额快照。
 - 可通过 `POST /api/v1/admin-plus/suppliers/:id/groups/sync` 使用后端 Provider Adapter 读取供应商用户侧分组和倍率，并 upsert 到 `admin_plus_supplier_groups`。
 - 可通过 `GET /api/v1/admin-plus/suppliers/:id/groups` 查询本地分组事实表；旧插件 `fetch_groups` 不作为分组同步主路径。
+- 可通过 `POST /api/v1/admin-plus/suppliers/:id/rates/sync` 使用后端 Provider Adapter 读取供应商用户侧费率并写入费率快照；旧插件 `fetch_rates` 只作为兼容任务类型。
+- 可通过 `POST /api/v1/admin-plus/suppliers/:id/keys/provision` 创建第三方 Key、创建本地 Sub2API 账号并写入绑定；插件不上报密钥创建结果。
+- 供应商管理页的“分组”弹窗已作为 Key/账号开通主入口：每个分组行展示绑定状态，未绑定行可触发 `keys/provision`。
 
 ## 15. 幂等与一致性
 
@@ -879,8 +931,9 @@ stateDiagram-v2
 - 插件可以把真实供应商会话包上报给 Admin Plus。
 - Provider Adapter 可以基于真实会话包完成能力探测。
 - 系统可以读取并展示该供应商真实分组列表。
+- 供应商分组弹窗能展示每个分组是否已绑定第三方 Key 和本地 Sub2API 账号。
 - 系统可以基于真实供应商 Sub2API 用户侧会话读取当前下游用户余额，并按余额决定 `monitor_only` / `candidate`。
-- 运营者可以选择一个分组创建第三方密钥。
+- 运营者可以在某个未绑定分组行创建第三方密钥。
 - 系统通过 Provider Adapter 创建第三方密钥。
 - 插件不创建第三方密钥，不上报已解析的业务采集结果。
 - 系统可以把第三方密钥同步创建为本地 Sub2API 账号。
@@ -898,5 +951,5 @@ stateDiagram-v2
 5. 实现 Sub2API 供应商密钥创建适配器。
 6. 实现本地 Sub2API Admin API 创建账号 client。
 7. 实现账号开通编排服务和幂等。
-8. 前端增加账号开通向导。
+8. 前端在供应商分组弹窗内增加 Key/账号开通入口和绑定状态列。
 9. 接入初次采集、飞书失败通知和修复入口。

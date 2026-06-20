@@ -19,6 +19,7 @@ export type SupplierType = 'openai' | 'anthropic' | 'gemini' | 'sub2api' | 'new_
 export type SupplierRuntimeStatus = 'monitor_only' | 'candidate' | 'active' | 'disabled'
 export type SupplierHealthStatus = 'normal' | 'unavailable' | 'credential_invalid' | 'paused'
 export type SupplierGroupStatus = 'active' | 'missing' | 'disabled'
+export type SupplierKeyStatus = 'provisioning' | 'bound' | 'manual_secret_required' | 'failed' | 'disabled'
 
 export interface SupplierCredentialStatus {
   postgres_configured: boolean
@@ -169,6 +170,7 @@ export interface LocalSub2APIAccount {
 export interface SupplierAccount {
   id: number
   supplier_id: number
+  supplier_key_id?: number
   local_sub2api_account_id: number
   local_account_name: string
   local_account_platform: string
@@ -188,6 +190,53 @@ export interface SupplierAccount {
   health_status: SupplierHealthStatus
   created_at: string
   updated_at: string
+}
+
+export interface SupplierKey {
+  id: number
+  supplier_id: number
+  supplier_group_id: number
+  external_group_id: string
+  external_key_id?: string
+  name: string
+  key_fingerprint?: string
+  key_last4?: string
+  status: SupplierKeyStatus
+  provider_family: string
+  local_sub2api_account_id?: number
+  local_account_name?: string
+  local_account_platform?: string
+  local_account_type?: string
+  error_code?: string
+  error_message?: string
+  provision_request?: Record<string, unknown>
+  provision_response?: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface ProvisionSupplierKeyPayload {
+  supplier_group_id: number
+  name?: string
+  quota_usd?: number
+  expires_in_days?: number | null
+  local_account_platform?: string
+  local_account_name?: string
+  local_account_base_url: string
+  local_account_concurrency?: number
+  local_account_priority?: number
+  local_account_rate_multiplier?: number | null
+  local_account_group_ids?: number[]
+  runtime_status?: SupplierRuntimeStatus
+  health_status?: SupplierHealthStatus
+  balance_threshold_cents?: number
+  balance_cents?: number
+  balance_currency?: string
+}
+
+export interface ProvisionSupplierKeyResponse {
+  key: SupplierKey
+  binding: SupplierAccount
 }
 
 export interface SupplierGroup {
@@ -225,6 +274,7 @@ export interface SyncSupplierGroupsResponse {
 
 export interface CreateSupplierAccountPayload {
   local_sub2api_account_id: number
+  supplier_key_id?: number
   supplier_account_identifier?: string
   supplier_account_label?: string
   organization_id?: string
@@ -665,6 +715,16 @@ export async function syncSupplierGroups(supplierId: number): Promise<SyncSuppli
   return data
 }
 
+export async function listSupplierKeys(supplierId: number, params?: { status?: SupplierKeyStatus | ''; q?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<SupplierKey>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<SupplierKey>>(`/admin-plus/suppliers/${supplierId}/keys`, { params })
+  return data
+}
+
+export async function provisionSupplierKey(supplierId: number, payload: ProvisionSupplierKeyPayload): Promise<ProvisionSupplierKeyResponse> {
+  const { data } = await apiClient.post<ProvisionSupplierKeyResponse>(`/admin-plus/suppliers/${supplierId}/keys/provision`, payload)
+  return data
+}
+
 export async function listLocalSub2APIAccounts(params?: { q?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalSub2APIAccount>> {
   const { data } = await apiClient.get<AdminPlusListResponse<LocalSub2APIAccount>>('/admin-plus/sub2api/accounts', { params })
   return data
@@ -978,6 +1038,8 @@ export const adminPlusAPI = {
   upsertSupplierBrowserSession,
   listSupplierGroups,
   syncSupplierGroups,
+  listSupplierKeys,
+  provisionSupplierKey,
   listLocalSub2APIAccounts,
   listLocalUsageLines,
   listLocalUsageSummary,

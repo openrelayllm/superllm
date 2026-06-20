@@ -237,10 +237,6 @@
                 <Icon name="database" size="sm" />
                 分组
               </button>
-              <button type="button" class="btn btn-secondary btn-sm" title="账号/Key" @click="goSupplierAccounts(row)">
-                <Icon name="link" size="sm" />
-                账号
-              </button>
               <button type="button" class="btn btn-danger btn-sm" title="删除" @click="openDeleteDialog(row)">
                 <Icon name="trash" size="sm" />
               </button>
@@ -250,7 +246,7 @@
           <template #empty>
             <EmptyState
               title="暂无供应商"
-              description="先添加供应商父级，再到账号/Key 绑定模块挂载本地 Sub2API 账号。"
+              description="先添加供应商父级，再通过插件上报会话，同步分组后按分组开通 Key 和本地账号。"
               action-text="添加供应商"
               @action="openCreateDialog"
             />
@@ -595,6 +591,49 @@
             </div>
           </template>
 
+          <template #cell-account="{ row }">
+            <div class="min-w-[260px]">
+              <template v-if="groupKey(row)">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="font-medium text-gray-900 dark:text-gray-100">{{ groupKey(row)?.name || '-' }}</span>
+                  <span class="badge" :class="supplierKeyStatusClass(groupKey(row)?.status)">{{ supplierKeyStatusLabel(groupKey(row)?.status) }}</span>
+                </div>
+                <div class="mt-1 flex flex-wrap gap-2 text-xs text-gray-500 dark:text-dark-400">
+                  <span v-if="groupKey(row)?.key_last4" class="font-mono">****{{ groupKey(row)?.key_last4 }}</span>
+                  <span v-if="groupKey(row)?.external_key_id" class="font-mono">Key #{{ groupKey(row)?.external_key_id }}</span>
+                  <span v-if="groupKey(row)?.local_sub2api_account_id">
+                    本地账号 #{{ groupKey(row)?.local_sub2api_account_id }}
+                  </span>
+                  <span v-if="groupKey(row)?.local_account_name">{{ groupKey(row)?.local_account_name }}</span>
+                </div>
+                <div v-if="groupKey(row)?.error_message" class="mt-1 max-w-[320px] truncate text-xs text-red-600 dark:text-red-300" :title="groupKey(row)?.error_message">
+                  {{ groupKey(row)?.error_message }}
+                </div>
+              </template>
+              <template v-else>
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="badge badge-gray">未开通</span>
+                  <span class="text-xs text-gray-500 dark:text-dark-400">未进入切换候选</span>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <template #cell-group_actions="{ row }">
+            <div class="flex min-w-[130px] justify-end">
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm"
+                :disabled="Boolean(groupKey(row)) || row.status !== 'active'"
+                :title="groupKey(row) ? '该分组已绑定 Key 和本地账号' : '开通第三方 Key 并同步创建本地账号'"
+                @click="openProvisionDialog(row)"
+              >
+                <Icon name="key" size="sm" />
+                开通
+              </button>
+            </div>
+          </template>
+
           <template #cell-status="{ row }">
             <span class="badge" :class="groupStatusClass(row.status)">{{ groupStatusLabel(row.status) }}</span>
           </template>
@@ -628,6 +667,109 @@
       </template>
     </BaseDialog>
 
+    <BaseDialog :show="provisionDialogOpen" :title="provisionGroup ? `开通 Key/账号 - ${provisionGroup.name}` : '开通 Key/账号'" width="wide" @close="closeProvisionDialog">
+      <form id="supplier-key-provision-form" class="space-y-5" @submit.prevent="submitProvision">
+        <div class="grid gap-4 md:grid-cols-3">
+          <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+            <div class="text-xs text-gray-500 dark:text-dark-400">供应商</div>
+            <div class="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">{{ groupsSupplier?.name || '-' }}</div>
+          </div>
+          <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+            <div class="text-xs text-gray-500 dark:text-dark-400">分组</div>
+            <div class="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">{{ provisionGroup?.name || '-' }}</div>
+            <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">#{{ provisionGroup?.external_group_id || '-' }}</div>
+          </div>
+          <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+            <div class="text-xs text-gray-500 dark:text-dark-400">倍率</div>
+            <div class="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">{{ formatMultiplier(provisionGroup?.effective_rate_multiplier) }}</div>
+          </div>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="block">
+            <span class="input-label">第三方 Key 名称</span>
+            <input v-model.trim="provisionForm.name" class="input" required />
+          </label>
+          <label class="block">
+            <span class="input-label">本地账号名称</span>
+            <input v-model.trim="provisionForm.local_account_name" class="input" required />
+          </label>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-3">
+          <label class="block">
+            <span class="input-label">本地账号平台</span>
+            <select v-model="provisionForm.local_account_platform" class="input">
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="gemini">Gemini</option>
+              <option value="antigravity">Antigravity</option>
+            </select>
+          </label>
+          <label class="block">
+            <span class="input-label">并发</span>
+            <input v-model.number="provisionForm.local_account_concurrency" type="number" min="0" step="1" class="input" />
+          </label>
+          <label class="block">
+            <span class="input-label">优先级</span>
+            <input v-model.number="provisionForm.local_account_priority" type="number" min="0" step="1" class="input" />
+          </label>
+        </div>
+
+        <label class="block">
+          <span class="input-label">本地账号 Base URL</span>
+          <input v-model.trim="provisionForm.local_account_base_url" class="input" required placeholder="https://supplier.example.com/v1" />
+        </label>
+
+        <div class="grid gap-4 sm:grid-cols-3">
+          <label class="block">
+            <span class="input-label">账号倍率</span>
+            <input v-model.number="provisionForm.local_account_rate_multiplier" type="number" min="0" step="0.0001" class="input" />
+          </label>
+          <label class="block">
+            <span class="input-label">第三方额度 USD</span>
+            <input v-model.number="provisionForm.quota_usd" type="number" min="0" step="0.01" class="input" />
+          </label>
+          <label class="block">
+            <span class="input-label">有效期天数</span>
+            <input v-model.number="provisionForm.expires_in_days" type="number" min="0" step="1" class="input" placeholder="不填表示不限" />
+          </label>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-3">
+          <label class="block">
+            <span class="input-label">运行状态</span>
+            <select v-model="provisionForm.runtime_status" class="input">
+              <option value="monitor_only">仅监控</option>
+              <option value="candidate">候选</option>
+              <option value="active">当前使用</option>
+              <option value="disabled">停用</option>
+            </select>
+          </label>
+          <label class="block">
+            <span class="input-label">余额</span>
+            <input v-model.number="provisionForm.balance_yuan" type="number" min="0" step="0.01" class="input" />
+          </label>
+          <label class="block">
+            <span class="input-label">低余额阈值</span>
+            <input v-model.number="provisionForm.balance_threshold_yuan" type="number" min="0" step="0.01" class="input" />
+          </label>
+        </div>
+
+        <div v-if="provisionError" class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+          {{ provisionError }}
+        </div>
+      </form>
+
+      <template #footer>
+        <button type="button" class="btn btn-secondary" @click="closeProvisionDialog">取消</button>
+        <button type="submit" form="supplier-key-provision-form" class="btn btn-primary" :disabled="provisionSubmitting">
+          <Icon name="key" size="sm" :class="{ 'animate-spin': provisionSubmitting }" />
+          {{ provisionSubmitting ? '开通中...' : '创建 Key 并绑定' }}
+        </button>
+      </template>
+    </BaseDialog>
+
     <ConfirmDialog
       :show="deleteDialogOpen"
       title="删除供应商"
@@ -642,7 +784,6 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
@@ -659,9 +800,11 @@ import {
   createSupplier,
   deleteSupplier,
   getSupplierSession,
+  listSupplierKeys,
   listSupplierGroups,
   listSuppliers,
   probeSupplierSession,
+  provisionSupplierKey,
   syncSupplierGroups,
   updateSupplier,
   updateSupplierStatus,
@@ -670,6 +813,8 @@ import {
   type SupplierGroup,
   type SupplierGroupStatus,
   type SupplierHealthStatus,
+  type SupplierKey,
+  type SupplierKeyStatus,
   type SupplierSessionProbeResult,
   type SupplierKind,
   type SupplierRuntimeStatus,
@@ -677,15 +822,16 @@ import {
 } from '@/api/admin/adminPlus'
 
 const appStore = useAppStore()
-const router = useRouter()
 
 const loading = ref(false)
 const submitting = ref(false)
 const statusSubmitting = ref(false)
+const provisionSubmitting = ref(false)
 const editorOpen = ref(false)
 const statusDialogOpen = ref(false)
 const sessionDialogOpen = ref(false)
 const groupsDialogOpen = ref(false)
+const provisionDialogOpen = ref(false)
 const deleteDialogOpen = ref(false)
 const moreMenuOpen = ref(false)
 const bulkStatusMode = ref(false)
@@ -693,9 +839,11 @@ const bulkDeleteMode = ref(false)
 const editingSupplier = ref<Supplier | null>(null)
 const sessionSupplier = ref<Supplier | null>(null)
 const groupsSupplier = ref<Supplier | null>(null)
+const provisionGroup = ref<SupplierGroup | null>(null)
 const deletingSupplier = ref<Supplier | null>(null)
 const suppliers = ref<Supplier[]>([])
 const supplierGroups = ref<SupplierGroup[]>([])
+const supplierKeys = ref<SupplierKey[]>([])
 const sessionStore = reactive<Record<number, SupplierBrowserSession | undefined>>({})
 const sessionLoading = ref(false)
 const probingSession = ref(false)
@@ -703,6 +851,7 @@ const groupsLoading = ref(false)
 const groupsSyncing = ref(false)
 const sessionLoadError = ref('')
 const groupsError = ref('')
+const provisionError = ref('')
 const lastProbe = ref<SupplierSessionProbeResult | null>(null)
 
 const filters = reactive({
@@ -757,6 +906,23 @@ const statusForm = reactive({
   health_status: 'normal' as SupplierHealthStatus
 })
 
+const provisionForm = reactive({
+  name: '',
+  local_account_name: '',
+  local_account_platform: 'openai',
+  local_account_base_url: '',
+  local_account_concurrency: 0,
+  local_account_priority: 100,
+  local_account_rate_multiplier: 1,
+  quota_usd: 0,
+  expires_in_days: null as number | null,
+  runtime_status: 'monitor_only' as SupplierRuntimeStatus,
+  health_status: 'normal' as SupplierHealthStatus,
+  balance_yuan: 0,
+  balance_threshold_yuan: 0,
+  balance_currency: 'USD'
+})
+
 const columns: Column[] = [
   { key: 'select', label: '', class: 'w-10' },
   { key: 'name', label: '供应商', sortable: true },
@@ -775,8 +941,10 @@ const groupColumns: Column[] = [
   { key: 'provider_family', label: '平台' },
   { key: 'rate', label: '倍率', class: 'text-right' },
   { key: 'limits', label: '限制' },
+  { key: 'account', label: 'Key / 本地账号' },
   { key: 'status', label: '状态' },
-  { key: 'last_seen_at', label: '最后同步', sortable: true }
+  { key: 'last_seen_at', label: '最后同步', sortable: true },
+  { key: 'group_actions', label: '操作', class: 'text-right' }
 ]
 
 const filteredSuppliers = computed(() => suppliers.value)
@@ -808,6 +976,17 @@ const currentGroupSession = computed(() => {
 })
 
 const currentSessionSummary = computed(() => currentSession.value?.session_summary || {})
+
+const supplierKeysByGroupID = computed(() => {
+  const out = new Map<number, SupplierKey>()
+  for (const key of supplierKeys.value) {
+    const existing = out.get(key.supplier_group_id)
+    if (!existing || key.id > existing.id) {
+      out.set(key.supplier_group_id, key)
+    }
+  }
+  return out
+})
 
 const summaryCookieCount = computed(() => {
   const value = currentSessionSummary.value.cookie_count
@@ -951,6 +1130,27 @@ function groupStatusClass(status?: SupplierGroupStatus): string {
   return 'badge-gray'
 }
 
+function supplierKeyStatusLabel(status?: SupplierKeyStatus): string {
+  if (status === 'bound') return '已绑定'
+  if (status === 'provisioning') return '开通中'
+  if (status === 'manual_secret_required') return '待补密钥'
+  if (status === 'failed') return '失败'
+  if (status === 'disabled') return '停用'
+  return '未知'
+}
+
+function supplierKeyStatusClass(status?: SupplierKeyStatus): string {
+  if (status === 'bound') return 'badge-success'
+  if (status === 'provisioning') return 'badge-primary'
+  if (status === 'manual_secret_required') return 'badge-warning'
+  if (status === 'failed') return 'badge-danger'
+  return 'badge-gray'
+}
+
+function groupKey(group: SupplierGroup): SupplierKey | undefined {
+  return supplierKeysByGroupID.value.get(group.id)
+}
+
 function sessionBadgeText(supplierID: number): string {
   return sessionStatusLabel(sessionStore[supplierID]?.status)
 }
@@ -970,6 +1170,10 @@ function sessionSummaryString(key: string): string {
 
 function isSwitchable(supplier: Supplier): boolean {
   return ['candidate', 'active'].includes(supplier.runtime_status) && supplier.health_status === 'normal' && supplier.balance_cents > 0
+}
+
+function isSwitchableRuntimeStatus(status: SupplierRuntimeStatus): boolean {
+  return status === 'candidate' || status === 'active'
 }
 
 function hasCredential(supplier: Supplier): boolean {
@@ -1186,6 +1390,7 @@ function openSessionDialog(supplier: Supplier) {
 function openGroupsDialog(supplier: Supplier) {
   groupsSupplier.value = supplier
   supplierGroups.value = []
+  supplierKeys.value = []
   groupsError.value = ''
   groupPagination.page = 1
   groupFilters.q = ''
@@ -1218,13 +1423,20 @@ async function loadCurrentGroups() {
   groupsLoading.value = true
   groupsError.value = ''
   try {
-    const result = await listSupplierGroups(groupsSupplier.value.id, {
-      q: groupFilters.q || undefined,
-      status: groupFilters.status || undefined,
-      page: groupPagination.page,
-      page_size: groupPagination.page_size
-    })
+    const [result, keyResult] = await Promise.all([
+      listSupplierGroups(groupsSupplier.value.id, {
+        q: groupFilters.q || undefined,
+        status: groupFilters.status || undefined,
+        page: groupPagination.page,
+        page_size: groupPagination.page_size
+      }),
+      listSupplierKeys(groupsSupplier.value.id, {
+        page: 1,
+        page_size: 1000
+      })
+    ])
     supplierGroups.value = result.items
+    supplierKeys.value = keyResult.items
     groupPagination.total = result.total || 0
     groupPagination.pages = result.pages || 0
     groupPagination.page = result.page || groupPagination.page
@@ -1233,6 +1445,121 @@ async function loadCurrentGroups() {
     groupsError.value = (error as { message?: string }).message || '加载供应商分组失败'
   } finally {
     groupsLoading.value = false
+  }
+}
+
+function openProvisionDialog(group: SupplierGroup) {
+  if (!groupsSupplier.value) return
+  if (!currentGroupSession.value?.has_encrypted_bundle) {
+    appStore.showError('当前供应商还没有可用浏览器会话，请先通过插件登录并上报会话')
+    return
+  }
+  provisionGroup.value = group
+  provisionError.value = ''
+  fillProvisionForm(group)
+  provisionDialogOpen.value = true
+}
+
+function closeProvisionDialog() {
+  provisionDialogOpen.value = false
+  provisionGroup.value = null
+  provisionError.value = ''
+}
+
+function fillProvisionForm(group: SupplierGroup) {
+  const supplier = groupsSupplier.value
+  const name = defaultProvisionName(supplier, group)
+  provisionForm.name = name
+  provisionForm.local_account_name = name
+  provisionForm.local_account_platform = normalizeLocalPlatform(group.provider_family)
+  provisionForm.local_account_base_url = defaultProviderBaseURL(supplier)
+  provisionForm.local_account_concurrency = Number(group.rpm_limit || 0)
+  provisionForm.local_account_priority = 100
+  provisionForm.local_account_rate_multiplier = Number(group.effective_rate_multiplier || 1)
+  provisionForm.quota_usd = 0
+  provisionForm.expires_in_days = null
+  provisionForm.runtime_status = 'monitor_only'
+  provisionForm.health_status = 'normal'
+  provisionForm.balance_yuan = yuanFromCents(supplier?.balance_cents || 0)
+  provisionForm.balance_threshold_yuan = 0
+  provisionForm.balance_currency = supplier?.balance_currency || 'USD'
+}
+
+function defaultProvisionName(supplier: Supplier | null, group: SupplierGroup): string {
+  return [supplier?.name, group.name].filter(Boolean).join('-') || `supplier-group-${group.id}`
+}
+
+function normalizeLocalPlatform(providerFamily?: string): string {
+  const value = String(providerFamily || '').toLowerCase()
+  if (value.includes('anthropic') || value.includes('claude')) return 'anthropic'
+  if (value.includes('gemini') || value.includes('google')) return 'gemini'
+  if (value.includes('antigravity')) return 'antigravity'
+  return 'openai'
+}
+
+function defaultProviderBaseURL(supplier: Supplier | null): string {
+  const configured = supplier?.api_base_url?.trim()
+  if (configured) return normalizeGatewayBaseURL(configured)
+  const dashboard = supplier?.dashboard_url?.trim()
+  if (dashboard) return normalizeGatewayBaseURL(dashboard)
+  return ''
+}
+
+function normalizeGatewayBaseURL(raw: string): string {
+  try {
+    const url = new URL(raw)
+    const pathname = url.pathname.replace(/\/+$/, '')
+    if (pathname.endsWith('/api/v1')) {
+      url.pathname = `${pathname.slice(0, -'/api/v1'.length)}/v1`
+    } else if (!pathname.endsWith('/v1')) {
+      url.pathname = `${pathname}/v1`
+    }
+    url.search = ''
+    url.hash = ''
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return raw.replace(/\/+$/, '')
+  }
+}
+
+async function submitProvision() {
+  if (!groupsSupplier.value || !provisionGroup.value) return
+  if (!provisionForm.local_account_base_url.trim()) {
+    provisionError.value = '请填写本地账号 Base URL'
+    return
+  }
+  if (isSwitchableRuntimeStatus(provisionForm.runtime_status) && centsFromYuan(provisionForm.balance_yuan) <= 0) {
+    provisionError.value = '候选或使用中账号必须有可用余额'
+    return
+  }
+  provisionSubmitting.value = true
+  provisionError.value = ''
+  try {
+    await provisionSupplierKey(groupsSupplier.value.id, {
+      supplier_group_id: provisionGroup.value.id,
+      name: provisionForm.name,
+      quota_usd: Number(provisionForm.quota_usd || 0),
+      expires_in_days: provisionForm.expires_in_days || null,
+      local_account_platform: provisionForm.local_account_platform,
+      local_account_name: provisionForm.local_account_name,
+      local_account_base_url: provisionForm.local_account_base_url,
+      local_account_concurrency: Number(provisionForm.local_account_concurrency || 0),
+      local_account_priority: Number(provisionForm.local_account_priority || 0),
+      local_account_rate_multiplier: Number(provisionForm.local_account_rate_multiplier || 0),
+      runtime_status: provisionForm.runtime_status,
+      health_status: provisionForm.health_status,
+      balance_threshold_cents: centsFromYuan(provisionForm.balance_threshold_yuan),
+      balance_cents: centsFromYuan(provisionForm.balance_yuan),
+      balance_currency: provisionForm.balance_currency || 'USD'
+    })
+    appStore.showSuccess('已创建第三方 Key，并同步创建本地 Sub2API 账号')
+    closeProvisionDialog()
+    await loadCurrentGroups()
+  } catch (error) {
+    provisionError.value = (error as { message?: string }).message || '开通 Key/账号失败'
+    appStore.showError(provisionError.value)
+  } finally {
+    provisionSubmitting.value = false
   }
 }
 
@@ -1330,10 +1657,6 @@ async function runSequential<T>(items: T[], runner: (item: T) => Promise<void>) 
   for (const item of items) {
     await runner(item)
   }
-}
-
-function goSupplierAccounts(supplier: Supplier) {
-  router.push({ name: 'AdminPlusSupplierAccounts', query: { supplier_id: String(supplier.id) } })
 }
 
 watch(

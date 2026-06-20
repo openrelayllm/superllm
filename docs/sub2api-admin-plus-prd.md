@@ -2041,7 +2041,7 @@ MVP 必须满足：
   - 基于 `schedule_key` 防止同一窗口重复创建。
   - 无余额供应商只生成监控/优惠类任务，不生成可切换执行类任务。
 - 完成旧版插件任务结果摄取基础能力：
-  - 插件完成 `fetch_rates` 后可写入费率快照和变更事件。
+  - `fetch_rates` 仅保留为兼容任务类型；费率主路径改为插件完成 `capture_supplier_session` 上报会话包后，由后端 Provider Adapter 执行 `ReadRates(session)` 并写入费率快照和变更事件。
   - 插件完成 `fetch_balance` 后可写入余额快照和余额事件。
   - 插件完成 `fetch_promotions` 后可写入优惠事件。
   - 插件完成 `fetch_health` 后可写入健康样本和事件。
