@@ -13,7 +13,8 @@ import (
 
 func TestServiceRecordSnapshotCreatesLowBalanceEvent(t *testing.T) {
 	repo := newFakeBalanceRepository()
-	svc := NewService(repo)
+	notifier := &fakeBalanceNotifier{}
+	svc := NewServiceWithNotifier(repo, notifier)
 	capturedAt := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
 	repo.snapshots = append(repo.snapshots, &adminplusdomain.BalanceSnapshot{
 		ID:            1,
@@ -40,6 +41,37 @@ func TestServiceRecordSnapshotCreatesLowBalanceEvent(t *testing.T) {
 	require.Equal(t, adminplusdomain.BalanceEventStatusOpen, event.Status)
 	require.Equal(t, "USD", snapshot.Currency)
 	require.True(t, snapshot.SwitchEligible)
+	require.Len(t, notifier.events, 1)
+	require.Equal(t, event.ID, notifier.events[0].ID)
+}
+
+func TestServiceRecordSnapshotIgnoresNotifierError(t *testing.T) {
+	repo := newFakeBalanceRepository()
+	notifier := &fakeBalanceNotifier{err: infraerrors.New(http.StatusBadGateway, "FEISHU_FAILED", "feishu failed")}
+	svc := NewServiceWithNotifier(repo, notifier)
+	capturedAt := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	repo.snapshots = append(repo.snapshots, &adminplusdomain.BalanceSnapshot{
+		ID:            1,
+		SupplierID:    7,
+		RuntimeStatus: adminplusdomain.SupplierRuntimeStatusCandidate,
+		BalanceCents:  3000,
+		Currency:      "USD",
+		CapturedAt:    capturedAt.Add(-time.Minute),
+	})
+
+	event, snapshot, err := svc.RecordSnapshot(context.Background(), RecordSnapshotInput{
+		SupplierID:               7,
+		RuntimeStatus:            adminplusdomain.SupplierRuntimeStatusCandidate,
+		BalanceCents:             500,
+		Currency:                 "USD",
+		LowBalanceThresholdCents: 1000,
+		CapturedAt:               &capturedAt,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	require.NotNil(t, event)
+	require.Len(t, notifier.events, 1)
 }
 
 func TestServiceRecordSnapshotCreatesDepletedAndRecoveredEvents(t *testing.T) {
@@ -116,6 +148,16 @@ type fakeBalanceRepository struct {
 	nextEventID    int64
 	snapshots      []*adminplusdomain.BalanceSnapshot
 	events         []*adminplusdomain.BalanceEvent
+}
+
+type fakeBalanceNotifier struct {
+	err    error
+	events []*adminplusdomain.BalanceEvent
+}
+
+func (n *fakeBalanceNotifier) NotifyBalanceEvent(_ context.Context, event *adminplusdomain.BalanceEvent, _ *adminplusdomain.BalanceSnapshot) error {
+	n.events = append(n.events, cloneBalanceEvent(event))
+	return n.err
 }
 
 func newFakeBalanceRepository() *fakeBalanceRepository {

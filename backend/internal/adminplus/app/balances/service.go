@@ -2,6 +2,7 @@ package balances
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -41,15 +42,25 @@ type Repository interface {
 	UpdateEventStatus(ctx context.Context, id int64, status adminplusdomain.BalanceEventStatus) (*adminplusdomain.BalanceEvent, error)
 }
 
+type Notifier interface {
+	NotifyBalanceEvent(ctx context.Context, event *adminplusdomain.BalanceEvent, snapshot *adminplusdomain.BalanceSnapshot) error
+}
+
 type Service struct {
-	repo Repository
-	now  func() time.Time
+	repo     Repository
+	notifier Notifier
+	now      func() time.Time
 }
 
 func NewService(repo Repository) *Service {
+	return NewServiceWithNotifier(repo, nil)
+}
+
+func NewServiceWithNotifier(repo Repository, notifier Notifier) *Service {
 	return &Service{
-		repo: repo,
-		now:  time.Now,
+		repo:     repo,
+		notifier: notifier,
+		now:      time.Now,
 	}
 }
 
@@ -77,7 +88,17 @@ func (s *Service) RecordSnapshot(ctx context.Context, in RecordSnapshotInput) (*
 	if err != nil {
 		return nil, nil, err
 	}
+	s.notifyBalanceEvent(ctx, createdEvent, created)
 	return createdEvent, created, nil
+}
+
+func (s *Service) notifyBalanceEvent(ctx context.Context, event *adminplusdomain.BalanceEvent, snapshot *adminplusdomain.BalanceSnapshot) {
+	if s == nil || s.notifier == nil || event == nil {
+		return
+	}
+	if err := s.notifier.NotifyBalanceEvent(ctx, event, snapshot); err != nil {
+		slog.Warn("admin plus balance notification failed", "supplier_id", event.SupplierID, "event_id", event.ID, "type", event.Type, "err", err)
+	}
 }
 
 func (s *Service) ListSnapshots(ctx context.Context, filter SnapshotFilter) ([]*adminplusdomain.BalanceSnapshot, error) {
