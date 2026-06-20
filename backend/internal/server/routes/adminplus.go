@@ -20,6 +20,14 @@ func RegisterAdminPlusRoutes(
 			suppliers.POST("", h.AdminPlus.Supplier.Create)
 			suppliers.GET("/:id", h.AdminPlus.Supplier.Get)
 			suppliers.PATCH("/:id/status", h.AdminPlus.Supplier.UpdateStatus)
+			suppliers.GET("/:id/accounts", h.AdminPlus.Supplier.ListAccounts)
+			suppliers.POST("/:id/accounts", h.AdminPlus.Supplier.CreateAccount)
+			suppliers.DELETE("/:id/accounts/:accountID", h.AdminPlus.Supplier.DeleteAccount)
+		}
+
+		sub2api := adminPlus.Group("/sub2api")
+		{
+			sub2api.GET("/accounts", h.AdminPlus.Supplier.ListLocalAccounts)
 		}
 
 		rates := adminPlus.Group("/rates")

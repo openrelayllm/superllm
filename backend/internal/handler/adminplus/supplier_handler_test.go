@@ -20,8 +20,9 @@ type supplierResponseEnvelope struct {
 		RuntimeStatus string `json:"runtime_status"`
 		HealthStatus  string `json:"health_status"`
 		Credential    struct {
-			AdminAPIKeyConfigured bool   `json:"admin_api_key_configured"`
-			MaskedAdminAPIKey     string `json:"masked_admin_api_key"`
+			BrowserLoginEnabled            bool   `json:"browser_login_enabled"`
+			BrowserLoginUsernameConfigured bool   `json:"browser_login_username_configured"`
+			MaskedBrowserLoginUsername     string `json:"masked_browser_login_username"`
 		} `json:"credential"`
 	} `json:"data"`
 }
@@ -57,7 +58,9 @@ func TestSupplierHandlerCreateAndGet(t *testing.T) {
 		"type": "sub2api",
 		"runtime_status": "candidate",
 		"balance_cents": 5000,
-		"admin_api_key": "admin-secret-token"
+		"browser_login_enabled": true,
+		"browser_login_username": "ops@example.com",
+		"browser_login_password": "secret"
 	}`)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/suppliers", body)
@@ -70,8 +73,9 @@ func TestSupplierHandlerCreateAndGet(t *testing.T) {
 	require.Equal(t, int64(1), created.Data.ID)
 	require.Equal(t, "Primary Sub2API Relay", created.Data.Name)
 	require.Equal(t, "candidate", created.Data.RuntimeStatus)
-	require.True(t, created.Data.Credential.AdminAPIKeyConfigured)
-	require.Equal(t, "admi...oken", created.Data.Credential.MaskedAdminAPIKey)
+	require.True(t, created.Data.Credential.BrowserLoginEnabled)
+	require.True(t, created.Data.Credential.BrowserLoginUsernameConfigured)
+	require.Equal(t, "op***@example.com", created.Data.Credential.MaskedBrowserLoginUsername)
 
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/suppliers/1", nil)

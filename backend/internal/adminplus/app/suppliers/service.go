@@ -12,21 +12,39 @@ import (
 )
 
 type CreateSupplierInput struct {
-	Name                string
-	Kind                adminplusdomain.SupplierKind
-	Type                adminplusdomain.SupplierType
-	RuntimeStatus       adminplusdomain.SupplierRuntimeStatus
-	HealthStatus        adminplusdomain.SupplierHealthStatus
-	DashboardURL        string
-	APIBaseURL          string
-	Contact             string
-	Notes               string
-	AdminAPIKey         string
-	PostgresReadDSN     string
-	RedisReadDSN        string
-	BrowserLoginEnabled bool
-	BalanceCents        int64
-	BalanceCurrency     string
+	Name                 string
+	Kind                 adminplusdomain.SupplierKind
+	Type                 adminplusdomain.SupplierType
+	RuntimeStatus        adminplusdomain.SupplierRuntimeStatus
+	HealthStatus         adminplusdomain.SupplierHealthStatus
+	DashboardURL         string
+	APIBaseURL           string
+	Contact              string
+	Notes                string
+	PostgresReadDSN      string
+	RedisReadDSN         string
+	BrowserLoginEnabled  bool
+	BrowserLoginUsername string
+	BrowserLoginPassword string
+	BrowserLoginToken    string
+	BalanceCents         int64
+	BalanceCurrency      string
+}
+
+type CreateSupplierAccountInput struct {
+	SupplierID                int64
+	LocalSub2APIAccountID     int64
+	SupplierAccountIdentifier string
+	SupplierAccountLabel      string
+	OrganizationID            string
+	ProjectID                 string
+	RateProfile               string
+	ConfiguredConcurrency     int
+	BalanceThresholdCents     int64
+	BalanceCents              int64
+	BalanceCurrency           string
+	RuntimeStatus             adminplusdomain.SupplierRuntimeStatus
+	HealthStatus              adminplusdomain.SupplierHealthStatus
 }
 
 type UpdateSupplierStatusInput struct {
@@ -47,6 +65,10 @@ type Repository interface {
 	Get(ctx context.Context, id int64) (*adminplusdomain.Supplier, error)
 	List(ctx context.Context, filter SupplierFilter) ([]*adminplusdomain.Supplier, error)
 	UpdateStatus(ctx context.Context, id int64, runtimeStatus adminplusdomain.SupplierRuntimeStatus, healthStatus adminplusdomain.SupplierHealthStatus) (*adminplusdomain.Supplier, error)
+	ListAccounts(ctx context.Context, supplierID int64) ([]*adminplusdomain.SupplierAccount, error)
+	CreateAccount(ctx context.Context, account *adminplusdomain.SupplierAccount) (*adminplusdomain.SupplierAccount, error)
+	DeleteAccount(ctx context.Context, supplierID int64, accountID int64) error
+	ListLocalAccounts(ctx context.Context, query string, limit int) ([]*adminplusdomain.LocalSub2APIAccount, error)
 }
 
 type Service struct {
@@ -109,21 +131,26 @@ func (s *Service) Create(ctx context.Context, in CreateSupplierInput) (*adminplu
 
 	now := s.now().UTC()
 	supplier := &adminplusdomain.Supplier{
-		Name:          name,
-		Kind:          in.Kind,
-		Type:          in.Type,
-		RuntimeStatus: runtimeStatus,
-		HealthStatus:  healthStatus,
-		DashboardURL:  dashboardURL,
-		APIBaseURL:    apiBaseURL,
-		Contact:       trimLimit(in.Contact, 120),
-		Notes:         trimLimit(in.Notes, 500),
+		Name:                 name,
+		Kind:                 in.Kind,
+		Type:                 in.Type,
+		RuntimeStatus:        runtimeStatus,
+		HealthStatus:         healthStatus,
+		DashboardURL:         dashboardURL,
+		APIBaseURL:           apiBaseURL,
+		Contact:              trimLimit(in.Contact, 120),
+		Notes:                trimLimit(in.Notes, 500),
+		BrowserLoginUsername: strings.TrimSpace(in.BrowserLoginUsername),
+		BrowserLoginPassword: strings.TrimSpace(in.BrowserLoginPassword),
+		BrowserLoginToken:    strings.TrimSpace(in.BrowserLoginToken),
 		Credential: adminplusdomain.SupplierCredentialStatus{
-			AdminAPIKeyConfigured: strings.TrimSpace(in.AdminAPIKey) != "",
-			PostgresConfigured:    strings.TrimSpace(in.PostgresReadDSN) != "",
-			RedisConfigured:       strings.TrimSpace(in.RedisReadDSN) != "",
-			BrowserLoginEnabled:   in.BrowserLoginEnabled,
-			MaskedAdminAPIKey:     maskSecret(in.AdminAPIKey),
+			PostgresConfigured:             strings.TrimSpace(in.PostgresReadDSN) != "",
+			RedisConfigured:                strings.TrimSpace(in.RedisReadDSN) != "",
+			BrowserLoginEnabled:            in.BrowserLoginEnabled,
+			BrowserLoginUsernameConfigured: strings.TrimSpace(in.BrowserLoginUsername) != "",
+			BrowserLoginPasswordConfigured: strings.TrimSpace(in.BrowserLoginPassword) != "",
+			BrowserLoginTokenConfigured:    strings.TrimSpace(in.BrowserLoginToken) != "",
+			MaskedBrowserLoginUsername:     maskUsername(in.BrowserLoginUsername),
 		},
 		BalanceCents:    in.BalanceCents,
 		BalanceCurrency: normalizeCurrency(in.BalanceCurrency),
@@ -193,6 +220,104 @@ func (s *Service) UpdateStatus(ctx context.Context, id int64, in UpdateSupplierS
 	return s.repo.UpdateStatus(ctx, id, in.RuntimeStatus, in.HealthStatus)
 }
 
+func (s *Service) ListAccounts(ctx context.Context, supplierID int64) ([]*adminplusdomain.SupplierAccount, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("supplier service is not configured")
+	}
+	if supplierID <= 0 {
+		return nil, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	if _, err := s.repo.Get(ctx, supplierID); err != nil {
+		return nil, err
+	}
+	return s.repo.ListAccounts(ctx, supplierID)
+}
+
+func (s *Service) CreateAccount(ctx context.Context, in CreateSupplierAccountInput) (*adminplusdomain.SupplierAccount, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("supplier service is not configured")
+	}
+	if in.SupplierID <= 0 {
+		return nil, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	parent, err := s.repo.Get(ctx, in.SupplierID)
+	if err != nil {
+		return nil, err
+	}
+	if in.LocalSub2APIAccountID <= 0 {
+		return nil, badRequest("LOCAL_ACCOUNT_ID_INVALID", "invalid local Sub2API account id")
+	}
+	runtimeStatus := in.RuntimeStatus
+	if runtimeStatus == "" {
+		runtimeStatus = adminplusdomain.SupplierRuntimeStatusMonitorOnly
+	}
+	if !runtimeStatus.Valid() {
+		return nil, badRequest("SUPPLIER_ACCOUNT_RUNTIME_STATUS_INVALID", "invalid supplier account runtime status")
+	}
+	healthStatus := in.HealthStatus
+	if healthStatus == "" {
+		healthStatus = adminplusdomain.SupplierHealthStatusNormal
+	}
+	if !healthStatus.Valid() {
+		return nil, badRequest("SUPPLIER_ACCOUNT_HEALTH_STATUS_INVALID", "invalid supplier account health status")
+	}
+	if adminplusdomain.IsSwitchableSupplierStatus(runtimeStatus) && in.BalanceCents <= 0 {
+		return nil, badRequest("SUPPLIER_ACCOUNT_BALANCE_REQUIRED", "switchable supplier account must have positive balance")
+	}
+	if adminplusdomain.IsSwitchableSupplierStatus(runtimeStatus) && !adminplusdomain.IsSwitchableSupplierStatus(parent.RuntimeStatus) {
+		return nil, badRequest("SUPPLIER_PARENT_NOT_SWITCHABLE", "parent supplier must be switchable before account can be switchable")
+	}
+	if in.ConfiguredConcurrency < 0 {
+		return nil, badRequest("SUPPLIER_ACCOUNT_CONCURRENCY_INVALID", "configured concurrency cannot be negative")
+	}
+	if in.BalanceThresholdCents < 0 || in.BalanceCents < 0 {
+		return nil, badRequest("SUPPLIER_ACCOUNT_BALANCE_INVALID", "balance values cannot be negative")
+	}
+	now := s.now().UTC()
+	account := &adminplusdomain.SupplierAccount{
+		SupplierID:                in.SupplierID,
+		LocalSub2APIAccountID:     in.LocalSub2APIAccountID,
+		SupplierAccountIdentifier: trimLimit(in.SupplierAccountIdentifier, 160),
+		SupplierAccountLabel:      trimLimit(in.SupplierAccountLabel, 120),
+		OrganizationID:            trimLimit(in.OrganizationID, 120),
+		ProjectID:                 trimLimit(in.ProjectID, 120),
+		RateProfile:               trimLimit(in.RateProfile, 120),
+		ConfiguredConcurrency:     in.ConfiguredConcurrency,
+		BalanceThresholdCents:     in.BalanceThresholdCents,
+		BalanceCents:              in.BalanceCents,
+		BalanceCurrency:           normalizeCurrency(in.BalanceCurrency),
+		HasUsableBalance:          in.BalanceCents > 0,
+		RuntimeStatus:             runtimeStatus,
+		HealthStatus:              healthStatus,
+		CreatedAt:                 now,
+		UpdatedAt:                 now,
+	}
+	return s.repo.CreateAccount(ctx, account)
+}
+
+func (s *Service) DeleteAccount(ctx context.Context, supplierID int64, accountID int64) error {
+	if s == nil || s.repo == nil {
+		return internalError("supplier service is not configured")
+	}
+	if supplierID <= 0 {
+		return badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	if accountID <= 0 {
+		return badRequest("SUPPLIER_ACCOUNT_ID_INVALID", "invalid supplier account id")
+	}
+	return s.repo.DeleteAccount(ctx, supplierID, accountID)
+}
+
+func (s *Service) ListLocalAccounts(ctx context.Context, query string, limit int) ([]*adminplusdomain.LocalSub2APIAccount, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("supplier service is not configured")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	return s.repo.ListLocalAccounts(ctx, strings.TrimSpace(query), limit)
+}
+
 func normalizeOptionalURL(raw string, reason string) (string, error) {
 	v := strings.TrimSpace(raw)
 	if v == "" {
@@ -227,15 +352,23 @@ func normalizeCurrency(value string) string {
 	return v
 }
 
-func maskSecret(value string) string {
+func maskUsername(value string) string {
 	v := strings.TrimSpace(value)
 	if v == "" {
 		return ""
 	}
-	if len(v) <= 8 {
-		return "****"
+	if strings.Contains(v, "@") {
+		parts := strings.SplitN(v, "@", 2)
+		name := parts[0]
+		if len(name) <= 2 {
+			return name[:1] + "***@" + parts[1]
+		}
+		return name[:2] + "***@" + parts[1]
 	}
-	return v[:4] + "..." + v[len(v)-4:]
+	if len(v) <= 4 {
+		return v[:1] + "***"
+	}
+	return v[:2] + "***" + v[len(v)-2:]
 }
 
 func badRequest(reason string, message string) error {

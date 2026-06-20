@@ -45,14 +45,12 @@ const (
 )
 
 type SupplierCredentialStatus struct {
-	AdminAPIKeyConfigured          bool   `json:"admin_api_key_configured"`
 	PostgresConfigured             bool   `json:"postgres_configured"`
 	RedisConfigured                bool   `json:"redis_configured"`
 	BrowserLoginEnabled            bool   `json:"browser_login_enabled"`
 	BrowserLoginUsernameConfigured bool   `json:"browser_login_username_configured"`
 	BrowserLoginPasswordConfigured bool   `json:"browser_login_password_configured"`
 	BrowserLoginTokenConfigured    bool   `json:"browser_login_token_configured"`
-	MaskedAdminAPIKey              string `json:"masked_admin_api_key,omitempty"`
 	MaskedBrowserLoginUsername     string `json:"masked_browser_login_username,omitempty"`
 }
 
@@ -63,10 +61,6 @@ type Supplier struct {
 	Type                 SupplierType             `json:"type"`
 	RuntimeStatus        SupplierRuntimeStatus    `json:"runtime_status"`
 	HealthStatus         SupplierHealthStatus     `json:"health_status"`
-	BoundAccountID       int64                    `json:"bound_account_id,omitempty"`
-	BoundAccountName     string                   `json:"bound_account_name,omitempty"`
-	BoundAccountPlatform string                   `json:"bound_account_platform,omitempty"`
-	BoundAccountType     string                   `json:"bound_account_type,omitempty"`
 	DashboardURL         string                   `json:"dashboard_url,omitempty"`
 	APIBaseURL           string                   `json:"api_base_url,omitempty"`
 	Contact              string                   `json:"contact,omitempty"`
@@ -80,6 +74,42 @@ type Supplier struct {
 	BalanceUpdatedAt     *time.Time               `json:"balance_updated_at,omitempty"`
 	CreatedAt            time.Time                `json:"created_at"`
 	UpdatedAt            time.Time                `json:"updated_at"`
+}
+
+type SupplierAccount struct {
+	ID                        int64                 `json:"id"`
+	SupplierID                int64                 `json:"supplier_id"`
+	LocalSub2APIAccountID     int64                 `json:"local_sub2api_account_id"`
+	LocalAccountName          string                `json:"local_account_name"`
+	LocalAccountPlatform      string                `json:"local_account_platform"`
+	LocalAccountType          string                `json:"local_account_type"`
+	SupplierAccountIdentifier string                `json:"supplier_account_identifier,omitempty"`
+	SupplierAccountLabel      string                `json:"supplier_account_label,omitempty"`
+	OrganizationID            string                `json:"organization_id,omitempty"`
+	ProjectID                 string                `json:"project_id,omitempty"`
+	RateProfile               string                `json:"rate_profile,omitempty"`
+	ConfiguredConcurrency     int                   `json:"configured_concurrency"`
+	ObservedMaxConcurrency    int                   `json:"observed_max_concurrency"`
+	BalanceThresholdCents     int64                 `json:"balance_threshold_cents"`
+	BalanceCents              int64                 `json:"balance_cents"`
+	BalanceCurrency           string                `json:"balance_currency"`
+	HasUsableBalance          bool                  `json:"has_usable_balance"`
+	RuntimeStatus             SupplierRuntimeStatus `json:"runtime_status"`
+	HealthStatus              SupplierHealthStatus  `json:"health_status"`
+	CreatedAt                 time.Time             `json:"created_at"`
+	UpdatedAt                 time.Time             `json:"updated_at"`
+}
+
+type LocalSub2APIAccount struct {
+	ID             int64   `json:"id"`
+	Name           string  `json:"name"`
+	Platform       string  `json:"platform"`
+	Type           string  `json:"type"`
+	Status         string  `json:"status"`
+	Schedulable    bool    `json:"schedulable"`
+	Concurrency    int     `json:"concurrency"`
+	Priority       int     `json:"priority"`
+	RateMultiplier float64 `json:"rate_multiplier"`
 }
 
 func (k SupplierKind) Valid() bool {
@@ -140,4 +170,11 @@ func IsSwitchableSupplierStatus(status SupplierRuntimeStatus) bool {
 
 func CanUseSupplierForSwitching(status SupplierRuntimeStatus, balanceCents int64) bool {
 	return IsSwitchableSupplierStatus(status) && balanceCents > 0
+}
+
+func CanUseSupplierAccountForSwitching(parentStatus SupplierRuntimeStatus, accountStatus SupplierRuntimeStatus, balanceCents int64, healthStatus SupplierHealthStatus) bool {
+	return IsSwitchableSupplierStatus(parentStatus) &&
+		IsSwitchableSupplierStatus(accountStatus) &&
+		balanceCents > 0 &&
+		healthStatus == SupplierHealthStatusNormal
 }
