@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -162,17 +161,14 @@ func NeedsSetup() bool {
 }
 
 func buildPostgresDSN(cfg *DatabaseConfig, dbName string) string {
-	host := cfg.Host
-	if host != "" {
-		host = net.JoinHostPort(host, strconv.Itoa(cfg.Port))
-	}
 	sslMode := strings.TrimSpace(cfg.SSLMode)
 	if sslMode == "" {
 		sslMode = "disable"
 	}
 
-	values := make([]string, 0, 6)
-	values = append(values, "host="+quotePostgresDSNValue(host))
+	values := make([]string, 0, 7)
+	values = append(values, "host="+quotePostgresDSNValue(cfg.Host))
+	values = append(values, fmt.Sprintf("port=%d", cfg.Port))
 	values = append(values, "user="+quotePostgresDSNValue(cfg.User))
 	if cfg.Password != "" {
 		values = append(values, "password="+quotePostgresDSNValue(cfg.Password))

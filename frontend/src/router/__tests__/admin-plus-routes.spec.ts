@@ -23,6 +23,15 @@ describe('adminPlusRoutes', () => {
       '/admin',
       '/admin/dashboard',
       '/admin/ops',
+      '/admin/operations',
+      '/admin/operations/suppliers',
+      '/admin/operations/rates',
+      '/admin/operations/balances',
+      '/admin/operations/health',
+      '/admin/operations/promotions',
+      '/admin/operations/extension-tasks',
+      '/admin/operations/billing',
+      '/admin/operations/actions',
       '/admin/settings',
       '/:pathMatch(.*)*'
     ])
@@ -60,10 +69,22 @@ describe('adminPlusRoutes', () => {
 
   it('后台业务页面必须要求管理员身份', () => {
     const adminRoutes = adminPlusRoutes.filter((route) =>
-      ['/admin/dashboard', '/admin/ops', '/admin/settings'].includes(route.path)
+      [
+        '/admin/dashboard',
+        '/admin/ops',
+        '/admin/operations/suppliers',
+        '/admin/operations/rates',
+        '/admin/operations/balances',
+        '/admin/operations/health',
+        '/admin/operations/promotions',
+        '/admin/operations/extension-tasks',
+        '/admin/operations/billing',
+        '/admin/operations/actions',
+        '/admin/settings'
+      ].includes(route.path)
     )
 
-    expect(adminRoutes).toHaveLength(3)
+    expect(adminRoutes).toHaveLength(11)
     for (const route of adminRoutes) {
       expect(route.meta?.requiresAuth).toBe(true)
       expect(route.meta?.requiresAdmin).toBe(true)

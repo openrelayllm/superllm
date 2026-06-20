@@ -91,7 +91,7 @@ func TestWriteConfigFileKeepsDefaultUserConcurrency(t *testing.T) {
 func TestBuildDatabaseConnectionDSNsUsesPostgresForBootstrap(t *testing.T) {
 	cfg := &DatabaseConfig{
 		Host:     "db",
-		Port:     5432,
+		Port:     39931,
 		User:     "sub2api",
 		Password: "secret",
 		DBName:   "sub2api",
@@ -108,6 +108,12 @@ func TestBuildDatabaseConnectionDSNsUsesPostgresForBootstrap(t *testing.T) {
 	}
 	if !strings.Contains(targetDSN, "dbname=sub2api") {
 		t.Fatalf("target DSN = %q, want configured database", targetDSN)
+	}
+	if strings.Contains(targetDSN, "host=db:39931") {
+		t.Fatalf("target DSN = %q, lib/pq keyword DSN should keep host and port separate", targetDSN)
+	}
+	if !strings.Contains(targetDSN, "host=db") || !strings.Contains(targetDSN, "port=39931") {
+		t.Fatalf("target DSN = %q, want separate host and non-default port", targetDSN)
 	}
 }
 

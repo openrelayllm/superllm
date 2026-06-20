@@ -131,6 +131,21 @@ const ChartIcon = {
     )
 }
 
+const OperationsIcon = {
+  render: () =>
+    h(
+      'svg',
+      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
+      [
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          d: 'M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5'
+        })
+      ]
+    )
+}
+
 const CogIcon = {
   render: () =>
     h(
@@ -214,6 +229,14 @@ const ChevronDoubleRightIcon = {
 const adminNavItems = computed((): NavItem[] => [
   { path: '/admin/dashboard', label: t('nav.dashboard'), icon: DashboardIcon },
   { path: '/admin/ops', label: t('nav.ops'), icon: ChartIcon },
+  { path: '/admin/operations/suppliers', label: '供应商管理', icon: OperationsIcon },
+  { path: '/admin/operations/rates', label: '费率监控', icon: ChartIcon },
+  { path: '/admin/operations/balances', label: '余额监控', icon: OperationsIcon },
+  { path: '/admin/operations/health', label: '健康监控', icon: ChartIcon },
+  { path: '/admin/operations/promotions', label: '优惠监控', icon: OperationsIcon },
+  { path: '/admin/operations/extension-tasks', label: '插件任务', icon: OperationsIcon },
+  { path: '/admin/operations/billing', label: '账单对账', icon: ChartIcon },
+  { path: '/admin/operations/actions', label: '动作建议', icon: OperationsIcon },
   { path: '/admin/settings', label: t('nav.settings'), icon: CogIcon }
 ])
 

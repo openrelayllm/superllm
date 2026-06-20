@@ -55,6 +55,90 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/operations',
+    redirect: '/admin/operations/suppliers'
+  },
+  {
+    path: '/admin/operations/suppliers',
+    name: 'AdminPlusSuppliers',
+    component: () => import('@/views/admin/operations/SuppliersView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: '供应商管理'
+    }
+  },
+  {
+    path: '/admin/operations/rates',
+    name: 'AdminPlusRates',
+    component: () => import('@/views/admin/operations/RatesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: '费率监控'
+    }
+  },
+  {
+    path: '/admin/operations/balances',
+    name: 'AdminPlusBalances',
+    component: () => import('@/views/admin/operations/BalancesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: '余额监控'
+    }
+  },
+  {
+    path: '/admin/operations/health',
+    name: 'AdminPlusHealth',
+    component: () => import('@/views/admin/operations/HealthView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: '健康监控'
+    }
+  },
+  {
+    path: '/admin/operations/promotions',
+    name: 'AdminPlusPromotions',
+    component: () => import('@/views/admin/operations/PromotionsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: '优惠监控'
+    }
+  },
+  {
+    path: '/admin/operations/extension-tasks',
+    name: 'AdminPlusExtensionTasks',
+    component: () => import('@/views/admin/operations/ExtensionTasksView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: '插件任务'
+    }
+  },
+  {
+    path: '/admin/operations/billing',
+    name: 'AdminPlusBilling',
+    component: () => import('@/views/admin/operations/BillingReconciliationView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: '账单对账'
+    }
+  },
+  {
+    path: '/admin/operations/actions',
+    name: 'AdminPlusActions',
+    component: () => import('@/views/admin/operations/ActionRecommendationsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: '动作建议'
+    }
+  },
+  {
     path: '/admin/settings',
     name: 'AdminSettings',
     component: () => import('@/views/admin/SettingsView.vue'),
