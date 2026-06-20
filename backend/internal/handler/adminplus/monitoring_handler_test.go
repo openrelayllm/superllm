@@ -114,6 +114,32 @@ func TestHealthHandlerRecordSampleCreatesHealthEvents(t *testing.T) {
 	require.Equal(t, "request_error", body.Data.Events[2].Type)
 }
 
+func TestHealthHandlerProbeOpenAIResponses(t *testing.T) {
+	router := newMonitoringHandlerTestRouter()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/health/probe", bytes.NewBufferString(`{
+		"supplier_id": 7,
+		"model": "gpt-5.5"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var body struct {
+		Code int `json:"code"`
+		Data struct {
+			Sample struct {
+				Source string `json:"source"`
+				Model  string `json:"model"`
+			} `json:"sample"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "responses_probe", body.Data.Sample.Source)
+	require.Equal(t, "gpt-5.5", body.Data.Sample.Model)
+}
+
 func newMonitoringHandlerTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 
@@ -129,6 +155,7 @@ func newMonitoringHandlerTestRouter() *gin.Engine {
 	router.POST("/promotions", promotionHandler.RecordPromotion)
 	router.GET("/promotions", promotionHandler.ListEvents)
 	router.PATCH("/promotions/:id/ack", promotionHandler.AcknowledgeEvent)
+	router.POST("/health/probe", healthHandler.ProbeOpenAIResponses)
 	router.POST("/health/samples", healthHandler.RecordSample)
 	router.GET("/health/samples", healthHandler.ListSamples)
 	router.GET("/health/events", healthHandler.ListEvents)

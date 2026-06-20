@@ -58,6 +58,7 @@ func RegisterAdminPlusRoutes(
 
 		health := adminPlus.Group("/health")
 		{
+			health.POST("/probe", h.AdminPlus.Health.ProbeOpenAIResponses)
 			health.POST("/samples", h.AdminPlus.Health.RecordSample)
 			health.GET("/samples", h.AdminPlus.Health.ListSamples)
 			health.GET("/events", h.AdminPlus.Health.ListEvents)

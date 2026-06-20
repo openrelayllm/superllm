@@ -2,8 +2,11 @@ package health
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -91,11 +94,68 @@ func TestServiceRecordSampleValidatesInput(t *testing.T) {
 	require.Equal(t, "HEALTH_LATENCY_INVALID", infraerrors.Reason(err))
 }
 
+func TestServiceProbeOpenAIResponsesRecordsGPT55Sample(t *testing.T) {
+	repo := newFakeHealthRepository()
+	var received struct {
+		Path  string
+		Model string
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received.Path = r.URL.Path
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		received.Model, _ = body["model"].(string)
+		require.Equal(t, "Bearer sk-test", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n"))
+	}))
+	t.Cleanup(server.Close)
+	repo.probeTarget = &ProbeTarget{
+		SupplierID:              7,
+		SupplierAPIBaseURL:      server.URL,
+		SupplierAccountID:       3,
+		LocalAccountID:          11,
+		LocalAccountName:        "OpenAI upstream",
+		LocalAccountPlatform:    "openai",
+		LocalAccountType:        "apikey",
+		LocalAccountStatus:      "active",
+		LocalAccountConcurrency: 8,
+		APIKey:                  "sk-test",
+	}
+	svc := NewService(repo)
+	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	tick := 0
+	svc.now = func() time.Time {
+		tick++
+		return now.Add(time.Duration(tick*100) * time.Millisecond)
+	}
+
+	result, err := svc.ProbeOpenAIResponses(context.Background(), ProbeInput{
+		SupplierID:        7,
+		SupplierAccountID: 3,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "/v1/responses", received.Path)
+	require.Equal(t, "gpt-5.5", received.Model)
+	require.NotNil(t, result.Sample)
+	require.Equal(t, "responses_probe", result.Sample.Source)
+	require.Equal(t, "gpt-5.5", result.Sample.Model)
+	require.Equal(t, 200, result.Sample.StatusCode)
+	require.Zero(t, result.Sample.ObservedConcurrency)
+	require.NotNil(t, result.Sample.AvailableConcurrency)
+	require.Equal(t, 8, *result.Sample.AvailableConcurrency)
+	require.NotNil(t, result.Sample.ConcurrencyLimit)
+	require.Equal(t, 8, *result.Sample.ConcurrencyLimit)
+	require.Empty(t, result.Events)
+}
+
 type fakeHealthRepository struct {
 	nextSampleID int64
 	nextEventID  int64
 	samples      []*adminplusdomain.HealthSample
 	events       []*adminplusdomain.HealthEvent
+	probeTarget  *ProbeTarget
 }
 
 func newFakeHealthRepository() *fakeHealthRepository {
@@ -148,6 +208,24 @@ func (r *fakeHealthRepository) UpdateEventStatus(_ context.Context, id int64, st
 		}
 	}
 	return nil, nil
+}
+
+func (r *fakeHealthRepository) GetProbeTarget(_ context.Context, supplierID int64, supplierAccountID int64) (*ProbeTarget, error) {
+	if r.probeTarget != nil {
+		cp := *r.probeTarget
+		return &cp, nil
+	}
+	return &ProbeTarget{
+		SupplierID:              supplierID,
+		SupplierAPIBaseURL:      "https://api.openai.com",
+		SupplierAccountID:       supplierAccountID,
+		LocalAccountID:          1,
+		LocalAccountPlatform:    "openai",
+		LocalAccountType:        "apikey",
+		LocalAccountStatus:      "active",
+		LocalAccountConcurrency: 3,
+		APIKey:                  "sk-test",
+	}, nil
 }
 
 func cloneHealthSample(in *adminplusdomain.HealthSample) *adminplusdomain.HealthSample {

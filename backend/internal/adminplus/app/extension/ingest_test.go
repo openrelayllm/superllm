@@ -67,7 +67,9 @@ func TestCompleteTaskIngestsRateResult(t *testing.T) {
 	require.Len(t, rateRepo.snapshots, 1)
 	require.Len(t, rateRepo.events, 1)
 	require.Equal(t, "gpt-4o-mini", rateRepo.snapshots[0].Model)
-	require.Equal(t, 1, completed.Result["ingest"].(map[string]any)["rate_snapshots"])
+	ingest, ok := completed.Result["ingest"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, 1, ingest["rate_snapshots"])
 }
 
 func TestCompleteTaskIngestsBillExportResult(t *testing.T) {
@@ -126,7 +128,9 @@ func TestCompleteTaskIngestsBillExportResult(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, lines, 1)
 	require.Equal(t, "req-1", lines[0].ExternalRequestID)
-	require.Equal(t, 1, completed.Result["ingest"].(map[string]any)["bill_lines"])
+	ingest, ok := completed.Result["ingest"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, 1, ingest["bill_lines"])
 }
 
 type ingestRateRepository struct {

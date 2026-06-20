@@ -194,6 +194,75 @@ func (r *SQLRepository) UpdateEventStatus(ctx context.Context, id int64, status 
 	return event, err
 }
 
+func (r *SQLRepository) GetProbeTarget(ctx context.Context, supplierID int64, supplierAccountID int64) (*ProbeTarget, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	where := "asa.supplier_id = $1"
+	args := []any{supplierID}
+	if supplierAccountID > 0 {
+		where += " AND asa.id = $2"
+		args = append(args, supplierAccountID)
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT
+			s.id,
+			s.name,
+			s.api_base_url,
+			asa.id,
+			asa.local_sub2api_account_id,
+			asa.local_account_name,
+			asa.local_account_platform,
+			asa.local_account_type,
+			a.status,
+			a.schedulable,
+			a.concurrency,
+			a.credentials
+		FROM admin_plus_supplier_accounts asa
+		INNER JOIN admin_plus_suppliers s ON s.id = asa.supplier_id
+		INNER JOIN accounts a ON a.id = asa.local_sub2api_account_id
+		WHERE `+where+` AND a.deleted_at IS NULL
+		ORDER BY
+			CASE asa.runtime_status WHEN 'active' THEN 1 WHEN 'candidate' THEN 2 ELSE 3 END,
+			asa.id ASC
+		LIMIT 1
+	`, args...)
+	var target ProbeTarget
+	var credentialsBytes []byte
+	err := row.Scan(
+		&target.SupplierID,
+		&target.SupplierName,
+		&target.SupplierAPIBaseURL,
+		&target.SupplierAccountID,
+		&target.LocalAccountID,
+		&target.LocalAccountName,
+		&target.LocalAccountPlatform,
+		&target.LocalAccountType,
+		&target.LocalAccountStatus,
+		&target.LocalAccountSchedulable,
+		&target.LocalAccountConcurrency,
+		&credentialsBytes,
+	)
+	if err != nil {
+		return nil, translateNoRows(err, "HEALTH_PROBE_TARGET_NOT_FOUND", "health probe target not found")
+	}
+	var credentials map[string]any
+	if len(credentialsBytes) > 0 {
+		if err := json.Unmarshal(credentialsBytes, &credentials); err != nil {
+			return nil, err
+		}
+	}
+	target.APIKey = stringFromMap(credentials, "api_key")
+	target.AccountBaseURL = stringFromMap(credentials, "base_url")
+	if strings.TrimSpace(target.LocalAccountPlatform) != "openai" {
+		return nil, infraerrors.New(http.StatusBadRequest, "HEALTH_PROBE_OPENAI_ACCOUNT_REQUIRED", "health probe currently requires an OpenAI-compatible local account")
+	}
+	if typ := strings.TrimSpace(target.LocalAccountType); typ != "apikey" && typ != "api_key" && typ != "upstream" {
+		return nil, infraerrors.New(http.StatusBadRequest, "HEALTH_PROBE_APIKEY_ACCOUNT_REQUIRED", "health probe currently requires an API key local account")
+	}
+	return &target, nil
+}
+
 type healthScanner interface {
 	Scan(dest ...any) error
 }
@@ -281,6 +350,20 @@ func nullableInt(value *int) any {
 		return nil
 	}
 	return *value
+}
+
+func stringFromMap(values map[string]any, key string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	switch v := values[key].(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case json.Number:
+		return strings.TrimSpace(v.String())
+	default:
+		return ""
+	}
 }
 
 func dbNotConfigured() error {

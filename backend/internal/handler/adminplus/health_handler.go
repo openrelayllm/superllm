@@ -36,6 +36,16 @@ type recordHealthSampleRequest struct {
 	CapturedAt                   string         `json:"captured_at"`
 }
 
+type probeOpenAIResponsesRequest struct {
+	SupplierID                   int64   `json:"supplier_id" binding:"required"`
+	SupplierAccountID            int64   `json:"supplier_account_id"`
+	Model                        string  `json:"model"`
+	Prompt                       string  `json:"prompt"`
+	FirstTokenThresholdMS        int64   `json:"first_token_threshold_ms"`
+	TotalLatencyThresholdMS      int64   `json:"total_latency_threshold_ms"`
+	ConcurrencySaturationPercent float64 `json:"concurrency_saturation_percent"`
+}
+
 func (h *HealthHandler) RecordSample(c *gin.Context) {
 	var req recordHealthSampleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -62,6 +72,27 @@ func (h *HealthHandler) RecordSample(c *gin.Context) {
 		ConcurrencySaturationPercent: req.ConcurrencySaturationPercent,
 		RawPayload:                   req.RawPayload,
 		CapturedAt:                   capturedAt,
+	})
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Created(c, result)
+}
+
+func (h *HealthHandler) ProbeOpenAIResponses(c *gin.Context) {
+	var req probeOpenAIResponsesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	result, err := h.service.ProbeOpenAIResponses(c.Request.Context(), healthapp.ProbeInput{
+		SupplierID:                   req.SupplierID,
+		SupplierAccountID:            req.SupplierAccountID,
+		Model:                        req.Model,
+		Prompt:                       req.Prompt,
+		FirstTokenThresholdMS:        req.FirstTokenThresholdMS,
+		TotalLatencyThresholdMS:      req.TotalLatencyThresholdMS,
+		ConcurrencySaturationPercent: req.ConcurrencySaturationPercent,
 	})
 	if response.ErrorFrom(c, err) {
 		return

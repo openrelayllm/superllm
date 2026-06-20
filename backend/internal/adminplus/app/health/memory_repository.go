@@ -118,6 +118,29 @@ func (r *MemoryRepository) UpdateEventStatus(_ context.Context, id int64, status
 	return nil, infraerrors.New(http.StatusNotFound, "HEALTH_EVENT_NOT_FOUND", "health event not found")
 }
 
+func (r *MemoryRepository) GetProbeTarget(_ context.Context, supplierID int64, supplierAccountID int64) (*ProbeTarget, error) {
+	if supplierID <= 0 {
+		return nil, infraerrors.New(http.StatusNotFound, "HEALTH_PROBE_TARGET_NOT_FOUND", "health probe target not found")
+	}
+	if supplierAccountID <= 0 {
+		supplierAccountID = 1
+	}
+	return &ProbeTarget{
+		SupplierID:              supplierID,
+		SupplierName:            "Memory Supplier",
+		SupplierAPIBaseURL:      "https://api.openai.com",
+		SupplierAccountID:       supplierAccountID,
+		LocalAccountID:          1,
+		LocalAccountName:        "Memory OpenAI",
+		LocalAccountPlatform:    "openai",
+		LocalAccountType:        "apikey",
+		LocalAccountStatus:      "active",
+		LocalAccountSchedulable: true,
+		LocalAccountConcurrency: 3,
+		APIKey:                  "sk-memory-test",
+	}, nil
+}
+
 func cloneMemoryHealthSample(in *adminplusdomain.HealthSample) *adminplusdomain.HealthSample {
 	if in == nil {
 		return nil

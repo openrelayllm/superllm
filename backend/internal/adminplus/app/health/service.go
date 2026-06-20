@@ -1,18 +1,30 @@
 package health
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/tidwall/gjson"
 )
 
 const (
 	defaultFirstTokenThresholdMS   = int64(3000)
 	defaultTotalLatencyThresholdMS = int64(30000)
+	defaultProbeModel              = "gpt-5.5"
+	defaultProbeTimeout            = 45 * time.Second
+	defaultProbePrompt             = "Return exactly: ok"
+	maxProbeErrorBodyBytes         = 64 * 1024
 )
 
 type RecordSampleInput struct {
@@ -51,23 +63,52 @@ type EventFilter struct {
 	Limit      int
 }
 
+type ProbeInput struct {
+	SupplierID                   int64
+	SupplierAccountID            int64
+	Model                        string
+	Prompt                       string
+	FirstTokenThresholdMS        int64
+	TotalLatencyThresholdMS      int64
+	ConcurrencySaturationPercent float64
+}
+
 type Repository interface {
 	CreateSample(ctx context.Context, sample *adminplusdomain.HealthSample) (*adminplusdomain.HealthSample, error)
 	CreateEvent(ctx context.Context, event *adminplusdomain.HealthEvent) (*adminplusdomain.HealthEvent, error)
 	ListSamples(ctx context.Context, filter SampleFilter) ([]*adminplusdomain.HealthSample, error)
 	ListEvents(ctx context.Context, filter EventFilter) ([]*adminplusdomain.HealthEvent, error)
 	UpdateEventStatus(ctx context.Context, id int64, status adminplusdomain.HealthEventStatus) (*adminplusdomain.HealthEvent, error)
+	GetProbeTarget(ctx context.Context, supplierID int64, supplierAccountID int64) (*ProbeTarget, error)
+}
+
+type ProbeTarget struct {
+	SupplierID              int64
+	SupplierName            string
+	SupplierAPIBaseURL      string
+	SupplierAccountID       int64
+	LocalAccountID          int64
+	LocalAccountName        string
+	LocalAccountPlatform    string
+	LocalAccountType        string
+	LocalAccountStatus      string
+	LocalAccountSchedulable bool
+	LocalAccountConcurrency int
+	APIKey                  string
+	AccountBaseURL          string
 }
 
 type Service struct {
-	repo Repository
-	now  func() time.Time
+	repo       Repository
+	now        func() time.Time
+	httpClient *http.Client
 }
 
 func NewService(repo Repository) *Service {
 	return &Service{
-		repo: repo,
-		now:  time.Now,
+		repo:       repo,
+		now:        time.Now,
+		httpClient: &http.Client{Timeout: defaultProbeTimeout},
 	}
 }
 
@@ -132,6 +173,76 @@ func (s *Service) AcknowledgeEvent(ctx context.Context, id int64) (*adminplusdom
 		return nil, badRequest("HEALTH_EVENT_ID_INVALID", "invalid health event id")
 	}
 	return s.repo.UpdateEventStatus(ctx, id, adminplusdomain.HealthEventStatusAcknowledged)
+}
+
+func (s *Service) ProbeOpenAIResponses(ctx context.Context, in ProbeInput) (*RecordSampleResult, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("health service is not configured")
+	}
+	if in.SupplierID <= 0 {
+		return nil, badRequest("HEALTH_SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	target, err := s.repo.GetProbeTarget(ctx, in.SupplierID, in.SupplierAccountID)
+	if err != nil {
+		return nil, err
+	}
+	model := strings.TrimSpace(in.Model)
+	if model == "" {
+		model = defaultProbeModel
+	}
+	prompt := strings.TrimSpace(in.Prompt)
+	if prompt == "" {
+		prompt = defaultProbePrompt
+	}
+	baseURL, err := probeBaseURL(target)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(target.APIKey) == "" {
+		return nil, infraerrors.New(http.StatusConflict, "HEALTH_PROBE_API_KEY_REQUIRED", "local Sub2API account api key is required for health probe")
+	}
+
+	startedAt := s.now().UTC()
+	probe, err := s.executeOpenAIResponsesProbe(ctx, baseURL, target.APIKey, model, prompt)
+	if err != nil {
+		return nil, err
+	}
+	firstTokenMS := probe.FirstTokenLatencyMS
+	totalMS := probe.TotalLatencyMS
+	errorClass := probe.ErrorClass
+	source := "responses_probe"
+	rawPayload := map[string]any{
+		"provider":                    "openai",
+		"api_mode":                    "responses",
+		"model":                       model,
+		"endpoint":                    redactProbeURL(joinURL(baseURL, "/v1/responses")),
+		"supplier_account_id":         target.SupplierAccountID,
+		"local_sub2api_account_id":    target.LocalAccountID,
+		"local_sub2api_account_name":  target.LocalAccountName,
+		"local_sub2api_account_type":  target.LocalAccountType,
+		"local_sub2api_account_state": target.LocalAccountStatus,
+		"configured_concurrency":      target.LocalAccountConcurrency,
+		"response_text_present":       probe.ResponseTextPresent,
+		"error_message":               probe.ErrorMessage,
+	}
+	availableConcurrency := positiveIntPtr(target.LocalAccountConcurrency)
+	return s.RecordSample(ctx, RecordSampleInput{
+		SupplierID:                   in.SupplierID,
+		Source:                       source,
+		Model:                        model,
+		FirstTokenLatencyMS:          firstTokenMS,
+		TotalLatencyMS:               totalMS,
+		StatusCode:                   probe.StatusCode,
+		ErrorClass:                   errorClass,
+		ObservedConcurrency:          0,
+		AvailableConcurrency:         availableConcurrency,
+		ConcurrencyLimit:             positiveIntPtr(target.LocalAccountConcurrency),
+		FirstTokenThresholdMS:        in.FirstTokenThresholdMS,
+		TotalLatencyThresholdMS:      in.TotalLatencyThresholdMS,
+		ConcurrencySaturationPercent: in.ConcurrencySaturationPercent,
+		RawPayload:                   rawPayload,
+		CapturedAt:                   &startedAt,
+	})
 }
 
 type healthThresholds struct {
@@ -278,4 +389,189 @@ func badRequest(reason string, message string) error {
 
 func internalError(message string) error {
 	return infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", message)
+}
+
+type openAIResponsesProbeResult struct {
+	StatusCode          int
+	FirstTokenLatencyMS int64
+	TotalLatencyMS      int64
+	ResponseTextPresent bool
+	ErrorClass          string
+	ErrorMessage        string
+}
+
+func (s *Service) executeOpenAIResponsesProbe(ctx context.Context, baseURL string, apiKey string, model string, prompt string) (*openAIResponsesProbeResult, error) {
+	started := s.now()
+	payload, err := json.Marshal(map[string]any{
+		"model":             model,
+		"instructions":      "You are a health-check endpoint. Reply briefly.",
+		"input":             prompt,
+		"max_output_tokens": 16,
+		"stream":            true,
+		"text":              map[string]any{"verbosity": "low"},
+		"reasoning":         map[string]any{"effort": "low"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, joinURL(baseURL, "/v1/responses"), bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		total := int64(s.now().Sub(started) / time.Millisecond)
+		return &openAIResponsesProbeResult{
+			StatusCode:     0,
+			TotalLatencyMS: total,
+			ErrorClass:     "network_error",
+			ErrorMessage:   sanitizeProbeMessage(err.Error()),
+		}, nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	result := &openAIResponsesProbeResult{StatusCode: resp.StatusCode}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxProbeErrorBodyBytes))
+		result.TotalLatencyMS = int64(s.now().Sub(started) / time.Millisecond)
+		result.ErrorClass = errorClassForStatus(resp.StatusCode)
+		result.ErrorMessage = sanitizeProbeMessage(string(body))
+		return result, nil
+	}
+
+	firstToken, textPresent, readErr := readOpenAIResponsesStream(resp.Body, started, s.now)
+	result.FirstTokenLatencyMS = firstToken
+	result.TotalLatencyMS = int64(s.now().Sub(started) / time.Millisecond)
+	result.ResponseTextPresent = textPresent
+	if readErr != nil {
+		result.ErrorClass = "stream_error"
+		result.ErrorMessage = sanitizeProbeMessage(readErr.Error())
+	}
+	return result, nil
+}
+
+func readOpenAIResponsesStream(body io.Reader, started time.Time, now func() time.Time) (int64, bool, error) {
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var firstTokenMS int64
+	textPresent := false
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		if gjson.Get(data, "type").String() == "response.output_text.delta" {
+			if strings.TrimSpace(gjson.Get(data, "delta").String()) != "" {
+				textPresent = true
+				if firstTokenMS == 0 {
+					firstTokenMS = int64(now().Sub(started) / time.Millisecond)
+				}
+			}
+			continue
+		}
+		if strings.TrimSpace(gjson.Get(data, "response.output.0.content.0.text").String()) != "" {
+			textPresent = true
+			if firstTokenMS == 0 {
+				firstTokenMS = int64(now().Sub(started) / time.Millisecond)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return firstTokenMS, textPresent, err
+	}
+	if firstTokenMS == 0 && textPresent {
+		firstTokenMS = int64(now().Sub(started) / time.Millisecond)
+	}
+	return firstTokenMS, textPresent, nil
+}
+
+func probeBaseURL(target *ProbeTarget) (string, error) {
+	if target == nil {
+		return "", infraerrors.New(http.StatusNotFound, "HEALTH_PROBE_TARGET_NOT_FOUND", "health probe target not found")
+	}
+	raw := strings.TrimSpace(target.AccountBaseURL)
+	if raw == "" {
+		raw = strings.TrimSpace(target.SupplierAPIBaseURL)
+	}
+	if raw == "" {
+		raw = "https://api.openai.com"
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", badRequest("HEALTH_PROBE_BASE_URL_INVALID", "invalid probe base url")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", badRequest("HEALTH_PROBE_BASE_URL_INVALID", "probe base url must use http or https")
+	}
+	normalized := strings.TrimRight(u.Scheme+"://"+u.Host+strings.TrimRight(u.EscapedPath(), "/"), "/")
+	if strings.HasSuffix(normalized, "/v1") {
+		normalized = strings.TrimSuffix(normalized, "/v1")
+	}
+	return normalized, nil
+}
+
+func joinURL(base, path string) string {
+	base = strings.TrimRight(base, "/")
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return base + path
+}
+
+func errorClassForStatus(status int) string {
+	switch {
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return "credential_invalid"
+	case status == http.StatusTooManyRequests:
+		return "rate_limited"
+	case status >= 500:
+		return "upstream_5xx"
+	case status >= 400:
+		return "request_error"
+	default:
+		return ""
+	}
+}
+
+func positiveIntPtr(value int) *int {
+	if value <= 0 {
+		return nil
+	}
+	v := value
+	return &v
+}
+
+func sanitizeProbeMessage(message string) string {
+	value := strings.TrimSpace(message)
+	if value == "" {
+		return ""
+	}
+	if len(value) > 500 {
+		value = value[:500]
+	}
+	return value
+}
+
+func redactProbeURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	u.RawQuery = ""
+	return u.String()
+}
+
+func translateNoRows(err error, reason string, message string) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return infraerrors.New(http.StatusNotFound, reason, message)
+	}
+	return err
 }
