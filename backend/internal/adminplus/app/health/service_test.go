@@ -15,7 +15,8 @@ import (
 
 func TestServiceRecordSampleCreatesLatencyAndErrorEvents(t *testing.T) {
 	repo := newFakeHealthRepository()
-	svc := NewService(repo)
+	notifier := &fakeHealthNotifier{}
+	svc := NewServiceWithNotifier(repo, notifier)
 
 	result, err := svc.RecordSample(context.Background(), RecordSampleInput{
 		SupplierID:              7,
@@ -33,6 +34,8 @@ func TestServiceRecordSampleCreatesLatencyAndErrorEvents(t *testing.T) {
 	require.Equal(t, adminplusdomain.HealthEventTypeSlowFirstToken, result.Events[0].Type)
 	require.Equal(t, adminplusdomain.HealthEventTypeSlowTotal, result.Events[1].Type)
 	require.Equal(t, adminplusdomain.HealthEventTypeRequestError, result.Events[2].Type)
+	require.Len(t, notifier.events, 3)
+	require.Equal(t, result.Events[0].ID, notifier.events[0].ID)
 }
 
 func TestServiceRecordSampleCreatesConcurrencyFullEvent(t *testing.T) {
@@ -156,6 +159,15 @@ type fakeHealthRepository struct {
 	samples      []*adminplusdomain.HealthSample
 	events       []*adminplusdomain.HealthEvent
 	probeTarget  *ProbeTarget
+}
+
+type fakeHealthNotifier struct {
+	events []*adminplusdomain.HealthEvent
+}
+
+func (n *fakeHealthNotifier) NotifyHealthEvent(_ context.Context, event *adminplusdomain.HealthEvent, _ *adminplusdomain.HealthSample) error {
+	n.events = append(n.events, cloneHealthEvent(event))
+	return nil
 }
 
 func newFakeHealthRepository() *fakeHealthRepository {

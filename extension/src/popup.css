@@ -1,112 +1,188 @@
+* {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
   width: 360px;
-  background: #f8fafc;
-  color: #111827;
-  font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f5f7fa;
+  color: #182230;
+  font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-.panel {
-  padding: 16px;
-}
-
-header {
-  margin-bottom: 14px;
-}
-
-h1 {
-  margin: 0;
-  font-size: 16px;
+button {
+  width: 100%;
+  height: 38px;
+  border: 1px solid #cfd7df;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #182230;
+  cursor: pointer;
+  font-size: 12px;
   font-weight: 650;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+button.primary {
+  border-color: #155eef;
+  background: #155eef;
+  color: #ffffff;
+}
+
+.shell {
+  padding: 16px;
+}
+
+.topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+h1,
+h2,
 p {
-  margin: 4px 0 0;
-  color: #6b7280;
+  margin: 0;
+}
+
+h1 {
+  font-size: 17px;
+  font-weight: 720;
+}
+
+h2 {
+  margin-top: 2px;
+  font-size: 18px;
+  font-weight: 720;
+}
+
+.caption,
+.hint,
+.label {
+  color: #667085;
   font-size: 12px;
 }
 
-label {
-  display: block;
+.step {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 18px;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.step-index {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 999px;
+  background: #155eef;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.step-body {
+  min-width: 0;
+}
+
+.hint {
+  margin-top: 7px;
+}
+
+.context {
   margin-top: 10px;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px 12px;
 }
 
-span,
-legend {
-  display: block;
-  margin-bottom: 5px;
-  color: #374151;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-input {
-  box-sizing: border-box;
-  width: 100%;
-  height: 34px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  padding: 0 10px;
-  outline: none;
-}
-
-input:focus {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
-}
-
-fieldset {
-  margin: 12px 0 0;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  padding: 10px;
-}
-
-.check {
-  display: inline-flex;
+.context-row {
+  display: flex;
   align-items: center;
-  gap: 5px;
-  width: 92px;
-  margin: 4px 0;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+  color: #667085;
+  font-size: 12px;
 }
 
-.check input {
-  width: 14px;
-  height: 14px;
+.context-row + .context-row {
+  border-top: 1px solid #eef1f4;
+  padding-top: 6px;
+  margin-top: 6px;
+}
+
+.context-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #344054;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .actions {
   display: grid;
-  grid-template-columns: 1fr 74px;
+  grid-template-columns: 1fr;
   gap: 8px;
-  margin-top: 14px;
+  margin-top: 12px;
 }
 
-button {
-  height: 34px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+.notice {
+  margin-top: 10px;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
   background: #ffffff;
-  color: #111827;
-  cursor: pointer;
-}
-
-button.primary {
-  grid-column: span 2;
-  border-color: #2563eb;
-  background: #2563eb;
-  color: #ffffff;
-}
-
-pre {
-  min-height: 40px;
-  max-height: 160px;
-  overflow: auto;
-  white-space: pre-wrap;
-  margin: 12px 0 0;
-  padding: 10px;
-  border-radius: 6px;
-  background: #111827;
-  color: #d1fae5;
+  color: #475467;
+  padding: 9px 11px;
   font-size: 12px;
+}
+
+.pill {
+  flex: 0 0 auto;
+  border: 1px solid #d6dde7;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pill.success {
+  border-color: #9ee6b8;
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.pill.warning {
+  border-color: #fedf89;
+  background: #fffaeb;
+  color: #b54708;
+}
+
+.pill.danger {
+  border-color: #fecdca;
+  background: #fff1f3;
+  color: #b42318;
+}
+
+.pill.neutral {
+  background: #f8fafc;
+  color: #667085;
+}
+
+.hidden {
+  display: none !important;
 }

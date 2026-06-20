@@ -25,6 +25,7 @@ type RunInput struct {
 	SupplierID    int64
 	TaskTypes     []adminplusdomain.ExtensionTaskType
 	WindowMinutes int
+	DryRun        bool
 	Now           time.Time
 }
 
@@ -60,6 +61,7 @@ func (s *Service) Run(ctx context.Context, in RunInput) (*adminplusdomain.Schedu
 	run := &adminplusdomain.SchedulerRun{
 		RunID:       fmt.Sprintf("%s-%d", mode, in.Now.UnixNano()),
 		Mode:        mode,
+		DryRun:      in.DryRun,
 		RequestedAt: in.Now,
 		TaskTypes:   taskTypes,
 		Items:       make([]adminplusdomain.ScheduledTask, 0),
@@ -77,9 +79,11 @@ func (s *Service) Run(ctx context.Context, in RunInput) (*adminplusdomain.Schedu
 			continue
 		}
 		for _, taskType := range taskTypes {
-			item := s.scheduleSupplierTask(ctx, supplier, taskType, mode, windowMinutes, in.Now)
+			item := s.scheduleSupplierTask(ctx, supplier, taskType, mode, windowMinutes, in.Now, in.DryRun)
 			if item.Created {
 				run.CreatedCount++
+			} else if item.Reason == "" {
+				run.EligibleCount++
 			} else {
 				run.SkippedCount++
 			}
@@ -97,7 +101,7 @@ func (s *Service) Status() adminplusdomain.SchedulerStatus {
 	}
 }
 
-func (s *Service) scheduleSupplierTask(ctx context.Context, supplier *adminplusdomain.Supplier, taskType adminplusdomain.ExtensionTaskType, mode string, windowMinutes int, now time.Time) adminplusdomain.ScheduledTask {
+func (s *Service) scheduleSupplierTask(ctx context.Context, supplier *adminplusdomain.Supplier, taskType adminplusdomain.ExtensionTaskType, mode string, windowMinutes int, now time.Time, dryRun bool) adminplusdomain.ScheduledTask {
 	item := adminplusdomain.ScheduledTask{
 		SupplierID:   supplier.ID,
 		SupplierName: supplier.Name,
@@ -109,6 +113,9 @@ func (s *Service) scheduleSupplierTask(ctx context.Context, supplier *adminplusd
 	}
 	bucket := scheduleBucket(taskType, now, windowMinutes)
 	item.ScheduleKey = fmt.Sprintf("scheduler:%s:supplier:%d:%s", taskType, supplier.ID, bucket)
+	if dryRun {
+		return item
+	}
 	task, created, err := s.extensionService.CreateTaskIfAbsent(ctx, extensionapp.CreateTaskInput{
 		SupplierID:  supplier.ID,
 		Type:        taskType,
@@ -146,6 +153,7 @@ func normalizeTaskTypes(input []adminplusdomain.ExtensionTaskType) []adminplusdo
 	if len(input) == 0 {
 		return []adminplusdomain.ExtensionTaskType{
 			adminplusdomain.ExtensionTaskTypeFetchRates,
+			adminplusdomain.ExtensionTaskTypeFetchGroups,
 			adminplusdomain.ExtensionTaskTypeFetchBalance,
 			adminplusdomain.ExtensionTaskTypeFetchPromotions,
 			adminplusdomain.ExtensionTaskTypeFetchHealth,
@@ -205,6 +213,8 @@ func scheduleBucket(taskType adminplusdomain.ExtensionTaskType, now time.Time, w
 
 func taskPriority(taskType adminplusdomain.ExtensionTaskType) int {
 	switch taskType {
+	case adminplusdomain.ExtensionTaskTypeFetchGroups:
+		return 85
 	case adminplusdomain.ExtensionTaskTypeFetchBalance:
 		return 90
 	case adminplusdomain.ExtensionTaskTypeFetchRates:

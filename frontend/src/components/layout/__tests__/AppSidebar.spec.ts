@@ -19,8 +19,28 @@ describe('AppSidebar Admin Plus navigation', () => {
     expect(componentSource).not.toContain("path: '/admin/accounts'")
     expect(componentSource).not.toContain("path: '/admin/channels'")
     expect(componentSource).not.toContain("path: '/admin/payment'")
+    expect(componentSource).not.toContain("path: '/admin/operations/extension-tasks'")
     expect(componentSource).not.toContain("path: '/keys'")
     expect(componentSource).not.toContain("path: '/payment'")
+  })
+
+  it('将监控页面收敛到监控一级目录下', () => {
+    const monitorGroupMatch = componentSource.match(/label: '监控',[\s\S]*?children: \[([\s\S]*?)\n    \]/)
+
+    expect(monitorGroupMatch).not.toBeNull()
+    expect(monitorGroupMatch?.[1]).toContain("label: t('nav.ops')")
+    expect(monitorGroupMatch?.[1]).toContain("label: '费率监控'")
+    expect(monitorGroupMatch?.[1]).toContain("label: '余额监控'")
+    expect(monitorGroupMatch?.[1]).toContain("label: '健康监控'")
+    expect(monitorGroupMatch?.[1]).toContain("label: '优惠监控'")
+    expect(componentSource.match(/path: '\/admin\/ops', label: t\('nav\.ops'\)/g)).toHaveLength(1)
+  })
+
+  it('二级导航默认折叠，由用户点击一级目录展开', () => {
+    expect(componentSource).toContain('const expandedGroups = ref<Set<string>>(new Set())')
+    expect(componentSource).toContain('@click="toggleNavGroup(item.path)"')
+    expect(componentSource).toContain('isNavGroupExpanded(item.path)')
+    expect(componentSource).not.toContain('isNavGroupExpanded(item.path) || isNavItemActive(item)')
   })
 })
 

@@ -113,6 +113,14 @@
                 </tbody>
               </table>
             </div>
+            <Pagination
+              v-if="snapshotPagination.total > 0"
+              :page="snapshotPagination.page"
+              :total="snapshotPagination.total"
+              :page-size="snapshotPagination.page_size"
+              @update:page="handleSnapshotPageChange"
+              @update:pageSize="handleSnapshotPageSizeChange"
+            />
           </div>
 
           <div class="card overflow-hidden">
@@ -141,6 +149,14 @@
                 </div>
               </div>
             </div>
+            <Pagination
+              v-if="eventPagination.total > 0"
+              :page="eventPagination.page"
+              :total="eventPagination.total"
+              :page-size="eventPagination.page_size"
+              @update:page="handleEventPageChange"
+              @update:pageSize="handleEventPageSizeChange"
+            />
           </div>
         </div>
       </section>
@@ -152,6 +168,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useAppStore } from '@/stores/app'
 import {
   acknowledgeRateEvent,
@@ -171,6 +189,8 @@ const submitting = ref(false)
 const suppliers = ref<Supplier[]>([])
 const snapshots = ref<RateSnapshot[]>([])
 const events = ref<RateChangeEvent[]>([])
+const snapshotPagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0, pages: 0 })
+const eventPagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0, pages: 0 })
 
 const form = reactive({
   supplier_id: 0,
@@ -213,12 +233,20 @@ async function loadPage() {
   try {
     const [supplierResult, snapshotResult, eventResult] = await Promise.all([
       listSuppliers(),
-      listRateSnapshots({ limit: 100 }),
-      listRateEvents({ limit: 100 })
+      listRateSnapshots({ page: snapshotPagination.page, page_size: snapshotPagination.page_size }),
+      listRateEvents({ page: eventPagination.page, page_size: eventPagination.page_size })
     ])
     suppliers.value = supplierResult.items
     snapshots.value = snapshotResult.items
     events.value = eventResult.items
+    snapshotPagination.total = snapshotResult.total || 0
+    snapshotPagination.pages = snapshotResult.pages || 0
+    snapshotPagination.page = snapshotResult.page || snapshotPagination.page
+    snapshotPagination.page_size = snapshotResult.page_size || snapshotPagination.page_size
+    eventPagination.total = eventResult.total || 0
+    eventPagination.pages = eventResult.pages || 0
+    eventPagination.page = eventResult.page || eventPagination.page
+    eventPagination.page_size = eventResult.page_size || eventPagination.page_size
     if (!form.supplier_id && suppliers.value[0]) {
       form.supplier_id = suppliers.value[0].id
     }
@@ -227,6 +255,28 @@ async function loadPage() {
   } finally {
     loading.value = false
   }
+}
+
+function handleSnapshotPageChange(page: number) {
+  snapshotPagination.page = page
+  void loadPage()
+}
+
+function handleSnapshotPageSizeChange(pageSize: number) {
+  snapshotPagination.page_size = pageSize
+  snapshotPagination.page = 1
+  void loadPage()
+}
+
+function handleEventPageChange(page: number) {
+  eventPagination.page = page
+  void loadPage()
+}
+
+function handleEventPageSizeChange(pageSize: number) {
+  eventPagination.page_size = pageSize
+  eventPagination.page = 1
+  void loadPage()
 }
 
 async function recordSnapshot() {

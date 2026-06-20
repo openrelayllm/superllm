@@ -138,6 +138,14 @@
                 </div>
               </div>
             </div>
+            <Pagination
+              v-if="eventPagination.total > 0"
+              :page="eventPagination.page"
+              :total="eventPagination.total"
+              :page-size="eventPagination.page_size"
+              @update:page="handleEventPageChange"
+              @update:pageSize="handleEventPageSizeChange"
+            />
           </div>
         </div>
       </section>
@@ -149,6 +157,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useAppStore } from '@/stores/app'
 import {
   acknowledgeBalanceEvent,
@@ -166,6 +176,7 @@ const loading = ref(false)
 const submitting = ref(false)
 const suppliers = ref<Supplier[]>([])
 const events = ref<BalanceEvent[]>([])
+const eventPagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0, pages: 0 })
 
 const form = reactive({
   supplier_id: 0,
@@ -212,10 +223,14 @@ async function loadPage() {
   try {
     const [supplierResult, eventResult] = await Promise.all([
       listSuppliers(),
-      listBalanceEvents({ limit: 100 })
+      listBalanceEvents({ page: eventPagination.page, page_size: eventPagination.page_size })
     ])
     suppliers.value = supplierResult.items
     events.value = eventResult.items
+    eventPagination.total = eventResult.total || 0
+    eventPagination.pages = eventResult.pages || 0
+    eventPagination.page = eventResult.page || eventPagination.page
+    eventPagination.page_size = eventResult.page_size || eventPagination.page_size
     if (!form.supplier_id && suppliers.value[0]) {
       form.supplier_id = suppliers.value[0].id
     }
@@ -224,6 +239,17 @@ async function loadPage() {
   } finally {
     loading.value = false
   }
+}
+
+function handleEventPageChange(page: number) {
+  eventPagination.page = page
+  void loadPage()
+}
+
+function handleEventPageSizeChange(pageSize: number) {
+  eventPagination.page_size = pageSize
+  eventPagination.page = 1
+  void loadPage()
 }
 
 async function recordBalance() {

@@ -101,28 +101,32 @@ func (h *HealthHandler) ProbeOpenAIResponses(c *gin.Context) {
 }
 
 func (h *HealthHandler) ListSamples(c *gin.Context) {
+	page := parsePagination(c)
 	items, err := h.service.ListSamples(c.Request.Context(), healthapp.SampleFilter{
 		SupplierID: parseInt64Query(c, "supplier_id"),
 		Model:      c.Query("model"),
-		Limit:      parseIntQuery(c, "limit"),
+		Limit:      fetchLimitForPagination(page),
 	})
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func (h *HealthHandler) ListEvents(c *gin.Context) {
+	page := parsePagination(c)
 	items, err := h.service.ListEvents(c.Request.Context(), healthapp.EventFilter{
 		SupplierID: parseInt64Query(c, "supplier_id"),
 		Status:     adminplusdomain.HealthEventStatus(c.Query("status")),
 		Type:       adminplusdomain.HealthEventType(c.Query("type")),
-		Limit:      parseIntQuery(c, "limit"),
+		Limit:      fetchLimitForPagination(page),
 	})
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func (h *HealthHandler) AcknowledgeEvent(c *gin.Context) {

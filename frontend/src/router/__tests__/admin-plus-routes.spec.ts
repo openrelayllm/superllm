@@ -34,8 +34,8 @@ describe('adminPlusRoutes', () => {
       '/admin/operations/scheduler',
       '/admin/operations/extension-tasks',
       '/admin/operations/billing',
-      '/admin/operations/local-usage',
       '/admin/operations/actions',
+      '/admin/operations/notifications',
       '/admin/settings',
       '/:pathMatch(.*)*'
     ])
@@ -84,18 +84,24 @@ describe('adminPlusRoutes', () => {
         '/admin/operations/health',
         '/admin/operations/promotions',
         '/admin/operations/scheduler',
-        '/admin/operations/extension-tasks',
         '/admin/operations/billing',
-        '/admin/operations/local-usage',
         '/admin/operations/actions',
+        '/admin/operations/notifications',
         '/admin/settings'
       ].includes(route.path)
     )
 
-    expect(adminRoutes).toHaveLength(15)
+    expect(adminRoutes).toHaveLength(14)
     for (const route of adminRoutes) {
       expect(route.meta?.requiresAuth).toBe(true)
       expect(route.meta?.requiresAdmin).toBe(true)
     }
+  })
+
+  it('插件任务旧入口只作为兼容重定向', () => {
+    const route = adminPlusRoutes.find((item) => item.path === '/admin/operations/extension-tasks')
+
+    expect(route?.redirect).toBe('/admin/operations/scheduler')
+    expect(route?.component).toBeUndefined()
   })
 })

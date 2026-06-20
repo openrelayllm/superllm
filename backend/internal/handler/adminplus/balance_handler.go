@@ -56,26 +56,30 @@ func (h *BalanceHandler) RecordSnapshot(c *gin.Context) {
 }
 
 func (h *BalanceHandler) ListSnapshots(c *gin.Context) {
+	page := parsePagination(c)
 	items, err := h.service.ListSnapshots(c.Request.Context(), balancesapp.SnapshotFilter{
 		SupplierID: parseInt64Query(c, "supplier_id"),
-		Limit:      parseIntQuery(c, "limit"),
+		Limit:      fetchLimitForPagination(page),
 	})
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func (h *BalanceHandler) ListEvents(c *gin.Context) {
+	page := parsePagination(c)
 	items, err := h.service.ListEvents(c.Request.Context(), balancesapp.EventFilter{
 		SupplierID: parseInt64Query(c, "supplier_id"),
 		Status:     adminplusdomain.BalanceEventStatus(c.Query("status")),
-		Limit:      parseIntQuery(c, "limit"),
+		Limit:      fetchLimitForPagination(page),
 	})
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func (h *BalanceHandler) AcknowledgeEvent(c *gin.Context) {

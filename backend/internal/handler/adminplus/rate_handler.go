@@ -76,27 +76,31 @@ func (h *RateHandler) RecordSnapshot(c *gin.Context) {
 }
 
 func (h *RateHandler) ListSnapshots(c *gin.Context) {
+	page := parsePagination(c)
 	items, err := h.service.ListSnapshots(c.Request.Context(), ratesapp.SnapshotFilter{
 		SupplierID: parseInt64Query(c, "supplier_id"),
 		Model:      c.Query("model"),
-		Limit:      parseIntQuery(c, "limit"),
+		Limit:      fetchLimitForPagination(page),
 	})
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func (h *RateHandler) ListEvents(c *gin.Context) {
+	page := parsePagination(c)
 	items, err := h.service.ListChangeEvents(c.Request.Context(), ratesapp.EventFilter{
 		SupplierID: parseInt64Query(c, "supplier_id"),
 		Status:     adminplusdomain.RateChangeStatus(c.Query("status")),
-		Limit:      parseIntQuery(c, "limit"),
+		Limit:      fetchLimitForPagination(page),
 	})
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func (h *RateHandler) AcknowledgeEvent(c *gin.Context) {

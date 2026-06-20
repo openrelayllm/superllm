@@ -8,6 +8,30 @@ export class AdminPlusClient {
     return this.baseURL !== '' && this.token !== ''
   }
 
+  async listSuppliers() {
+    const page = await this.request('/api/v1/admin-plus/suppliers?page=1&page_size=500')
+    return Array.isArray(page?.items) ? page.items : []
+  }
+
+  async createCaptureSessionTask(deviceID, supplierID, payload = {}) {
+    return this.request('/api/v1/admin-plus/extension/session/capture-task', {
+      method: 'POST',
+      body: {
+        device_id: deviceID,
+        supplier_id: supplierID,
+        lease_ttl_seconds: 300,
+        payload
+      }
+    })
+  }
+
+  async createDiscoveredSupplier(payload) {
+    return this.request('/api/v1/admin-plus/suppliers/from-site-candidate', {
+      method: 'POST',
+      body: payload
+    })
+  }
+
   async claimTask(deviceID, types = []) {
     return this.request('/api/v1/admin-plus/extension/tasks/claim', {
       method: 'POST',

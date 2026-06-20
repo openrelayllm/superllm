@@ -3,14 +3,17 @@ package suppliers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/lib/pq"
 )
 
 type SQLRepository struct {
@@ -227,6 +230,82 @@ func (r *SQLRepository) List(ctx context.Context, filter SupplierFilter) ([]*adm
 	return items, nil
 }
 
+func (r *SQLRepository) Update(ctx context.Context, supplier *adminplusdomain.Supplier) (*adminplusdomain.Supplier, error) {
+	if r == nil || r.db == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
+	}
+	usernameCiphertext, err := r.encryptOptional(supplier.BrowserLoginUsername)
+	if err != nil {
+		return nil, err
+	}
+	passwordCiphertext, err := r.encryptOptional(supplier.BrowserLoginPassword)
+	if err != nil {
+		return nil, err
+	}
+	tokenCiphertext, err := r.encryptOptional(supplier.BrowserLoginToken)
+	if err != nil {
+		return nil, err
+	}
+	row := r.db.QueryRowContext(ctx, `
+		UPDATE admin_plus_suppliers
+		SET name = $2,
+			kind = $3,
+			type = $4,
+			runtime_status = $5,
+			health_status = $6,
+			dashboard_url = $7,
+			api_base_url = $8,
+			contact = $9,
+			notes = $10,
+			postgres_configured = $11,
+			redis_configured = $12,
+			browser_login_enabled = $13,
+			browser_login_username_configured = $14,
+			browser_login_password_configured = $15,
+			browser_login_token_configured = $16,
+			masked_browser_login_username = $17,
+			browser_login_username_ciphertext = CASE WHEN $18 <> '' THEN $18 ELSE browser_login_username_ciphertext END,
+			browser_login_password_ciphertext = CASE WHEN $19 <> '' THEN $19 ELSE browser_login_password_ciphertext END,
+			browser_login_token_ciphertext = CASE WHEN $20 <> '' THEN $20 ELSE browser_login_token_ciphertext END,
+			balance_cents = $21,
+			balance_currency = $22,
+			balance_updated_at = $23,
+			updated_at = $24
+		WHERE id = $1
+		RETURNING id, name, kind, type, runtime_status, health_status,
+			dashboard_url, api_base_url, contact, notes,
+			postgres_configured, redis_configured, browser_login_enabled,
+			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
+			balance_cents, balance_currency, balance_updated_at, created_at, updated_at
+	`,
+		supplier.ID,
+		supplier.Name,
+		string(supplier.Kind),
+		string(supplier.Type),
+		string(supplier.RuntimeStatus),
+		string(supplier.HealthStatus),
+		supplier.DashboardURL,
+		supplier.APIBaseURL,
+		supplier.Contact,
+		supplier.Notes,
+		supplier.Credential.PostgresConfigured,
+		supplier.Credential.RedisConfigured,
+		supplier.Credential.BrowserLoginEnabled,
+		supplier.Credential.BrowserLoginUsernameConfigured,
+		supplier.Credential.BrowserLoginPasswordConfigured,
+		supplier.Credential.BrowserLoginTokenConfigured,
+		supplier.Credential.MaskedBrowserLoginUsername,
+		usernameCiphertext,
+		passwordCiphertext,
+		tokenCiphertext,
+		supplier.BalanceCents,
+		supplier.BalanceCurrency,
+		supplier.BalanceUpdatedAt,
+		supplier.UpdatedAt,
+	)
+	return scanSupplier(row)
+}
+
 func (r *SQLRepository) UpdateStatus(ctx context.Context, id int64, runtimeStatus adminplusdomain.SupplierRuntimeStatus, healthStatus adminplusdomain.SupplierHealthStatus) (*adminplusdomain.Supplier, error) {
 	if r == nil || r.db == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
@@ -242,6 +321,27 @@ func (r *SQLRepository) UpdateStatus(ctx context.Context, id int64, runtimeStatu
 			balance_cents, balance_currency, balance_updated_at, created_at, updated_at
 	`, id, string(runtimeStatus), string(healthStatus))
 	return scanSupplier(row)
+}
+
+func (r *SQLRepository) Delete(ctx context.Context, id int64) error {
+	if r == nil || r.db == nil {
+		return infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
+	}
+	result, err := r.db.ExecContext(ctx, `
+		DELETE FROM admin_plus_suppliers
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return infraerrors.New(http.StatusNotFound, "SUPPLIER_NOT_FOUND", "supplier not found")
+	}
+	return nil
 }
 
 func (r *SQLRepository) ListAccounts(ctx context.Context, supplierID int64) ([]*adminplusdomain.SupplierAccount, error) {
@@ -339,6 +439,58 @@ func (r *SQLRepository) CreateAccount(ctx context.Context, account *adminplusdom
 	return created, nil
 }
 
+func (r *SQLRepository) UpdateAccount(ctx context.Context, account *adminplusdomain.SupplierAccount) (*adminplusdomain.SupplierAccount, error) {
+	if r == nil || r.db == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
+	}
+	row := r.db.QueryRowContext(ctx, `
+		UPDATE admin_plus_supplier_accounts
+		SET supplier_account_identifier = $3,
+			supplier_account_label = $4,
+			organization_id = $5,
+			project_id = $6,
+			rate_profile = $7,
+			configured_concurrency = $8,
+			observed_max_concurrency = $9,
+			balance_threshold_cents = $10,
+			balance_cents = $11,
+			balance_currency = $12,
+			has_usable_balance = $13,
+			runtime_status = $14,
+			health_status = $15,
+			updated_at = $16
+		WHERE supplier_id = $1 AND id = $2
+		RETURNING id, supplier_id, local_sub2api_account_id,
+			local_account_name, local_account_platform, local_account_type,
+			supplier_account_identifier, supplier_account_label, organization_id, project_id, rate_profile,
+			configured_concurrency, observed_max_concurrency,
+			balance_threshold_cents, balance_cents, balance_currency, has_usable_balance,
+			runtime_status, health_status, created_at, updated_at
+	`,
+		account.SupplierID,
+		account.ID,
+		account.SupplierAccountIdentifier,
+		account.SupplierAccountLabel,
+		account.OrganizationID,
+		account.ProjectID,
+		account.RateProfile,
+		account.ConfiguredConcurrency,
+		account.ObservedMaxConcurrency,
+		account.BalanceThresholdCents,
+		account.BalanceCents,
+		account.BalanceCurrency,
+		account.HasUsableBalance,
+		string(account.RuntimeStatus),
+		string(account.HealthStatus),
+		account.UpdatedAt,
+	)
+	updated, err := scanSupplierAccount(row)
+	if err == sql.ErrNoRows {
+		return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_ACCOUNT_NOT_FOUND", "supplier account binding not found")
+	}
+	return updated, err
+}
+
 func (r *SQLRepository) DeleteAccount(ctx context.Context, supplierID int64, accountID int64) error {
 	if r == nil || r.db == nil {
 		return infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
@@ -411,6 +563,124 @@ func (r *SQLRepository) ListLocalAccounts(ctx context.Context, query string, lim
 		return nil, err
 	}
 	return items, nil
+}
+
+func (r *SQLRepository) UpsertGroups(ctx context.Context, groups []*adminplusdomain.SupplierGroup) ([]*adminplusdomain.SupplierGroup, error) {
+	if r == nil || r.db == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
+	}
+	items := make([]*adminplusdomain.SupplierGroup, 0, len(groups))
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		rawPayload := group.RawPayload
+		if rawPayload == nil {
+			rawPayload = map[string]any{}
+		}
+		raw, err := json.Marshal(rawPayload)
+		if err != nil {
+			return nil, err
+		}
+		row := r.db.QueryRowContext(ctx, `
+			INSERT INTO admin_plus_supplier_groups (
+				supplier_id, external_group_id, name, description, rate_multiplier,
+				is_private, provider_family, status, raw_payload, last_seen_at, created_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
+			ON CONFLICT (supplier_id, external_group_id)
+			DO UPDATE SET
+				name = EXCLUDED.name,
+				description = EXCLUDED.description,
+				rate_multiplier = EXCLUDED.rate_multiplier,
+				is_private = EXCLUDED.is_private,
+				provider_family = EXCLUDED.provider_family,
+				status = EXCLUDED.status,
+				raw_payload = EXCLUDED.raw_payload,
+				last_seen_at = EXCLUDED.last_seen_at,
+				updated_at = EXCLUDED.updated_at
+			RETURNING id, supplier_id, external_group_id, name, description, rate_multiplier,
+				is_private, provider_family, status, raw_payload, last_seen_at, created_at, updated_at
+		`,
+			group.SupplierID,
+			group.ExternalGroupID,
+			group.Name,
+			group.Description,
+			group.RateMultiplier,
+			group.IsPrivate,
+			group.ProviderFamily,
+			string(group.Status),
+			string(raw),
+			group.LastSeenAt,
+			group.CreatedAt,
+			group.UpdatedAt,
+		)
+		item, err := scanSupplierGroup(row)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (r *SQLRepository) ListGroups(ctx context.Context, supplierID int64, status adminplusdomain.SupplierGroupStatus) ([]*adminplusdomain.SupplierGroup, error) {
+	if r == nil || r.db == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
+	}
+	where := []string{"supplier_id = $1"}
+	args := []any{supplierID}
+	if status != "" {
+		args = append(args, string(status))
+		where = append(where, fmt.Sprintf("status = $%d", len(args)))
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, supplier_id, external_group_id, name, description, rate_multiplier,
+			is_private, provider_family, status, raw_payload, last_seen_at, created_at, updated_at
+		FROM admin_plus_supplier_groups
+		WHERE `+strings.Join(where, " AND ")+`
+		ORDER BY status ASC, id ASC
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	items := make([]*adminplusdomain.SupplierGroup, 0)
+	for rows.Next() {
+		item, err := scanSupplierGroup(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *SQLRepository) MarkMissingGroups(ctx context.Context, supplierID int64, seenExternalGroupIDs []string, missingAt time.Time) (int, error) {
+	if r == nil || r.db == nil {
+		return 0, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE admin_plus_supplier_groups
+		SET status = 'missing', updated_at = $3
+		WHERE supplier_id = $1
+			AND status <> 'missing'
+			AND NOT (external_group_id = ANY($2))
+	`, supplierID, pq.Array(seenExternalGroupIDs), missingAt)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(affected), nil
 }
 
 func (r *SQLRepository) getLocalAccount(ctx context.Context, id int64) (*adminplusdomain.LocalSub2APIAccount, error) {
@@ -526,6 +796,43 @@ func scanSupplierAccount(scanner supplierScanner) (*adminplusdomain.SupplierAcco
 	account.RuntimeStatus = adminplusdomain.SupplierRuntimeStatus(runtimeStatus)
 	account.HealthStatus = adminplusdomain.SupplierHealthStatus(healthStatus)
 	return &account, nil
+}
+
+func scanSupplierGroup(scanner supplierScanner) (*adminplusdomain.SupplierGroup, error) {
+	var group adminplusdomain.SupplierGroup
+	var status string
+	var raw []byte
+	err := scanner.Scan(
+		&group.ID,
+		&group.SupplierID,
+		&group.ExternalGroupID,
+		&group.Name,
+		&group.Description,
+		&group.RateMultiplier,
+		&group.IsPrivate,
+		&group.ProviderFamily,
+		&status,
+		&raw,
+		&group.LastSeenAt,
+		&group.CreatedAt,
+		&group.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, err
+	}
+	if err != nil {
+		return nil, err
+	}
+	group.Status = adminplusdomain.SupplierGroupStatus(status)
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &group.RawPayload); err != nil {
+			return nil, err
+		}
+	}
+	if group.RawPayload == nil {
+		group.RawPayload = map[string]any{}
+	}
+	return &group, nil
 }
 
 func translateSupplierAccountCreateError(err error) error {

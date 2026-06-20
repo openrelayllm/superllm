@@ -46,6 +46,22 @@ type createSupplierAccountRequest struct {
 	ProjectID                 string `json:"project_id"`
 	RateProfile               string `json:"rate_profile"`
 	ConfiguredConcurrency     int    `json:"configured_concurrency"`
+	ObservedMaxConcurrency    int    `json:"observed_max_concurrency"`
+	BalanceThresholdCents     int64  `json:"balance_threshold_cents"`
+	BalanceCents              int64  `json:"balance_cents"`
+	BalanceCurrency           string `json:"balance_currency"`
+	RuntimeStatus             string `json:"runtime_status"`
+	HealthStatus              string `json:"health_status"`
+}
+
+type updateSupplierAccountRequest struct {
+	SupplierAccountIdentifier string `json:"supplier_account_identifier"`
+	SupplierAccountLabel      string `json:"supplier_account_label"`
+	OrganizationID            string `json:"organization_id"`
+	ProjectID                 string `json:"project_id"`
+	RateProfile               string `json:"rate_profile"`
+	ConfiguredConcurrency     int    `json:"configured_concurrency"`
+	ObservedMaxConcurrency    int    `json:"observed_max_concurrency"`
 	BalanceThresholdCents     int64  `json:"balance_threshold_cents"`
 	BalanceCents              int64  `json:"balance_cents"`
 	BalanceCurrency           string `json:"balance_currency"`
@@ -58,7 +74,24 @@ type updateSupplierStatusRequest struct {
 	HealthStatus  string `json:"health_status" binding:"required"`
 }
 
+type createSupplierFromSiteCandidateRequest struct {
+	Name         string         `json:"name"`
+	Type         string         `json:"type"`
+	DashboardURL string         `json:"dashboard_url" binding:"required"`
+	APIBaseURL   string         `json:"api_base_url"`
+	SourceHost   string         `json:"source_host"`
+	SourceURL    string         `json:"source_url"`
+	PageContext  map[string]any `json:"page_context"`
+}
+
+type supplierSiteMatchRequest struct {
+	URL    string `json:"url"`
+	Origin string `json:"origin"`
+	Host   string `json:"host"`
+}
+
 func (h *SupplierHandler) List(c *gin.Context) {
+	page := parsePagination(c)
 	items, err := h.service.List(c.Request.Context(), suppliersapp.SupplierFilter{
 		Kind:          adminplusdomain.NormalizeSupplierKind(c.Query("kind")),
 		Type:          adminplusdomain.NormalizeSupplierType(c.Query("type")),
@@ -69,7 +102,8 @@ func (h *SupplierHandler) List(c *gin.Context) {
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func (h *SupplierHandler) Create(c *gin.Context) {
@@ -104,6 +138,79 @@ func (h *SupplierHandler) Create(c *gin.Context) {
 	response.Created(c, supplier)
 }
 
+func (h *SupplierHandler) CreateFromSiteCandidate(c *gin.Context) {
+	var req createSupplierFromSiteCandidateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	title, _ := req.PageContext["title"].(string)
+	supplier, err := h.service.CreateFromSiteCandidate(c.Request.Context(), suppliersapp.CreateFromSiteCandidateInput{
+		Name:         req.Name,
+		DashboardURL: req.DashboardURL,
+		APIBaseURL:   req.APIBaseURL,
+		SourceHost:   req.SourceHost,
+		SourceURL:    req.SourceURL,
+		Title:        title,
+	})
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Created(c, supplier)
+}
+
+func (h *SupplierHandler) MatchSite(c *gin.Context) {
+	var req supplierSiteMatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	result, err := h.service.MatchSite(c.Request.Context(), suppliersapp.SiteMatchInput{
+		URL:    req.URL,
+		Origin: req.Origin,
+		Host:   req.Host,
+	})
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *SupplierHandler) Update(c *gin.Context) {
+	id, ok := parseSupplierID(c)
+	if !ok {
+		return
+	}
+	var req createSupplierRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	supplier, err := h.service.Update(c.Request.Context(), id, suppliersapp.UpdateSupplierInput{
+		Name:                 req.Name,
+		Kind:                 adminplusdomain.NormalizeSupplierKind(req.Kind),
+		Type:                 adminplusdomain.NormalizeSupplierType(req.Type),
+		RuntimeStatus:        adminplusdomain.NormalizeSupplierRuntimeStatus(req.RuntimeStatus),
+		HealthStatus:         adminplusdomain.NormalizeSupplierHealthStatus(req.HealthStatus),
+		DashboardURL:         req.DashboardURL,
+		APIBaseURL:           req.APIBaseURL,
+		Contact:              req.Contact,
+		Notes:                req.Notes,
+		PostgresReadDSN:      req.PostgresReadDSN,
+		RedisReadDSN:         req.RedisReadDSN,
+		BrowserLoginEnabled:  req.BrowserLoginEnabled,
+		BrowserLoginUsername: req.BrowserLoginUsername,
+		BrowserLoginPassword: req.BrowserLoginPassword,
+		BrowserLoginToken:    req.BrowserLoginToken,
+		BalanceCents:         req.BalanceCents,
+		BalanceCurrency:      req.BalanceCurrency,
+	})
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, supplier)
+}
+
 func (h *SupplierHandler) Get(c *gin.Context) {
 	id, ok := parseSupplierID(c)
 	if !ok {
@@ -114,6 +221,17 @@ func (h *SupplierHandler) Get(c *gin.Context) {
 		return
 	}
 	response.Success(c, supplier)
+}
+
+func (h *SupplierHandler) Delete(c *gin.Context) {
+	id, ok := parseSupplierID(c)
+	if !ok {
+		return
+	}
+	if response.ErrorFrom(c, h.service.Delete(c.Request.Context(), id)) {
+		return
+	}
+	response.Success(c, gin.H{"deleted": true})
 }
 
 func (h *SupplierHandler) UpdateStatus(c *gin.Context) {
@@ -138,6 +256,7 @@ func (h *SupplierHandler) UpdateStatus(c *gin.Context) {
 }
 
 func (h *SupplierHandler) ListAccounts(c *gin.Context) {
+	page := parsePagination(c)
 	id, ok := parseSupplierID(c)
 	if !ok {
 		return
@@ -146,7 +265,8 @@ func (h *SupplierHandler) ListAccounts(c *gin.Context) {
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func (h *SupplierHandler) CreateAccount(c *gin.Context) {
@@ -180,6 +300,43 @@ func (h *SupplierHandler) CreateAccount(c *gin.Context) {
 	response.Created(c, account)
 }
 
+func (h *SupplierHandler) UpdateAccount(c *gin.Context) {
+	supplierID, ok := parseSupplierID(c)
+	if !ok {
+		return
+	}
+	accountID, err := strconv.ParseInt(c.Param("accountID"), 10, 64)
+	if err != nil || accountID <= 0 {
+		response.Error(c, http.StatusBadRequest, "invalid supplier account id")
+		return
+	}
+	var req updateSupplierAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	account, err := h.service.UpdateAccount(c.Request.Context(), suppliersapp.UpdateSupplierAccountInput{
+		SupplierID:                supplierID,
+		AccountID:                 accountID,
+		SupplierAccountIdentifier: req.SupplierAccountIdentifier,
+		SupplierAccountLabel:      req.SupplierAccountLabel,
+		OrganizationID:            req.OrganizationID,
+		ProjectID:                 req.ProjectID,
+		RateProfile:               req.RateProfile,
+		ConfiguredConcurrency:     req.ConfiguredConcurrency,
+		ObservedMaxConcurrency:    req.ObservedMaxConcurrency,
+		BalanceThresholdCents:     req.BalanceThresholdCents,
+		BalanceCents:              req.BalanceCents,
+		BalanceCurrency:           req.BalanceCurrency,
+		RuntimeStatus:             adminplusdomain.NormalizeSupplierRuntimeStatus(req.RuntimeStatus),
+		HealthStatus:              adminplusdomain.NormalizeSupplierHealthStatus(req.HealthStatus),
+	})
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, account)
+}
+
 func (h *SupplierHandler) DeleteAccount(c *gin.Context) {
 	supplierID, ok := parseSupplierID(c)
 	if !ok {
@@ -197,17 +354,13 @@ func (h *SupplierHandler) DeleteAccount(c *gin.Context) {
 }
 
 func (h *SupplierHandler) ListLocalAccounts(c *gin.Context) {
-	limit := 50
-	if raw := c.Query("limit"); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil {
-			limit = parsed
-		}
-	}
-	items, err := h.service.ListLocalAccounts(c.Request.Context(), c.Query("q"), limit)
+	page := parsePagination(c)
+	items, err := h.service.ListLocalAccounts(c.Request.Context(), c.Query("q"), page.Offset+page.PageSize)
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func parseSupplierID(c *gin.Context) (int64, bool) {

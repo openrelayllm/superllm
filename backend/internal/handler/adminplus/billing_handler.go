@@ -25,11 +25,21 @@ type billLineDTO struct {
 	Source            string         `json:"source"`
 	ExternalBillID    string         `json:"external_bill_id"`
 	ExternalRequestID string         `json:"external_request_id"`
+	APIKeyName        string         `json:"api_key_name"`
 	Model             string         `json:"model" binding:"required"`
+	Endpoint          string         `json:"endpoint"`
+	RequestType       string         `json:"request_type"`
+	BillingMode       string         `json:"billing_mode"`
+	ReasoningEffort   string         `json:"reasoning_effort"`
 	Currency          string         `json:"currency"`
 	CostCents         int64          `json:"cost_cents"`
 	InputTokens       int64          `json:"input_tokens"`
 	OutputTokens      int64          `json:"output_tokens"`
+	CacheReadTokens   int64          `json:"cache_read_tokens"`
+	TotalTokens       int64          `json:"total_tokens"`
+	FirstTokenMS      int64          `json:"first_token_ms"`
+	DurationMS        int64          `json:"duration_ms"`
+	UserAgent         string         `json:"user_agent"`
 	StartedAt         string         `json:"started_at" binding:"required"`
 	EndedAt           string         `json:"ended_at"`
 	RawPayload        map[string]any `json:"raw_payload"`
@@ -57,11 +67,21 @@ func (h *BillingHandler) ImportBillLines(c *gin.Context) {
 			Source:            line.Source,
 			ExternalBillID:    line.ExternalBillID,
 			ExternalRequestID: line.ExternalRequestID,
+			APIKeyName:        line.APIKeyName,
 			Model:             line.Model,
+			Endpoint:          line.Endpoint,
+			RequestType:       line.RequestType,
+			BillingMode:       line.BillingMode,
+			ReasoningEffort:   line.ReasoningEffort,
 			Currency:          line.Currency,
 			CostCents:         line.CostCents,
 			InputTokens:       line.InputTokens,
 			OutputTokens:      line.OutputTokens,
+			CacheReadTokens:   line.CacheReadTokens,
+			TotalTokens:       line.TotalTokens,
+			FirstTokenMS:      line.FirstTokenMS,
+			DurationMS:        line.DurationMS,
+			UserAgent:         line.UserAgent,
 			StartedAt:         *startedAt,
 			EndedAt:           endedAt,
 			RawPayload:        line.RawPayload,
@@ -76,14 +96,16 @@ func (h *BillingHandler) ImportBillLines(c *gin.Context) {
 }
 
 func (h *BillingHandler) ListBillLines(c *gin.Context) {
+	page := parsePagination(c)
 	items, err := h.service.ListBillLines(c.Request.Context(), billingapp.BillLineFilter{
 		SupplierID: parseInt64Query(c, "supplier_id"),
-		Limit:      parseIntQuery(c, "limit"),
+		Limit:      fetchLimitForPagination(page),
 	})
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func parseRequiredTime(c *gin.Context, field string, value string) (*time.Time, bool) {

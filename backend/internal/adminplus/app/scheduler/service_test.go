@@ -62,6 +62,47 @@ func TestServiceRunCreatesDurableExtensionTasksAndDeduplicates(t *testing.T) {
 	}
 }
 
+func TestServiceRunDryRunExplainsEligibleTasksWithoutWritingQueue(t *testing.T) {
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	service := NewService(supplierService, extensionService)
+	service.now = func() time.Time {
+		return time.Date(2026, 6, 20, 10, 4, 0, 0, time.UTC)
+	}
+
+	supplier := createSchedulerSupplier(t, supplierService, suppliersapp.CreateSupplierInput{
+		Name:                 "relay-a",
+		Kind:                 adminplusdomain.SupplierKindRelay,
+		Type:                 adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus:        adminplusdomain.SupplierRuntimeStatusActive,
+		HealthStatus:         adminplusdomain.SupplierHealthStatusNormal,
+		DashboardURL:         "https://relay-a.example.com",
+		BrowserLoginEnabled:  true,
+		BrowserLoginUsername: "ops@example.com",
+		BalanceCents:         500_00,
+		BalanceCurrency:      "CNY",
+	})
+
+	run, err := service.Run(context.Background(), RunInput{
+		Mode:      "manual",
+		TaskTypes: []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeFetchGroups},
+		DryRun:    true,
+	})
+
+	require.NoError(t, err)
+	require.True(t, run.DryRun)
+	require.Equal(t, 0, run.CreatedCount)
+	require.Equal(t, 1, run.EligibleCount)
+	require.Equal(t, 0, run.SkippedCount)
+	require.Len(t, run.Items, 1)
+	require.Equal(t, adminplusdomain.ExtensionTaskTypeFetchGroups, run.Items[0].TaskType)
+	require.NotEmpty(t, run.Items[0].ScheduleKey)
+
+	tasks, err := extensionService.ListTasks(context.Background(), extensionapp.TaskFilter{SupplierID: supplier.ID, Limit: 20})
+	require.NoError(t, err)
+	require.Empty(t, tasks)
+}
+
 func TestServiceRunKeepsNoBalanceSupplierOutOfSwitchOnlyTasks(t *testing.T) {
 	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
@@ -87,6 +128,7 @@ func TestServiceRunKeepsNoBalanceSupplierOutOfSwitchOnlyTasks(t *testing.T) {
 		Mode: "manual",
 		TaskTypes: []adminplusdomain.ExtensionTaskType{
 			adminplusdomain.ExtensionTaskTypeFetchRates,
+			adminplusdomain.ExtensionTaskTypeFetchGroups,
 			adminplusdomain.ExtensionTaskTypeFetchBalance,
 			adminplusdomain.ExtensionTaskTypeFetchPromotions,
 			adminplusdomain.ExtensionTaskTypeFetchHealth,
@@ -94,7 +136,7 @@ func TestServiceRunKeepsNoBalanceSupplierOutOfSwitchOnlyTasks(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, 3, run.CreatedCount)
+	require.Equal(t, 4, run.CreatedCount)
 	require.Equal(t, 2, run.SkippedCount)
 
 	reasons := make(map[adminplusdomain.ExtensionTaskType]string)
@@ -102,6 +144,7 @@ func TestServiceRunKeepsNoBalanceSupplierOutOfSwitchOnlyTasks(t *testing.T) {
 		reasons[item.TaskType] = item.Reason
 	}
 	require.Empty(t, reasons[adminplusdomain.ExtensionTaskTypeFetchRates])
+	require.Empty(t, reasons[adminplusdomain.ExtensionTaskTypeFetchGroups])
 	require.Empty(t, reasons[adminplusdomain.ExtensionTaskTypeFetchBalance])
 	require.Empty(t, reasons[adminplusdomain.ExtensionTaskTypeFetchPromotions])
 	require.Equal(t, "not_switch_eligible", reasons[adminplusdomain.ExtensionTaskTypeFetchHealth])
@@ -109,7 +152,7 @@ func TestServiceRunKeepsNoBalanceSupplierOutOfSwitchOnlyTasks(t *testing.T) {
 
 	tasks, err := extensionService.ListTasks(context.Background(), extensionapp.TaskFilter{SupplierID: supplier.ID, Limit: 20})
 	require.NoError(t, err)
-	require.Len(t, tasks, 3)
+	require.Len(t, tasks, 4)
 	for _, task := range tasks {
 		require.NotEqual(t, adminplusdomain.ExtensionTaskTypeFetchHealth, task.Type)
 		require.NotEqual(t, adminplusdomain.ExtensionTaskTypeExportBills, task.Type)

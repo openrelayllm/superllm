@@ -4,41 +4,44 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="./popup.css" />
-    <title>Admin Plus Operator</title>
+    <title>Sub2API Plus Session Capture</title>
   </head>
   <body>
-    <main class="panel">
-      <header>
-        <h1>Admin Plus Operator</h1>
-        <p id="device"></p>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>会话上报</h1>
+          <p id="device" class="caption"></p>
+        </div>
+        <span id="connectionBadge" class="pill neutral">未连接</span>
       </header>
 
-      <label>
-        <span>Admin Plus 地址</span>
-        <input id="baseURL" placeholder="https://sub2api-plus.example.com" />
-      </label>
+      <section class="step">
+        <div class="step-index" id="stepIndex">1</div>
+        <div class="step-body">
+          <p id="stepLabel" class="label">连接</p>
+          <h2 id="stepTitle">连接 sub2apiplus</h2>
+          <p id="stepText" class="hint">先在后台页面完成登录，再连接当前页。</p>
+        </div>
+      </section>
 
-      <label>
-        <span>管理员 Token</span>
-        <input id="token" type="password" placeholder="从后台页面读取或手动粘贴" />
-      </label>
-
-      <fieldset>
-        <legend>领取任务类型</legend>
-        <label class="check"><input type="checkbox" value="fetch_rates" />费率</label>
-        <label class="check"><input type="checkbox" value="fetch_balance" />余额</label>
-        <label class="check"><input type="checkbox" value="fetch_promotions" />优惠</label>
-        <label class="check"><input type="checkbox" value="export_bills" />账单</label>
-        <label class="check"><input type="checkbox" value="fetch_health" />健康</label>
-      </fieldset>
+      <section id="contextPanel" class="context hidden">
+        <div class="context-row">
+          <span>网站</span>
+          <strong id="siteHost">-</strong>
+        </div>
+        <div class="context-row">
+          <span>供应商</span>
+          <strong id="supplierText">-</strong>
+        </div>
+      </section>
 
       <div class="actions">
-        <button id="importToken" type="button">读取当前后台 Token</button>
-        <button id="save" type="button">保存</button>
-        <button id="run" type="button" class="primary">领取并执行</button>
+        <button id="primaryAction" type="button" class="primary">连接当前页</button>
+        <button id="secondaryAction" type="button">打开 sub2apiplus</button>
       </div>
 
-      <pre id="status"></pre>
+      <div id="status" class="notice hidden" aria-live="polite"></div>
     </main>
     <script type="module" src="./popup.js"></script>
   </body>

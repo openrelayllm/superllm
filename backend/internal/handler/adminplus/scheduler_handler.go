@@ -22,6 +22,7 @@ type runSchedulerRequest struct {
 	SupplierID    int64    `json:"supplier_id"`
 	TaskTypes     []string `json:"task_types"`
 	WindowMinutes int      `json:"window_minutes"`
+	DryRun        bool     `json:"dry_run"`
 }
 
 func (h *SchedulerHandler) Run(c *gin.Context) {
@@ -39,6 +40,7 @@ func (h *SchedulerHandler) Run(c *gin.Context) {
 		SupplierID:    req.SupplierID,
 		TaskTypes:     taskTypes,
 		WindowMinutes: req.WindowMinutes,
+		DryRun:        req.DryRun,
 	})
 	if response.ErrorFrom(c, err) {
 		return

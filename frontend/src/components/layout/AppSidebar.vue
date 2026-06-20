@@ -20,20 +20,52 @@
 
     <nav class="sidebar-nav scrollbar-hide">
       <div class="sidebar-section">
-        <router-link
-          v-for="item in adminNavItems"
-          :key="item.path"
-          :to="item.path"
-          class="sidebar-link mb-1"
-          :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
-          :title="sidebarCollapsed ? item.label : undefined"
-          @click="handleMenuItemClick"
-        >
-          <component :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-          <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
-            {{ item.label }}
-          </span>
-        </router-link>
+        <div v-for="item in adminNavItems" :key="item.path" class="mb-1">
+          <button
+            v-if="item.children?.length"
+            type="button"
+            class="sidebar-link w-full"
+            :class="{ 'sidebar-link-active': isNavItemActive(item), 'sidebar-link-collapsed': sidebarCollapsed }"
+            :title="sidebarCollapsed ? item.label : undefined"
+            @click="toggleNavGroup(item.path)"
+          >
+            <component :is="item.icon" class="h-5 w-5 flex-shrink-0" />
+            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
+              {{ item.label }}
+            </span>
+            <ChevronDownIcon
+              v-if="!sidebarCollapsed"
+              class="sidebar-link-chevron"
+              :class="{ 'rotate-180': isNavGroupExpanded(item.path) }"
+            />
+          </button>
+          <router-link
+            v-else
+            :to="item.path"
+            class="sidebar-link"
+            :class="{ 'sidebar-link-active': isNavItemActive(item), 'sidebar-link-collapsed': sidebarCollapsed }"
+            :title="sidebarCollapsed ? item.label : undefined"
+            @click="handleMenuItemClick"
+          >
+            <component :is="item.icon" class="h-5 w-5 flex-shrink-0" />
+            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
+              {{ item.label }}
+            </span>
+          </router-link>
+          <div v-if="item.children?.length && !sidebarCollapsed && isNavGroupExpanded(item.path)" class="sidebar-subnav">
+            <router-link
+              v-for="child in item.children"
+              :key="child.path"
+              :to="child.path"
+              class="sidebar-sublink"
+              :class="{ 'sidebar-sublink-active': isActive(child.path) }"
+              @click="handleMenuItemClick"
+            >
+              <component :is="child.icon || item.icon" class="h-4 w-4 flex-shrink-0" />
+              <span class="truncate">{{ child.label }}</span>
+            </router-link>
+          </div>
+        </div>
       </div>
     </nav>
 
@@ -86,6 +118,7 @@ interface NavItem {
   path: string
   label: string
   icon: unknown
+  children?: NavItem[]
 }
 
 const { t } = useI18n()
@@ -95,6 +128,7 @@ const appStore = useAppStore()
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 const isDark = ref(document.documentElement.classList.contains('dark'))
+const expandedGroups = ref<Set<string>>(new Set())
 
 const siteName = computed(() => appStore.siteName)
 const siteLogo = computed(() => appStore.siteLogo)
@@ -141,6 +175,21 @@ const OperationsIcon = {
           'stroke-linecap': 'round',
           'stroke-linejoin': 'round',
           d: 'M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5'
+        })
+      ]
+    )
+}
+
+const ChevronDownIcon = {
+  render: () =>
+    h(
+      'svg',
+      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
+      [
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          d: 'M19.5 8.25l-7.5 7.5-7.5-7.5'
         })
       ]
     )
@@ -228,19 +277,25 @@ const ChevronDoubleRightIcon = {
 
 const adminNavItems = computed((): NavItem[] => [
   { path: '/admin/dashboard', label: t('nav.dashboard'), icon: DashboardIcon },
-  { path: '/admin/ops', label: t('nav.ops'), icon: ChartIcon },
   { path: '/admin/operations/suppliers', label: '供应商管理', icon: OperationsIcon },
   { path: '/admin/operations/supplier-accounts', label: '账号/Key 绑定', icon: OperationsIcon },
   { path: '/admin/operations/account-runtime', label: '账号运行态', icon: ChartIcon },
-  { path: '/admin/operations/rates', label: '费率监控', icon: ChartIcon },
-  { path: '/admin/operations/balances', label: '余额监控', icon: OperationsIcon },
-  { path: '/admin/operations/health', label: '健康监控', icon: ChartIcon },
-  { path: '/admin/operations/promotions', label: '优惠监控', icon: OperationsIcon },
-  { path: '/admin/operations/scheduler', label: '调度中心', icon: OperationsIcon },
-  { path: '/admin/operations/extension-tasks', label: '插件任务', icon: OperationsIcon },
+  {
+    path: '/admin/ops',
+    label: '监控',
+    icon: ChartIcon,
+    children: [
+      { path: '/admin/ops', label: t('nav.ops'), icon: ChartIcon },
+      { path: '/admin/operations/rates', label: '费率监控', icon: ChartIcon },
+      { path: '/admin/operations/balances', label: '余额监控', icon: ChartIcon },
+      { path: '/admin/operations/health', label: '健康监控', icon: ChartIcon },
+      { path: '/admin/operations/promotions', label: '优惠监控', icon: ChartIcon }
+    ]
+  },
+  { path: '/admin/operations/scheduler', label: '调度与插件', icon: OperationsIcon },
   { path: '/admin/operations/billing', label: '账单对账', icon: ChartIcon },
-  { path: '/admin/operations/local-usage', label: '本地用量', icon: ChartIcon },
   { path: '/admin/operations/actions', label: '动作建议', icon: OperationsIcon },
+  { path: '/admin/operations/notifications', label: '通知记录', icon: OperationsIcon },
   { path: '/admin/settings', label: t('nav.settings'), icon: CogIcon }
 ])
 
@@ -266,8 +321,30 @@ function handleMenuItemClick() {
   }
 }
 
+function toggleNavGroup(path: string) {
+  if (sidebarCollapsed.value) return
+  const next = new Set(expandedGroups.value)
+  if (next.has(path)) {
+    next.delete(path)
+  } else {
+    next.add(path)
+  }
+  expandedGroups.value = next
+}
+
+function isNavGroupExpanded(path: string): boolean {
+  return expandedGroups.value.has(path)
+}
+
 function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(path + '/')
+}
+
+function isNavItemActive(item: NavItem): boolean {
+  if (item.children?.some((child) => isActive(child.path))) {
+    return true
+  }
+  return isActive(item.path)
 }
 
 const savedTheme = localStorage.getItem('theme')
@@ -342,5 +419,62 @@ if (
   opacity: 0;
   transform: translateX(-4px);
   pointer-events: none;
+}
+
+.sidebar-link-chevron {
+  margin-left: auto;
+  height: 1rem;
+  width: 1rem;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.sidebar-subnav {
+  margin-left: 1.25rem;
+  margin-top: 0.25rem;
+  border-left: 1px solid rgb(229 231 235);
+  padding-left: 0.5rem;
+}
+
+:global(.dark) .sidebar-subnav {
+  border-left-color: rgb(55 65 81);
+}
+
+.sidebar-sublink {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  border-radius: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(75 85 99);
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.sidebar-sublink:hover {
+  background: rgb(243 244 246);
+  color: rgb(17 24 39);
+}
+
+:global(.dark) .sidebar-sublink {
+  color: rgb(209 213 219);
+}
+
+:global(.dark) .sidebar-sublink:hover {
+  background: rgb(31 41 55);
+  color: white;
+}
+
+.sidebar-sublink-active {
+  background: rgb(236 253 245);
+  color: rgb(5 150 105);
+}
+
+:global(.dark) .sidebar-sublink-active {
+  background: rgb(6 78 59 / 0.3);
+  color: rgb(52 211 153);
 }
 </style>

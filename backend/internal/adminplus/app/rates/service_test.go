@@ -13,7 +13,8 @@ import (
 
 func TestServiceRecordSnapshotCreatesNewEventForFirstRate(t *testing.T) {
 	repo := newFakeRateRepository()
-	svc := NewService(repo)
+	notifier := &fakeRateNotifier{}
+	svc := NewServiceWithNotifier(repo, notifier)
 	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
 	svc.now = func() time.Time { return now }
 
@@ -39,6 +40,8 @@ func TestServiceRecordSnapshotCreatesNewEventForFirstRate(t *testing.T) {
 	require.True(t, result.Events[0].ThresholdExceeded)
 	require.Equal(t, adminplusdomain.RateChangeStatusOpen, result.Events[0].Status)
 	require.Equal(t, "USD", result.Snapshots[0].Currency)
+	require.Len(t, notifier.events, 1)
+	require.Equal(t, result.Events[0].ID, notifier.events[0].ID)
 }
 
 func TestServiceRecordSnapshotSkipsEventWhenPriceIsUnchanged(t *testing.T) {
@@ -184,6 +187,15 @@ type fakeRateRepository struct {
 	nextEventID    int64
 	snapshots      []*adminplusdomain.RateSnapshot
 	events         []*adminplusdomain.RateChangeEvent
+}
+
+type fakeRateNotifier struct {
+	events []*adminplusdomain.RateChangeEvent
+}
+
+func (n *fakeRateNotifier) NotifyRateChange(_ context.Context, event *adminplusdomain.RateChangeEvent, _ *adminplusdomain.RateSnapshot) error {
+	n.events = append(n.events, cloneRateChangeEvent(event))
+	return nil
 }
 
 func newFakeRateRepository() *fakeRateRepository {

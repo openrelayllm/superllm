@@ -91,9 +91,18 @@ Generated artifacts are intentionally ignored:
   - 从供应商账号/Key 子级绑定的本地 Sub2API `accounts.credentials` 读取 API Key 和 base URL。
   - 前端不输入、不展示 API Key。
   - 探测结果写入健康样本和健康事件。
+- 已完成飞书自定义机器人基础通知：
+  - 通用变量为 `ADMIN_PLUS_FEISHU_WEBHOOK_URL` 和 `ADMIN_PLUS_FEISHU_WEBHOOK_SECRET`。
+  - 兼容旧余额变量 `ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_URL` 和 `ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_SECRET`。
+  - 覆盖余额、费率、健康、优惠和对账异常事件。
+  - 通知发送前写入 `admin_plus_notification_deliveries`。
+  - 同一业务事件同一通道通过 `dedupe_key` 去重。
+  - 费率、健康和优惠等高频事件支持窗口去重，避免同一事件窗口重复刷屏。
+  - 已提供通知记录页面和 `GET /api/v1/admin-plus/notifications/deliveries`。
+  - 通知成功或失败都会记录投递状态，不回滚业务快照或事件。
 - 前端已提供 Admin Plus 独立业务导航和页面。
 - `tools/admin-plus-e2e.mjs` 覆盖真实 HTTP、真实 PostgreSQL、真实 Redis 运行态、OpenAI-compatible `/v1/responses` 探测、调度生成、租约凭据读取和插件结果摄取链路。
 
-尚未完成：面向具体 Sub2API/New API 供应商后台的稳定页面适配、每日账单自动导出、通知、审计和确认后动作执行。
+尚未完成：面向具体 Sub2API/New API 供应商后台的稳定页面适配、每日账单自动导出、多通道通知、操作审计和确认后动作执行。
 
 MVP0 的“复制后可运行”目标仍然保留为底线；后续所有业务能力必须继续遵守不修改上游 `/Users/coso/Documents/dev/go/sub2api`、不新增权限系统、Admin Plus 自有数据独立库、只读 Sub2API DB/Redis 的约束。

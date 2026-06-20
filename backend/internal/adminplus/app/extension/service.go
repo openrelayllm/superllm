@@ -33,6 +33,14 @@ type ClaimTaskInput struct {
 	LeaseTTL time.Duration
 }
 
+type CreateLeasedTaskInput struct {
+	SupplierID int64
+	Type       adminplusdomain.ExtensionTaskType
+	DeviceID   string
+	Payload    map[string]any
+	LeaseTTL   time.Duration
+}
+
 type HeartbeatInput struct {
 	TaskID     int64
 	DeviceID   string
@@ -139,6 +147,39 @@ func (s *Service) CreateTaskIfAbsent(ctx context.Context, in CreateTaskInput) (*
 		return nil, false, badRequest("EXTENSION_TASK_SCHEDULE_KEY_REQUIRED", "schedule key is required")
 	}
 	return s.repo.CreateTaskIfAbsent(ctx, task)
+}
+
+func (s *Service) CreateLeasedTask(ctx context.Context, in CreateLeasedTaskInput) (*adminplusdomain.ExtensionTask, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("extension task service is not configured")
+	}
+	deviceID := strings.TrimSpace(in.DeviceID)
+	if deviceID == "" {
+		return nil, badRequest("EXTENSION_DEVICE_ID_REQUIRED", "extension device id is required")
+	}
+	task, err := s.buildTask(CreateTaskInput{
+		SupplierID:  in.SupplierID,
+		Type:        in.Type,
+		MaxAttempts: 1,
+		Payload:     in.Payload,
+	})
+	if err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	token, err := s.newToken()
+	if err != nil {
+		return nil, internalError("failed to generate extension task lease token")
+	}
+	expiresAt := now.Add(normalizeLeaseTTL(in.LeaseTTL))
+	task.Status = adminplusdomain.ExtensionTaskStatusClaimed
+	task.DeviceID = deviceID
+	task.LeaseToken = token
+	task.LeaseExpiresAt = &expiresAt
+	task.LastHeartbeatAt = &now
+	task.Attempts = 1
+	task.UpdatedAt = now
+	return s.repo.CreateTask(ctx, task)
 }
 
 func (s *Service) ClaimTask(ctx context.Context, in ClaimTaskInput) (*adminplusdomain.ExtensionTask, error) {

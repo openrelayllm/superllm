@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"strings"
 	"time"
 
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
@@ -11,6 +12,7 @@ import (
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	promotionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/promotions"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
+	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 )
 
@@ -24,6 +26,12 @@ type IngestProcessor struct {
 	promotions *promotionsapp.Service
 	health     *healthapp.Service
 	billing    *billingapp.Service
+	sessions   *sessionsapp.Service
+	cipher     SessionCipher
+}
+
+type SessionCipher interface {
+	Encrypt(plaintext string) (string, error)
 }
 
 func NewIngestProcessor(
@@ -32,6 +40,7 @@ func NewIngestProcessor(
 	promotions *promotionsapp.Service,
 	health *healthapp.Service,
 	billing *billingapp.Service,
+	sessions *sessionsapp.Service,
 ) *IngestProcessor {
 	return &IngestProcessor{
 		rates:      rates,
@@ -39,7 +48,22 @@ func NewIngestProcessor(
 		promotions: promotions,
 		health:     health,
 		billing:    billing,
+		sessions:   sessions,
 	}
+}
+
+func NewIngestProcessorWithCipher(
+	rates *ratesapp.Service,
+	balances *balancesapp.Service,
+	promotions *promotionsapp.Service,
+	health *healthapp.Service,
+	billing *billingapp.Service,
+	sessions *sessionsapp.Service,
+	cipher SessionCipher,
+) *IngestProcessor {
+	processor := NewIngestProcessor(rates, balances, promotions, health, billing, sessions)
+	processor.cipher = cipher
+	return processor
 }
 
 func (p *IngestProcessor) ProcessTaskResult(ctx context.Context, task *adminplusdomain.ExtensionTask, result map[string]any) (map[string]any, error) {
@@ -47,6 +71,8 @@ func (p *IngestProcessor) ProcessTaskResult(ctx context.Context, task *adminplus
 		return nil, nil
 	}
 	switch task.Type {
+	case adminplusdomain.ExtensionTaskTypeCaptureSession:
+		return p.processSessionBundle(ctx, task, result)
 	case adminplusdomain.ExtensionTaskTypeFetchRates:
 		return p.processRates(ctx, task, result)
 	case adminplusdomain.ExtensionTaskTypeFetchBalance:
@@ -60,6 +86,54 @@ func (p *IngestProcessor) ProcessTaskResult(ctx context.Context, task *adminplus
 	default:
 		return nil, nil
 	}
+}
+
+func (p *IngestProcessor) processSessionBundle(ctx context.Context, task *adminplusdomain.ExtensionTask, result map[string]any) (map[string]any, error) {
+	bundle := mapValue(result, "session_bundle")
+	if len(bundle) == 0 {
+		return nil, nil
+	}
+	raw, err := json.Marshal(bundle)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{
+		"session_captured": true,
+	}
+	summary := sessionSummary(bundle)
+	out["session_summary"] = summary
+	capturedAt := timeValue(bundle, "captured_at")
+	if capturedAt.IsZero() {
+		capturedAt = timeValue(result, "captured_at")
+	}
+	expiresAt := optionalTimeValue(bundle, "expires_at")
+	var ciphertext string
+	if p.cipher != nil {
+		encrypted, err := p.cipher.Encrypt(string(raw))
+		if err != nil {
+			return nil, err
+		}
+		ciphertext = encrypted
+	}
+	if p.sessions != nil {
+		_, err := p.sessions.Upsert(ctx, sessionsapp.UpsertInput{
+			SupplierID:              task.SupplierID,
+			Origin:                  stringValue(bundle, "origin"),
+			APIBaseURL:              stringValue(mapValue(bundle, "context"), "api_base_url"),
+			SessionSummary:          summary,
+			SessionBundle:           bundle,
+			SessionBundleCiphertext: ciphertext,
+			CapturedAt:              capturedAt,
+			ExpiresAt:               expiresAt,
+			SourceExtensionTaskID:   task.ID,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	delete(result, "session_bundle")
+	result["session_summary"] = out["session_summary"]
+	return out, nil
 }
 
 func (p *IngestProcessor) processRates(ctx context.Context, task *adminplusdomain.ExtensionTask, result map[string]any) (map[string]any, error) {
@@ -213,11 +287,21 @@ func (p *IngestProcessor) processBills(ctx context.Context, task *adminplusdomai
 			Source:            sourceValue(result),
 			ExternalBillID:    stringValue(item, "external_bill_id"),
 			ExternalRequestID: stringValue(item, "external_request_id"),
+			APIKeyName:        stringValue(item, "api_key_name"),
 			Model:             stringValue(item, "model"),
+			Endpoint:          stringValue(item, "endpoint"),
+			RequestType:       stringValue(item, "request_type"),
+			BillingMode:       stringValue(item, "billing_mode"),
+			ReasoningEffort:   stringValue(item, "reasoning_effort"),
 			Currency:          stringValue(item, "currency"),
 			CostCents:         int64Value(item, "cost_cents"),
 			InputTokens:       int64Value(item, "input_tokens"),
 			OutputTokens:      int64Value(item, "output_tokens"),
+			CacheReadTokens:   int64Value(item, "cache_read_tokens"),
+			TotalTokens:       int64Value(item, "total_tokens"),
+			FirstTokenMS:      int64Value(item, "first_token_ms"),
+			DurationMS:        int64Value(item, "duration_ms"),
+			UserAgent:         stringValue(item, "user_agent"),
 			StartedAt:         startedAt,
 			EndedAt:           optionalTimeValue(item, "ended_at"),
 			RawPayload:        mapValue(item, "raw_payload"),
@@ -365,6 +449,60 @@ func mergeIngestResult(result map[string]any, ingest map[string]any) map[string]
 	}
 	out["ingest"] = ingest
 	return out
+}
+
+func sessionSummary(bundle map[string]any) map[string]any {
+	tokens := mapValue(bundle, "tokens")
+	cookiesRaw, _ := bundle["cookies"].([]any)
+	context := mapValue(bundle, "context")
+	requiredHeaders := mapValue(bundle, "required_headers")
+	accessToken := firstNonEmptyString(
+		stringValue(bundle, "access_token"),
+		stringValue(bundle, "accessToken"),
+		stringValue(tokens, "access_token"),
+		stringValue(tokens, "accessToken"),
+	)
+	refreshToken := firstNonEmptyString(
+		stringValue(bundle, "refresh_token"),
+		stringValue(bundle, "refreshToken"),
+		stringValue(tokens, "refresh_token"),
+		stringValue(tokens, "refreshToken"),
+	)
+	csrfToken := firstNonEmptyString(
+		stringValue(bundle, "csrf_token"),
+		stringValue(bundle, "csrfToken"),
+		stringValue(tokens, "csrf_token"),
+		stringValue(tokens, "csrfToken"),
+	)
+	cookieCount := len(cookiesRaw)
+	if cookieCount == 0 && firstNonEmptyString(stringValue(requiredHeaders, "cookie"), stringValue(bundle, "cookie"), stringValue(bundle, "cookies")) != "" {
+		cookieCount = 1
+	}
+	return map[string]any{
+		"origin":               stringValue(bundle, "origin"),
+		"captured_at":          stringValue(bundle, "captured_at"),
+		"expires_at":           stringValue(bundle, "expires_at"),
+		"has_access_token":     accessToken != "",
+		"has_refresh_token":    refreshToken != "",
+		"has_csrf_token":       csrfToken != "",
+		"cookie_count":         cookieCount,
+		"user_id":              stringValue(context, "user_id"),
+		"organization_id":      stringValue(context, "organization_id"),
+		"project_id":           stringValue(context, "project_id"),
+		"account_id":           stringValue(context, "account_id"),
+		"api_base_url":         stringValue(context, "api_base_url"),
+		"has_required_origin":  strings.TrimSpace(stringValue(requiredHeaders, "origin")) != "",
+		"has_required_referer": strings.TrimSpace(stringValue(requiredHeaders, "referer")) != "",
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func ingestError(err error) error {

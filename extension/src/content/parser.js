@@ -28,6 +28,39 @@
     })
   }
 
+  function collectGroups(snapshot) {
+    const candidates = collectGroupCandidates(snapshot)
+    const groups = []
+    const seen = new Set()
+    for (const candidate of candidates) {
+      const parsed = parseGroupCandidate(candidate)
+      if (!parsed.name) continue
+      const key = `${parsed.name}|${parsed.rate_multiplier || ''}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      groups.push({
+        name: parsed.name,
+        description: parsed.description,
+        platform: parsed.platform,
+        rate_multiplier: parsed.rate_multiplier,
+        is_private: parsed.is_private,
+        raw_payload: {
+          text: candidate.text,
+          class_name: candidate.className,
+          url: snapshot.url
+        }
+      })
+    }
+    if (groups.length === 0) {
+      return fail('GROUP_LIST_NOT_FOUND', 'no supported supplier group options were found')
+    }
+    return ok({
+      source: 'chrome',
+      captured_at: nowISO(),
+      groups
+    })
+  }
+
   function collectBalance(snapshot) {
     const balance = findLabeledAmount(snapshot.text || '', ['balance', '余额', '剩余', '可用'])
     if (!balance) {
@@ -70,28 +103,125 @@
 
   function collectBills(snapshot) {
     const lines = []
+    let headers = []
     for (const row of snapshot.rows || []) {
       const cells = normalizeCells(row.cells)
-      const cost = findMoneyOrNumber(cells)
-      const model = findModel(cells)
-      const requestID = cells.find((value) => /req|chatcmpl|cmpl|[a-f0-9-]{16,}/i.test(value)) || ''
-      if (cost === null || !model) continue
-      lines.push({
-        external_bill_id: requestID || `${snapshot.host || 'supplier'}-${row.index}`,
-        external_request_id: requestID,
-        model,
-        currency: inferCurrency(cells),
-        cost_cents: Math.round(cost * 100),
-        input_tokens: findTokenValue(cells, ['input', 'prompt', '输入']),
-        output_tokens: findTokenValue(cells, ['output', 'completion', '输出']),
-        started_at: findDate(cells) || nowISO(),
-        raw_payload: { cells, url: snapshot.url }
-      })
+      if (cells.length === 0) continue
+      if (isBillHeaderRow(cells)) {
+        headers = cells
+        continue
+      }
+      const bill = parseBillRow(cells, headers, snapshot, row)
+      if (!bill) continue
+      lines.push(bill)
     }
     if (lines.length === 0) {
       return fail('BILL_TABLE_NOT_FOUND', 'no supported billing rows were found')
     }
     return ok({ source: 'chrome', lines })
+  }
+
+  function parseBillRow(cells, headers, snapshot, row) {
+    const costCell = cellByHeader(cells, headers, ['费用', '金额', '成本', 'price', 'cost', 'amount'])
+    const cost = costCell ? findMoneyOrNumber([costCell]) : findMoneyOrNumber(cells)
+    const model = cellByHeader(cells, headers, ['模型', 'model']) || findModel(cells)
+    const requestID = cellByHeader(cells, headers, ['请求 id', '请求id', 'request id', 'request_id', 'req id']) || findRequestID(cells)
+    if (cost === null || !model) return null
+
+    const inputTokens = parseIntegerCell(cellByHeader(cells, headers, ['输入 token', '输入token', 'input token', 'prompt token'])) ?? findTokenValue(cells, ['input', 'prompt', '输入'])
+    const outputTokens = parseIntegerCell(cellByHeader(cells, headers, ['输出 token', '输出token', 'output token', 'completion token'])) ?? findTokenValue(cells, ['output', 'completion', '输出'])
+    const cacheReadTokens = parseIntegerCell(cellByHeader(cells, headers, ['缓存读取 token', '缓存 token', 'cache read token', 'cache token', 'cached token'])) ?? findTokenValue(cells, ['cache', 'cached', '缓存'])
+    const explicitTotalTokens = parseIntegerCell(cellByHeader(cells, headers, ['总 token', '总token', 'total token', 'total tokens']))
+    const totalTokens = explicitTotalTokens ?? (inputTokens + outputTokens + cacheReadTokens)
+    const firstTokenCell = cellByHeader(cells, headers, ['首 token', '首token', 'ttft', 'first token', 'first_token'])
+    const durationCell = cellByHeader(cells, headers, ['耗时', '总耗时', 'duration', 'latency', 'time cost'])
+
+    return {
+      external_bill_id: requestID || `${snapshot.host || 'supplier'}-${row.index}`,
+      external_request_id: requestID,
+      api_key_name: cellByHeader(cells, headers, ['api 密钥', 'api key', 'apikey', 'key', '密钥']),
+      model,
+      endpoint: cellByHeader(cells, headers, ['端点', 'endpoint', 'path', 'url']),
+      request_type: cellByHeader(cells, headers, ['类型', '请求类型', 'type', 'request type']),
+      billing_mode: normalizeBillingMode(cellByHeader(cells, headers, ['计费模式', 'billing mode', 'billing'])) || inferBillingMode(cells),
+      reasoning_effort: cellByHeader(cells, headers, ['推理强度', 'reasoning effort', 'effort']),
+      currency: inferCurrency(costCell ? [costCell] : cells),
+      cost_cents: Math.round(cost * 100),
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      cache_read_tokens: cacheReadTokens,
+      total_tokens: totalTokens,
+      first_token_ms: parseDurationMs(firstTokenCell),
+      duration_ms: parseDurationMs(durationCell),
+      user_agent: cellByHeader(cells, headers, ['user-agent', 'user agent', 'ua']),
+      started_at: findDate([cellByHeader(cells, headers, ['时间', '创建时间', '开始时间', 'time', 'created at', 'started at'])].filter(Boolean)) || findDate(cells) || nowISO(),
+      raw_payload: { cells, headers, url: snapshot.url }
+    }
+  }
+
+  function isBillHeaderRow(cells) {
+    const text = cells.join(' ').toLowerCase()
+    const billHeaderHits = [
+      /api\s*key|api\s*密钥|密钥/i,
+      /model|模型/i,
+      /计费|billing|费用|amount|cost|price/i,
+      /token/i,
+      /耗时|latency|duration|ttft/i
+    ].filter((pattern) => pattern.test(text)).length
+    return billHeaderHits >= 2
+  }
+
+  function cellByHeader(cells, headers, aliases) {
+    if (!headers || headers.length === 0) return ''
+    for (let index = 0; index < headers.length && index < cells.length; index += 1) {
+      const header = normalizeHeader(headers[index])
+      if (!header) continue
+      if (aliases.some((alias) => header.includes(normalizeHeader(alias)))) {
+        return cells[index] || ''
+      }
+    }
+    return ''
+  }
+
+  function normalizeHeader(value) {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  function findRequestID(cells) {
+    return cells.find((value) => /req|chatcmpl|cmpl|request[_-]?id|请求.?id|[a-f0-9-]{16,}/i.test(value)) || ''
+  }
+
+  function parseIntegerCell(value) {
+    if (!value) return null
+    const match = String(value).replace(/,/g, '').match(/(\d+)/)
+    if (!match) return null
+    const parsed = Number(match[1])
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  function parseDurationMs(value) {
+    if (!value) return 0
+    const text = String(value).trim().replace(/,/g, '')
+    const match = text.match(/(\d+(?:\.\d+)?)\s*(ms|毫秒|s|sec|秒)?/i)
+    if (!match) return 0
+    const parsed = Number(match[1])
+    if (!Number.isFinite(parsed)) return 0
+    const unit = (match[2] || '').toLowerCase()
+    if (unit === 's' || unit === 'sec' || unit === '秒') return Math.round(parsed * 1000)
+    return Math.round(parsed)
+  }
+
+  function normalizeBillingMode(value) {
+    const text = String(value || '').toLowerCase()
+    if (!text) return ''
+    if (/request|按次|请求/.test(text)) return 'request'
+    if (/image|图片/.test(text)) return 'image'
+    if (/token|按量/.test(text)) return 'token'
+    return text.slice(0, 60)
   }
 
   function collectHealth(snapshot) {
@@ -118,6 +248,8 @@
     switch (taskType) {
       case 'fetch_rates':
         return collectRates(snapshot)
+      case 'fetch_groups':
+        return collectGroups(snapshot)
       case 'fetch_balance':
         return collectBalance(snapshot)
       case 'fetch_promotions':
@@ -129,6 +261,78 @@
       default:
         return fail('UNSUPPORTED_TASK_TYPE', `unsupported task type: ${taskType}`)
     }
+  }
+
+  function collectGroupCandidates(snapshot) {
+    const nodes = snapshot.groupOptions || []
+    if (nodes.length > 0) {
+      return nodes
+    }
+    const fromRows = (snapshot.rows || [])
+      .map((row) => ({ text: normalizeCells(row.cells).join('\n'), className: '' }))
+      .filter((item) => /倍率|rate|private|私有|default|claude|openai|gemini|anthropic|antigravity/i.test(item.text))
+    const fromText = String(snapshot.text || '')
+      .split(/\n(?=.*(?:倍率|rate|私有|private|default|claude|openai|gemini|anthropic|antigravity))/i)
+      .map((text) => ({ text: text.trim(), className: '' }))
+      .filter((item) => item.text)
+    return [...fromRows, ...fromText]
+  }
+
+  function parseGroupCandidate(candidate) {
+    const text = String(candidate.text || '').replace(/\r/g, '\n').trim()
+    const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean)
+    const rateMultiplier = parseRateMultiplier(text)
+    const privateMatch = /private|私有/i.test(text)
+    const platform = inferPlatform(`${text} ${candidate.className || ''}`)
+    let name = ''
+    let description = ''
+    for (const line of lines) {
+      if (/^\d+(?:\.\d+)?x?\s*倍率$/i.test(line)) continue
+      if (/^倍率[:：]/.test(line)) continue
+      if (/^(private|私有)$/i.test(line)) continue
+      if (!name) {
+        name = cleanupGroupName(line)
+        continue
+      }
+      if (!description && line !== name && !/^\d+(?:\.\d+)?x?\s*倍率$/i.test(line)) {
+        description = line
+      }
+    }
+    if (!description && lines.length > 1) {
+      description = lines.find((line) => line !== name && !/倍率|private|私有/i.test(line)) || ''
+    }
+    return {
+      name,
+      description,
+      platform,
+      rate_multiplier: rateMultiplier,
+      is_private: privateMatch
+    }
+  }
+
+  function cleanupGroupName(value) {
+    return String(value || '')
+      .replace(/\b(private|私有)\b/gi, '')
+      .replace(/私有/g, '')
+      .replace(/\d+(?:\.\d+)?x?\s*倍率/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  function parseRateMultiplier(text) {
+    const match = String(text || '').match(/(\d+(?:\.\d+)?)\s*x?\s*倍率/i)
+    if (!match) return null
+    const value = Number(match[1])
+    return Number.isFinite(value) ? value : null
+  }
+
+  function inferPlatform(text) {
+    const lower = String(text || '').toLowerCase()
+    if (lower.includes('anthropic') || lower.includes('claude')) return 'anthropic'
+    if (lower.includes('openai') || lower.includes('gpt')) return 'openai'
+    if (lower.includes('gemini')) return 'gemini'
+    if (lower.includes('antigravity')) return 'antigravity'
+    return ''
   }
 
   function normalizeCells(cells) {
@@ -268,12 +472,16 @@
   const parser = {
     collectByTask,
     collectRates,
+    collectGroups,
     collectBalance,
     collectPromotions,
     collectBills,
     collectHealth,
     helpers: {
       findModel,
+      parseGroupCandidate,
+      parseRateMultiplier,
+      inferPlatform,
       findMoneyOrNumber,
       findLabeledAmount,
       findLabeledPair,

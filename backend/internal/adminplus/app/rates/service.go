@@ -2,11 +2,14 @@ package rates
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
@@ -57,15 +60,25 @@ type Repository interface {
 	UpdateChangeEventStatus(ctx context.Context, id int64, status adminplusdomain.RateChangeStatus) (*adminplusdomain.RateChangeEvent, error)
 }
 
+type Notifier interface {
+	NotifyRateChange(ctx context.Context, event *adminplusdomain.RateChangeEvent, snapshot *adminplusdomain.RateSnapshot) error
+}
+
 type Service struct {
-	repo Repository
-	now  func() time.Time
+	repo     Repository
+	notifier Notifier
+	now      func() time.Time
 }
 
 func NewService(repo Repository) *Service {
+	return NewServiceWithNotifier(repo, nil)
+}
+
+func NewServiceWithNotifier(repo Repository, notifier Notifier) *Service {
 	return &Service{
-		repo: repo,
-		now:  time.Now,
+		repo:     repo,
+		notifier: notifier,
+		now:      time.Now,
 	}
 }
 
@@ -120,8 +133,76 @@ func (s *Service) RecordSnapshot(ctx context.Context, in RecordSnapshotInput) (*
 			return nil, err
 		}
 		result.Events = append(result.Events, createdEvent)
+		s.notifyRateChange(ctx, createdEvent, created)
 	}
 	return result, nil
+}
+
+func (s *Service) notifyRateChange(ctx context.Context, event *adminplusdomain.RateChangeEvent, snapshot *adminplusdomain.RateSnapshot) {
+	if s == nil || s.notifier == nil || event == nil {
+		return
+	}
+	if err := s.notifier.NotifyRateChange(ctx, event, snapshot); err != nil {
+		slog.Warn("admin plus rate notification failed", "supplier_id", event.SupplierID, "event_id", event.ID, "direction", event.Direction, "err", err)
+	}
+}
+
+type FeishuNotifier struct {
+	sender *notifications.Feishu
+}
+
+func NewFeishuNotifierFromEnv(repo notifications.Repository) *FeishuNotifier {
+	sender := notifications.NewFeishuFromEnv(repo)
+	if sender == nil {
+		return nil
+	}
+	return &FeishuNotifier{sender: sender}
+}
+
+func (n *FeishuNotifier) NotifyRateChange(ctx context.Context, event *adminplusdomain.RateChangeEvent, snapshot *adminplusdomain.RateSnapshot) error {
+	if n == nil || n.sender == nil || event == nil {
+		return nil
+	}
+	return n.sender.SendEvent(ctx, notifications.Event{
+		Type:           "rate." + string(event.Direction),
+		ID:             event.ID,
+		SupplierID:     event.SupplierID,
+		ThrottleKey:    fmt.Sprintf("supplier:%d:model:%s:price:%s:%s:%s:direction:%s", event.SupplierID, event.Model, event.BillingMode, event.PriceItem, event.Unit, event.Direction),
+		ThrottleWindow: notifications.DefaultThrottleWindow,
+		Text:           buildFeishuRateText(event, snapshot),
+	})
+}
+
+func buildFeishuRateText(event *adminplusdomain.RateChangeEvent, snapshot *adminplusdomain.RateSnapshot) string {
+	oldPrice := "-"
+	if event.OldPriceMicros != nil {
+		oldPrice = fmt.Sprintf("%d micros", *event.OldPriceMicros)
+	}
+	change := "-"
+	if event.ChangePercent != nil {
+		change = fmt.Sprintf("%.2f%%", *event.ChangePercent)
+	}
+	source := "-"
+	capturedAt := event.CreatedAt
+	if snapshot != nil {
+		source = snapshot.Source
+		capturedAt = snapshot.CapturedAt
+	}
+	return fmt.Sprintf(
+		"【Sub2API Admin Plus 费率通知】\n供应商ID：%d\n模型：%s\n方向：%s\n价格项：%s/%s/%s\n旧价格：%s\n新价格：%d micros\n变化：%s\n超过阈值：%t\n来源：%s\n时间：%s",
+		event.SupplierID,
+		event.Model,
+		event.Direction,
+		event.BillingMode,
+		event.PriceItem,
+		event.Unit,
+		oldPrice,
+		event.NewPriceMicros,
+		change,
+		event.ThresholdExceeded,
+		source,
+		capturedAt.Format(time.RFC3339),
+	)
 }
 
 func (s *Service) ListSnapshots(ctx context.Context, filter SnapshotFilter) ([]*adminplusdomain.RateSnapshot, error) {

@@ -31,24 +31,39 @@ func (r *SQLRepository) CreateBillLine(ctx context.Context, line *adminplusdomai
 	}
 	row := r.db.QueryRowContext(ctx, `
 		INSERT INTO admin_plus_supplier_bill_lines (
-			supplier_id, source, external_bill_id, external_request_id, model,
-			currency, cost_cents, input_tokens, output_tokens, started_at,
-			ended_at, raw_payload, created_at
+			supplier_id, source, external_bill_id, external_request_id,
+			api_key_name, model, endpoint, request_type, billing_mode,
+			reasoning_effort, currency, cost_cents, input_tokens, output_tokens,
+			cache_read_tokens, total_tokens, first_token_ms, duration_ms,
+			user_agent, started_at, ended_at, raw_payload, created_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+			$13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
 		RETURNING id, supplier_id, source, external_bill_id, external_request_id,
-			model, currency, cost_cents, input_tokens, output_tokens, started_at,
-			ended_at, raw_payload, created_at
+			api_key_name, model, endpoint, request_type, billing_mode,
+			reasoning_effort, currency, cost_cents, input_tokens, output_tokens,
+			cache_read_tokens, total_tokens, first_token_ms, duration_ms,
+			user_agent, started_at, ended_at, raw_payload, created_at
 	`,
 		line.SupplierID,
 		line.Source,
 		line.ExternalBillID,
 		line.ExternalRequestID,
+		line.APIKeyName,
 		line.Model,
+		line.Endpoint,
+		line.RequestType,
+		line.BillingMode,
+		line.ReasoningEffort,
 		line.Currency,
 		line.CostCents,
 		line.InputTokens,
 		line.OutputTokens,
+		line.CacheReadTokens,
+		line.TotalTokens,
+		line.FirstTokenMS,
+		line.DurationMS,
+		line.UserAgent,
 		line.StartedAt,
 		nullableTime(line.EndedAt),
 		rawPayload,
@@ -73,8 +88,10 @@ func (r *SQLRepository) ListBillLines(ctx context.Context, filter BillLineFilter
 	limitRef := addArg(filter.Limit)
 	query := `
 		SELECT id, supplier_id, source, external_bill_id, external_request_id,
-			model, currency, cost_cents, input_tokens, output_tokens, started_at,
-			ended_at, raw_payload, created_at
+			api_key_name, model, endpoint, request_type, billing_mode,
+			reasoning_effort, currency, cost_cents, input_tokens, output_tokens,
+			cache_read_tokens, total_tokens, first_token_ms, duration_ms,
+			user_agent, started_at, ended_at, raw_payload, created_at
 		FROM admin_plus_supplier_bill_lines
 		WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY started_at DESC, id DESC
@@ -114,11 +131,21 @@ func scanSupplierBillLine(scanner billLineScanner) (*adminplusdomain.SupplierBil
 		&line.Source,
 		&line.ExternalBillID,
 		&line.ExternalRequestID,
+		&line.APIKeyName,
 		&line.Model,
+		&line.Endpoint,
+		&line.RequestType,
+		&line.BillingMode,
+		&line.ReasoningEffort,
 		&line.Currency,
 		&line.CostCents,
 		&line.InputTokens,
 		&line.OutputTokens,
+		&line.CacheReadTokens,
+		&line.TotalTokens,
+		&line.FirstTokenMS,
+		&line.DurationMS,
+		&line.UserAgent,
 		&line.StartedAt,
 		&endedAt,
 		&rawPayload,

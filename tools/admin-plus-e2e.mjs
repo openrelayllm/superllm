@@ -9,12 +9,17 @@ const email = process.env.ADMIN_PLUS_E2E_EMAIL || 'admin@sub2api-admin-plus.loca
 const password = process.env.ADMIN_PLUS_E2E_PASSWORD || 'AdminPlus@123456'
 const dbURL = process.env.ADMIN_PLUS_E2E_DB_URL || 'postgresql://root:root@127.0.0.1:5432/sub2api_admin_plus?sslmode=disable'
 const redisURL = process.env.ADMIN_PLUS_E2E_REDIS_URL || 'redis://127.0.0.1:6379/0'
+const cleanupEnabled = process.env.ADMIN_PLUS_E2E_CLEANUP !== 'false'
+const allowNonLocal = process.env.ADMIN_PLUS_E2E_ALLOW_NON_LOCAL === '1'
+const realUpstreamBaseURL = trimTrailingSlash(process.env.ADMIN_PLUS_E2E_REAL_UPSTREAM_BASE_URL || '')
+const realUpstreamAPIKey = process.env.ADMIN_PLUS_E2E_REAL_UPSTREAM_API_KEY || ''
 const probeModel = 'gpt-5.5'
 const runID = `e2e-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 8)}`
 
 let token = ''
-let fakeOpenAIBaseURL = ''
-let fakeOpenAIRequests = []
+let testUpstreamBaseURL = ''
+let testUpstreamRequests = []
+let localAccountIDForCleanup = 0
 
 main().catch((error) => {
   console.error(`[FAIL] ${error.message}`)
@@ -25,9 +30,13 @@ main().catch((error) => {
 })
 
 async function main() {
-  const fakeOpenAI = await startFakeOpenAIResponsesServer()
-  fakeOpenAIBaseURL = fakeOpenAI.url
-  fakeOpenAIRequests = fakeOpenAI.requests
+  assertSafeE2ETarget()
+  const testUpstream = realUpstreamBaseURL
+    ? await useRealOpenAICompatibleUpstream()
+    : await startTestOpenAIResponsesServer()
+  testUpstreamBaseURL = testUpstream.url
+  testUpstreamRequests = testUpstream.requests
+  let runError = null
   try {
     log(`Admin Plus API E2E starting: ${runID}`)
     await waitForService()
@@ -35,11 +44,13 @@ async function main() {
 
     const localAccountID = createLocalAccountFixture()
     await exerciseLocalAccountRuntime(localAccountID)
-    const supplier = await createSupplier()
+    let supplier = await createSupplier()
     await listAndGetSupplier(supplier.id)
+    supplier = await updateSupplier(supplier.id)
     const activeSupplier = await updateSupplierStatus(supplier.id)
 
-    const supplierAccount = await createSupplierAccount(activeSupplier.id, localAccountID)
+    let supplierAccount = await createSupplierAccount(activeSupplier.id, localAccountID)
+    supplierAccount = await updateSupplierAccount(activeSupplier.id, supplierAccount)
     await listSupplierAccounts(activeSupplier.id, supplierAccount.id)
 
     const rateEvent = await exerciseRateMonitoring(activeSupplier.id)
@@ -57,8 +68,20 @@ async function main() {
     log('Admin Plus API E2E completed')
     log(`Created test prefix: ${runID}`)
     log(`Verified rate event id: ${rateEvent.id}`)
+  } catch (error) {
+    runError = error
+    throw error
   } finally {
-    await fakeOpenAI.close()
+    let cleanupError = null
+    if (cleanupEnabled) {
+      cleanupError = cleanupE2EFixturesSafely()
+    } else {
+      log(`cleanup disabled; test prefix remains: ${runID}`)
+    }
+    await testUpstream.close()
+    if (cleanupError && !runError) {
+      throw cleanupError
+    }
   }
 }
 
@@ -85,8 +108,8 @@ async function login() {
 function createLocalAccountFixture() {
   const name = `${runID}-local-openai`
   const credentials = JSON.stringify({
-    api_key: 'sk-e2e-test-only',
-    base_url: fakeOpenAIBaseURL
+    api_key: realUpstreamAPIKey || 'sk-e2e-test-only',
+    base_url: testUpstreamBaseURL
   })
   const sql = `
     INSERT INTO accounts (
@@ -109,6 +132,7 @@ function createLocalAccountFixture() {
   }).trim()
   const id = parseReturningID(out)
   assert(Number.isInteger(id) && id > 0, `local account fixture should return id, got: ${out}`)
+  localAccountIDForCleanup = id
   log(`created local account fixture #${id}`)
   return id
 }
@@ -257,6 +281,33 @@ async function listAndGetSupplier(supplierID) {
   log('supplier list/get verified')
 }
 
+async function updateSupplier(supplierID) {
+  const supplier = await api('PUT', `/api/v1/admin-plus/suppliers/${supplierID}`, {
+    name: `${runID}-supplier-updated`,
+    kind: 'relay',
+    type: 'sub2api',
+    runtime_status: 'candidate',
+    health_status: 'normal',
+    dashboard_url: 'https://supplier.example.com',
+    api_base_url: 'https://supplier.example.com/api/v1',
+    contact: 'ops-updated@example.com',
+    notes: `updated by ${runID}`,
+    browser_login_enabled: true,
+    balance_cents: 650000,
+    balance_currency: 'CNY'
+  })
+  assert(supplier.id === supplierID, 'supplier update should keep id')
+  assert(supplier.name.endsWith('-supplier-updated'), 'supplier update should persist name')
+  assert(supplier.contact === 'ops-updated@example.com', 'supplier update should persist contact')
+  assert(supplier.credential?.browser_login_username_configured === true, 'supplier update should preserve browser username when omitted')
+  assert(supplier.credential?.browser_login_password_configured === true, 'supplier update should preserve browser password when omitted')
+  assert(supplier.credential?.browser_login_token_configured === true, 'supplier update should preserve browser token when omitted')
+  assert(!JSON.stringify(supplier).includes('e2e-test-only-password'), 'supplier update should not expose browser login password')
+  assert(!JSON.stringify(supplier).includes('e2e-test-only-token'), 'supplier update should not expose browser login token')
+  log('supplier update verified')
+  return supplier
+}
+
 async function updateSupplierStatus(supplierID) {
   const supplier = await api('PATCH', `/api/v1/admin-plus/suppliers/${supplierID}/status`, {
     runtime_status: 'active',
@@ -288,6 +339,33 @@ async function createSupplierAccount(supplierID, localAccountID) {
   assert(account.has_usable_balance === true, 'supplier account should have usable balance')
   log(`created supplier account binding #${account.id}`)
   return account
+}
+
+async function updateSupplierAccount(supplierID, account) {
+  const updated = await api('PUT', `/api/v1/admin-plus/suppliers/${supplierID}/accounts/${account.id}`, {
+    supplier_account_identifier: `${runID}-upstream-key-updated`,
+    supplier_account_label: 'E2E updated upstream key',
+    organization_id: 'org-e2e-updated',
+    project_id: 'proj-e2e-updated',
+    rate_profile: 'discount-e2e',
+    configured_concurrency: 12,
+    observed_max_concurrency: 9,
+    balance_threshold_cents: 2000,
+    balance_cents: 300000,
+    balance_currency: 'CNY',
+    runtime_status: 'candidate',
+    health_status: 'normal'
+  })
+  assert(updated.id === account.id, 'supplier account update should keep id')
+  assert(updated.local_sub2api_account_id === account.local_sub2api_account_id, 'supplier account update should keep local account binding')
+  assert(updated.supplier_account_identifier.endsWith('-upstream-key-updated'), 'supplier account update should persist supplier identifier')
+  assert(updated.rate_profile === 'discount-e2e', 'supplier account update should persist rate profile')
+  assert(updated.configured_concurrency === 12, 'supplier account update should persist configured concurrency')
+  assert(updated.observed_max_concurrency === 9, 'supplier account update should persist observed max concurrency')
+  assert(updated.balance_cents === 300000, 'supplier account update should persist balance')
+  assert(updated.has_usable_balance === true, 'supplier account update should keep usable balance')
+  log('supplier account update verified')
+  return updated
 }
 
 async function listSupplierAccounts(supplierID, accountID) {
@@ -379,7 +457,7 @@ async function exerciseBalanceMonitoring(supplierID) {
 }
 
 async function exerciseHealthMonitoring(supplierID, supplierAccountID) {
-  const requestCountBefore = fakeOpenAIRequests.length
+  const requestCountBefore = testUpstreamRequests.length
   const probe = await api('POST', '/api/v1/admin-plus/health/probe', {
     supplier_id: supplierID,
     supplier_account_id: supplierAccountID,
@@ -394,11 +472,13 @@ async function exerciseHealthMonitoring(supplierID, supplierAccountID) {
   assert(probe.sample.status_code === 200, 'health probe should record upstream HTTP 200')
   assert(probe.sample.raw_payload?.local_sub2api_account_id > 0, 'health probe should bind to local Sub2API account')
   assert(probe.sample.raw_payload?.supplier_account_id === supplierAccountID, 'health probe should bind to supplier account child')
-  assert(!JSON.stringify(probe.sample).includes('sk-e2e-test-only'), 'health probe response should not expose api key')
-  assert(fakeOpenAIRequests.length === requestCountBefore + 1, 'health probe should call fake OpenAI-compatible upstream once')
-  const request = fakeOpenAIRequests[fakeOpenAIRequests.length - 1]
+  assert(!JSON.stringify(probe.sample).includes(realUpstreamAPIKey || 'sk-e2e-test-only'), 'health probe response should not expose api key')
+  assert(testUpstreamRequests.length === requestCountBefore + 1, 'health probe should call OpenAI-compatible upstream once')
+  const request = testUpstreamRequests[testUpstreamRequests.length - 1]
   assert(request.path === '/v1/responses', 'health probe should call /v1/responses')
-  assert(request.authorization === 'Bearer sk-e2e-test-only', 'health probe should send local account bearer key upstream')
+  if (!realUpstreamBaseURL) {
+    assert(request.authorization === 'Bearer sk-e2e-test-only', 'health probe should send local account bearer key upstream')
+  }
   assert(request.body?.model === probeModel, 'health probe upstream payload should request gpt-5.5')
   assert(request.body?.stream === true, 'health probe upstream payload should use streaming')
 
@@ -730,7 +810,48 @@ function log(message) {
   console.log(`[OK] ${message}`)
 }
 
-function startFakeOpenAIResponsesServer() {
+function assertSafeE2ETarget() {
+  if (allowNonLocal) return
+  const apiURL = new URL(baseURL)
+  const dbHost = dbURLHost(dbURL)
+  const redisHost = redisURLHost(redisURL)
+  assert(isLocalHost(apiURL.hostname), `refuse to run E2E against non-local API host: ${apiURL.hostname}`)
+  assert(isLocalHost(dbHost), `refuse to run E2E against non-local database host: ${dbHost}`)
+  assert(isLocalHost(redisHost), `refuse to run E2E against non-local Redis host: ${redisHost}`)
+}
+
+async function useRealOpenAICompatibleUpstream() {
+  assert(realUpstreamAPIKey, 'ADMIN_PLUS_E2E_REAL_UPSTREAM_API_KEY is required when ADMIN_PLUS_E2E_REAL_UPSTREAM_BASE_URL is set')
+  const requests = []
+  const wrappedFetch = globalThis.fetch
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url
+    if (String(url).startsWith(realUpstreamBaseURL)) {
+      let body = null
+      try {
+        body = JSON.parse(init.body || '{}')
+      } catch {
+        body = null
+      }
+      requests.push({
+        path: new URL(url).pathname,
+        authorization: init.headers?.Authorization || init.headers?.authorization || '',
+        contentType: init.headers?.['Content-Type'] || init.headers?.['content-type'] || '',
+        body
+      })
+    }
+    return wrappedFetch(input, init)
+  }
+  return {
+    url: realUpstreamBaseURL,
+    requests,
+    close: async () => {
+      globalThis.fetch = wrappedFetch
+    }
+  }
+}
+
+function startTestOpenAIResponsesServer() {
   const requests = []
   const server = createServer(async (req, res) => {
     if (req.method !== 'POST' || req.url !== '/v1/responses') {
@@ -777,6 +898,114 @@ function startFakeOpenAIResponsesServer() {
   })
 }
 
+function cleanupE2EFixturesSafely() {
+  try {
+    cleanupE2EFixtures()
+    log(`cleaned E2E fixtures for ${runID}`)
+    return null
+  } catch (error) {
+    console.error(`[WARN] cleanup failed for ${runID}: ${error.message}`)
+    return error
+  }
+}
+
+function cleanupE2EFixtures() {
+  const escapedRunID = sqlString(runID)
+  const sql = `
+    DELETE FROM admin_plus_notification_deliveries
+    WHERE dedupe_key LIKE '%${escapedRunID}%'
+       OR payload::text LIKE '%${escapedRunID}%';
+
+    DELETE FROM admin_plus_action_recommendations
+    WHERE reason_code LIKE '%${escapedRunID}%'
+       OR title LIKE '%${escapedRunID}%'
+       OR description LIKE '%${escapedRunID}%'
+       OR expected_impact LIKE '%${escapedRunID}%'
+       OR signals::text LIKE '%${escapedRunID}%';
+
+    DELETE FROM admin_plus_supplier_bill_lines
+    WHERE external_bill_id LIKE '${escapedRunID}%'
+       OR external_request_id LIKE '${escapedRunID}%'
+       OR model LIKE '${escapedRunID}%'
+       OR raw_payload::text LIKE '%${escapedRunID}%';
+
+    DELETE FROM admin_plus_extension_tasks
+    WHERE device_id LIKE '${escapedRunID}%'
+       OR schedule_key LIKE '%${escapedRunID}%'
+       OR payload::text LIKE '%${escapedRunID}%'
+       OR result::text LIKE '%${escapedRunID}%';
+
+    DELETE FROM admin_plus_health_events
+    WHERE supplier_id IN (SELECT id FROM admin_plus_suppliers WHERE name LIKE '${escapedRunID}%')
+       OR model LIKE '${escapedRunID}%';
+
+    DELETE FROM admin_plus_health_samples
+    WHERE supplier_id IN (SELECT id FROM admin_plus_suppliers WHERE name LIKE '${escapedRunID}%')
+       OR model LIKE '${escapedRunID}%'
+       OR raw_payload::text LIKE '%${escapedRunID}%';
+
+    DELETE FROM admin_plus_promotion_events
+    WHERE supplier_id IN (SELECT id FROM admin_plus_suppliers WHERE name LIKE '${escapedRunID}%')
+       OR title LIKE '%${escapedRunID}%'
+       OR description LIKE '%${escapedRunID}%'
+       OR raw_payload::text LIKE '%${escapedRunID}%';
+
+    DELETE FROM admin_plus_balance_events
+    WHERE supplier_id IN (SELECT id FROM admin_plus_suppliers WHERE name LIKE '${escapedRunID}%');
+
+    DELETE FROM admin_plus_balance_snapshots
+    WHERE supplier_id IN (SELECT id FROM admin_plus_suppliers WHERE name LIKE '${escapedRunID}%')
+       OR raw_payload::text LIKE '%${escapedRunID}%';
+
+    DELETE FROM admin_plus_rate_change_events
+    WHERE supplier_id IN (SELECT id FROM admin_plus_suppliers WHERE name LIKE '${escapedRunID}%')
+       OR model LIKE '${escapedRunID}%';
+
+    DELETE FROM admin_plus_rate_snapshots
+    WHERE supplier_id IN (SELECT id FROM admin_plus_suppliers WHERE name LIKE '${escapedRunID}%')
+       OR model LIKE '${escapedRunID}%'
+       OR raw_payload::text LIKE '%${escapedRunID}%';
+
+    DELETE FROM admin_plus_supplier_accounts
+    WHERE supplier_id IN (SELECT id FROM admin_plus_suppliers WHERE name LIKE '${escapedRunID}%')
+       OR supplier_account_identifier LIKE '${escapedRunID}%';
+
+    DELETE FROM admin_plus_suppliers
+    WHERE name LIKE '${escapedRunID}%'
+       OR contact LIKE '%${escapedRunID}%'
+       OR notes LIKE '%${escapedRunID}%';
+
+    DELETE FROM usage_logs
+    WHERE request_id LIKE '${escapedRunID}%'
+       OR model LIKE '${escapedRunID}%'
+       OR requested_model LIKE '${escapedRunID}%';
+
+    DELETE FROM api_keys
+    WHERE key LIKE 'sk-${escapedRunID}%'
+       OR name LIKE '${escapedRunID}%';
+
+    DELETE FROM accounts
+    WHERE name LIKE '${escapedRunID}%'
+       OR extra::text LIKE '%${escapedRunID}%';
+
+    DELETE FROM users
+    WHERE email LIKE '${escapedRunID}@e2e.local';
+  `
+  execFileSync('psql', [dbURL, '-v', 'ON_ERROR_STOP=1', '-c', sql], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  cleanupRuntimeRedisFixture()
+}
+
+function cleanupRuntimeRedisFixture() {
+  if (!localAccountIDForCleanup) return
+  execFileSync('redis-cli', ['-u', redisURL, 'DEL', `concurrency:account:${localAccountIDForCleanup}`, `wait:account:${localAccountIDForCleanup}`], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+}
+
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
     let body = ''
@@ -791,6 +1020,18 @@ function readRequestBody(req) {
 
 function trimTrailingSlash(value) {
   return value.replace(/\/+$/, '')
+}
+
+function isLocalHost(hostname) {
+  return ['localhost', '127.0.0.1', '::1'].includes(hostname)
+}
+
+function dbURLHost(value) {
+  return new URL(value).hostname
+}
+
+function redisURLHost(value) {
+  return new URL(value).hostname
 }
 
 function sqlString(value) {

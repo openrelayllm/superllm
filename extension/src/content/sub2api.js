@@ -1,7 +1,7 @@
 (() => {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type !== 'admin-plus:run-task') return false
-    Promise.resolve(runTask(message.task, message.credential))
+    if (!message?.type?.startsWith('admin-plus:')) return false
+    Promise.resolve(handleMessage(message))
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({
         ok: false,
@@ -11,57 +11,182 @@
     return true
   })
 
-  async function runTask(task, credential) {
-    const login = ensureLogin(credential)
-    if (login) return login
-
-    switch (task.type) {
-      case 'fetch_rates':
-      case 'fetch_balance':
-      case 'fetch_promotions':
-      case 'export_bills':
-      case 'fetch_health':
-        return window.AdminPlusSub2APIParser.collectByTask(task.type, pageSnapshot())
+  async function handleMessage(message) {
+    switch (message.type) {
+      case 'admin-plus:detect-login':
+        return detectLogin()
+      case 'admin-plus:capture-session':
+        return captureSession(message.task, message.supplier)
       default:
-        return fail('UNSUPPORTED_TASK_TYPE', `unsupported task type: ${task.type}`)
+        return fail('UNSUPPORTED_CONTENT_MESSAGE', `unsupported message: ${message.type}`)
     }
   }
 
-  function ensureLogin(credential) {
-    const passwordInput = document.querySelector('input[type="password"]')
-    const loginLike = passwordInput || /login|signin|auth/i.test(location.pathname)
-    if (!loginLike) return null
-
-    if (credential.token) {
-      window.localStorage.setItem('auth_token', credential.token)
-      window.localStorage.setItem('token_expires_at', String(Date.now() + 24 * 60 * 60 * 1000))
-      location.reload()
-      return { ok: false, status: 'login_applied' }
+  async function captureSession(task, supplier) {
+    if (isLoginLikePage()) {
+      return fail('SUPPLIER_LOGIN_REQUIRED', '请先在当前供应商页面完成登录，再执行一键上报')
     }
-
-    if (!credential.username || !credential.password || !passwordInput) {
-      return fail('LOGIN_CREDENTIAL_REQUIRED', 'supplier login page requires username and password')
-    }
-
-    const userInput = document.querySelector('input[type="email"], input[name*="email" i], input[name*="user" i], input[type="text"]')
-    if (!userInput) {
-      return fail('LOGIN_FORM_UNSUPPORTED', 'supplier login form username input was not found')
-    }
-    setInputValue(userInput, credential.username)
-    setInputValue(passwordInput, credential.password)
-    const submit = document.querySelector('button[type="submit"], input[type="submit"], button')
-    if (!submit) {
-      return fail('LOGIN_FORM_UNSUPPORTED', 'supplier login form submit button was not found')
-    }
-    submit.click()
-    return { ok: false, status: 'login_submitted' }
+    const bundle = collectSessionBundle(supplier)
+    return ok({
+      source: 'chrome',
+      captured_at: new Date().toISOString(),
+      session_bundle: bundle,
+      session_summary: summarizeBundle(bundle),
+      raw_payload: {
+        url: location.href,
+        title: document.title,
+        task_id: task?.id
+      }
+    })
   }
 
-  function setInputValue(input, value) {
-    const setter = Object.getOwnPropertyDescriptor(input.constructor.prototype, 'value')?.set
-    setter?.call(input, value)
-    input.dispatchEvent(new Event('input', { bubbles: true }))
-    input.dispatchEvent(new Event('change', { bubbles: true }))
+  function detectLogin() {
+    if (isLoginLikePage()) {
+      return { status: 'logged_out' }
+    }
+    const bundle = collectSessionBundle({})
+    if (hasSessionEvidence(bundle)) {
+      return { status: 'logged_in', summary: summarizeBundle(bundle) }
+    }
+    return { status: 'unknown' }
+  }
+
+  function isLoginLikePage() {
+    return Boolean(document.querySelector('input[type="password"]') || /login|signin|auth/i.test(location.pathname))
+  }
+
+  function collectSessionBundle(supplier) {
+    const storage = collectStorage()
+    const tokens = extractTokens(storage)
+    const context = extractContext(storage, supplier)
+    return {
+      supplier_id: supplier?.id || supplier?.supplier_id,
+      origin: location.origin,
+      url: location.href,
+      captured_at: new Date().toISOString(),
+      expires_at: inferExpiresAt(storage),
+      tokens,
+      cookies: [],
+      context,
+      required_headers: {
+        origin: location.origin,
+        referer: location.href
+      },
+      storage_keys: Object.keys(storage).slice(0, 80)
+    }
+  }
+
+  function collectStorage() {
+    const values = {}
+    collectStorageArea(window.localStorage, values, 'local')
+    collectStorageArea(window.sessionStorage, values, 'session')
+    return values
+  }
+
+  function collectStorageArea(area, values, prefix) {
+    try {
+      for (let index = 0; index < area.length; index++) {
+        const key = area.key(index)
+        if (!key) continue
+        const value = area.getItem(key)
+        values[`${prefix}:${key}`] = value
+      }
+    } catch {
+      // ignore inaccessible storage
+    }
+  }
+
+  function extractTokens(storage) {
+    return {
+      access_token: firstStorageValue(storage, [
+        'auth_token',
+        'access_token',
+        'token',
+        'jwt',
+        'bearer'
+      ]),
+      refresh_token: firstStorageValue(storage, ['refresh_token']),
+      csrf_token: firstStorageValue(storage, ['csrf', 'xsrf'])
+    }
+  }
+
+  function extractContext(storage, supplier) {
+    return {
+      user_id: firstStorageValue(storage, ['user_id', 'userid', 'uid']),
+      organization_id: firstStorageValue(storage, ['organization_id', 'org_id', 'orgid']),
+      project_id: firstStorageValue(storage, ['project_id', 'projectid']),
+      account_id: firstStorageValue(storage, ['account_id', 'accountid']),
+      api_base_url: supplier?.api_base_url || `${location.origin}/api`
+    }
+  }
+
+  function firstStorageValue(storage, patterns) {
+    const entries = Object.entries(storage)
+    for (const [key, value] of entries) {
+      const normalized = key.toLowerCase()
+      if (!patterns.some((pattern) => normalized.includes(pattern))) continue
+      const parsed = extractValue(value)
+      if (parsed) return parsed
+    }
+    return ''
+  }
+
+  function extractValue(value) {
+    const raw = String(value || '').trim()
+    if (!raw) return ''
+    if (raw.startsWith('{') || raw.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(raw)
+        return findTokenLikeValue(parsed)
+      } catch {
+        return ''
+      }
+    }
+    return raw.length > 5000 ? '' : raw
+  }
+
+  function findTokenLikeValue(value) {
+    if (!value || typeof value !== 'object') return ''
+    for (const key of ['access_token', 'auth_token', 'token', 'jwt', 'refresh_token', 'csrf_token']) {
+      if (typeof value[key] === 'string' && value[key]) return value[key]
+    }
+    for (const nested of Object.values(value)) {
+      const found = findTokenLikeValue(nested)
+      if (found) return found
+    }
+    return ''
+  }
+
+  function inferExpiresAt(storage) {
+    const raw = firstStorageValue(storage, ['token_expires_at', 'expires_at', 'expire'])
+    if (!raw) return ''
+    const numeric = Number(raw)
+    if (Number.isFinite(numeric)) {
+      const milliseconds = numeric > 10_000_000_000 ? numeric : numeric * 1000
+      return new Date(milliseconds).toISOString()
+    }
+    const parsed = new Date(raw)
+    return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString()
+  }
+
+  function hasSessionEvidence(bundle) {
+    return Boolean(bundle.tokens.access_token || bundle.tokens.refresh_token || bundle.tokens.csrf_token)
+  }
+
+  function summarizeBundle(bundle) {
+    return {
+      origin: bundle.origin,
+      captured_at: bundle.captured_at,
+      expires_at: bundle.expires_at,
+      has_access_token: Boolean(bundle.tokens.access_token),
+      has_refresh_token: Boolean(bundle.tokens.refresh_token),
+      has_csrf_token: Boolean(bundle.tokens.csrf_token),
+      cookie_count: bundle.cookies.length,
+      api_base_url: bundle.context.api_base_url,
+      organization_id: bundle.context.organization_id,
+      project_id: bundle.context.project_id,
+      account_id: bundle.context.account_id
+    }
   }
 
   function ok(result) {
@@ -72,15 +197,4 @@
     return { ok: false, error_code: errorCode, error_message: errorMessage }
   }
 
-  function pageSnapshot() {
-    return {
-      url: location.href,
-      host: location.host,
-      text: (document.body?.innerText || '').replace(/\r/g, '\n'),
-      rows: Array.from(document.querySelectorAll('tr')).map((tr, index) => ({
-        index,
-        cells: Array.from(tr.querySelectorAll('th,td')).map((cell) => cell.textContent || '')
-      }))
-    }
-  }
 })()

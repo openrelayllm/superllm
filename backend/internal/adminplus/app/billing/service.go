@@ -15,11 +15,21 @@ type ImportBillLineInput struct {
 	Source            string
 	ExternalBillID    string
 	ExternalRequestID string
+	APIKeyName        string
 	Model             string
+	Endpoint          string
+	RequestType       string
+	BillingMode       string
+	ReasoningEffort   string
 	Currency          string
 	CostCents         int64
 	InputTokens       int64
 	OutputTokens      int64
+	CacheReadTokens   int64
+	TotalTokens       int64
+	FirstTokenMS      int64
+	DurationMS        int64
+	UserAgent         string
 	StartedAt         time.Time
 	EndedAt           *time.Time
 	RawPayload        map[string]any
@@ -94,8 +104,11 @@ func (s *Service) buildLine(in ImportBillLineInput) (*adminplusdomain.SupplierBi
 	if in.CostCents < 0 {
 		return nil, badRequest("BILLING_COST_INVALID", "billing cost must be non-negative")
 	}
-	if in.InputTokens < 0 || in.OutputTokens < 0 {
+	if in.InputTokens < 0 || in.OutputTokens < 0 || in.CacheReadTokens < 0 || in.TotalTokens < 0 {
 		return nil, badRequest("BILLING_TOKENS_INVALID", "billing tokens must be non-negative")
+	}
+	if in.FirstTokenMS < 0 || in.DurationMS < 0 {
+		return nil, badRequest("BILLING_LATENCY_INVALID", "billing latency must be non-negative")
 	}
 	if in.StartedAt.IsZero() {
 		return nil, badRequest("BILLING_STARTED_AT_REQUIRED", "billing started_at is required")
@@ -108,16 +121,33 @@ func (s *Service) buildLine(in ImportBillLineInput) (*adminplusdomain.SupplierBi
 		Source:            normalizeSource(in.Source),
 		ExternalBillID:    trimLimit(in.ExternalBillID, 120),
 		ExternalRequestID: trimLimit(in.ExternalRequestID, 160),
+		APIKeyName:        trimLimit(in.APIKeyName, 160),
 		Model:             model,
+		Endpoint:          trimLimit(in.Endpoint, 160),
+		RequestType:       trimLimit(in.RequestType, 80),
+		BillingMode:       trimLimit(in.BillingMode, 60),
+		ReasoningEffort:   trimLimit(in.ReasoningEffort, 60),
 		Currency:          normalizeCurrency(in.Currency),
 		CostCents:         in.CostCents,
 		InputTokens:       in.InputTokens,
 		OutputTokens:      in.OutputTokens,
+		CacheReadTokens:   in.CacheReadTokens,
+		TotalTokens:       normalizedTotalTokens(in),
+		FirstTokenMS:      in.FirstTokenMS,
+		DurationMS:        in.DurationMS,
+		UserAgent:         trimLimit(in.UserAgent, 300),
 		StartedAt:         in.StartedAt.UTC(),
 		EndedAt:           cloneTime(in.EndedAt),
 		RawPayload:        in.RawPayload,
 		CreatedAt:         s.now().UTC(),
 	}, nil
+}
+
+func normalizedTotalTokens(in ImportBillLineInput) int64 {
+	if in.TotalTokens > 0 {
+		return in.TotalTokens
+	}
+	return in.InputTokens + in.OutputTokens + in.CacheReadTokens
 }
 
 func normalizeSource(value string) string {

@@ -18,11 +18,21 @@ func RegisterAdminPlusRoutes(
 		{
 			suppliers.GET("", h.AdminPlus.Supplier.List)
 			suppliers.POST("", h.AdminPlus.Supplier.Create)
+			suppliers.POST("/site-match", h.AdminPlus.Supplier.MatchSite)
+			suppliers.POST("/from-site-candidate", h.AdminPlus.Supplier.CreateFromSiteCandidate)
 			suppliers.GET("/:id", h.AdminPlus.Supplier.Get)
+			suppliers.PUT("/:id", h.AdminPlus.Supplier.Update)
+			suppliers.DELETE("/:id", h.AdminPlus.Supplier.Delete)
 			suppliers.PATCH("/:id/status", h.AdminPlus.Supplier.UpdateStatus)
 			suppliers.GET("/:id/accounts", h.AdminPlus.Supplier.ListAccounts)
 			suppliers.POST("/:id/accounts", h.AdminPlus.Supplier.CreateAccount)
+			suppliers.PUT("/:id/accounts/:accountID", h.AdminPlus.Supplier.UpdateAccount)
 			suppliers.DELETE("/:id/accounts/:accountID", h.AdminPlus.Supplier.DeleteAccount)
+			suppliers.GET("/:id/groups", h.AdminPlus.SupplierGroup.List)
+			suppliers.POST("/:id/groups/sync", h.AdminPlus.SupplierGroup.Sync)
+			suppliers.GET("/:id/session", h.AdminPlus.Session.Get)
+			suppliers.POST("/:id/session/probe", h.AdminPlus.Session.Probe)
+			suppliers.POST("/:id/browser-sessions", h.AdminPlus.Session.Upsert)
 		}
 
 		sub2api := adminPlus.Group("/sub2api")
@@ -65,6 +75,11 @@ func RegisterAdminPlusRoutes(
 			health.PATCH("/events/:id/ack", h.AdminPlus.Health.AcknowledgeEvent)
 		}
 
+		notifications := adminPlus.Group("/notifications")
+		{
+			notifications.GET("/deliveries", h.AdminPlus.Notification.ListDeliveries)
+		}
+
 		billing := adminPlus.Group("/billing")
 		{
 			billing.POST("/lines/import", h.AdminPlus.Billing.ImportBillLines)
@@ -73,9 +88,12 @@ func RegisterAdminPlusRoutes(
 
 		extension := adminPlus.Group("/extension")
 		{
+			extension.GET("/manifest", h.AdminPlus.Extension.Manifest)
+			extension.GET("/package.zip", h.AdminPlus.Extension.DownloadPackage)
 			extension.POST("/tasks", h.AdminPlus.Extension.CreateTask)
 			extension.GET("/tasks", h.AdminPlus.Extension.ListTasks)
 			extension.POST("/tasks/claim", h.AdminPlus.Extension.ClaimTask)
+			extension.POST("/session/capture-task", h.AdminPlus.Extension.CreateCaptureSessionTask)
 			extension.POST("/tasks/:id/heartbeat", h.AdminPlus.Extension.Heartbeat)
 			extension.POST("/tasks/:id/browser-credential", h.AdminPlus.Extension.GetBrowserCredential)
 			extension.POST("/tasks/:id/complete", h.AdminPlus.Extension.CompleteTask)

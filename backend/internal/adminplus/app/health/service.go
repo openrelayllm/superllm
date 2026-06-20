@@ -7,12 +7,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/tidwall/gjson"
@@ -82,6 +85,10 @@ type Repository interface {
 	GetProbeTarget(ctx context.Context, supplierID int64, supplierAccountID int64) (*ProbeTarget, error)
 }
 
+type Notifier interface {
+	NotifyHealthEvent(ctx context.Context, event *adminplusdomain.HealthEvent, sample *adminplusdomain.HealthSample) error
+}
+
 type ProbeTarget struct {
 	SupplierID              int64
 	SupplierName            string
@@ -100,13 +107,19 @@ type ProbeTarget struct {
 
 type Service struct {
 	repo       Repository
+	notifier   Notifier
 	now        func() time.Time
 	httpClient *http.Client
 }
 
 func NewService(repo Repository) *Service {
+	return NewServiceWithNotifier(repo, nil)
+}
+
+func NewServiceWithNotifier(repo Repository, notifier Notifier) *Service {
 	return &Service{
 		repo:       repo,
+		notifier:   notifier,
 		now:        time.Now,
 		httpClient: &http.Client{Timeout: defaultProbeTimeout},
 	}
@@ -135,8 +148,69 @@ func (s *Service) RecordSample(ctx context.Context, in RecordSampleInput) (*Reco
 			return nil, err
 		}
 		result.Events = append(result.Events, createdEvent)
+		s.notifyHealthEvent(ctx, createdEvent, created)
 	}
 	return result, nil
+}
+
+func (s *Service) notifyHealthEvent(ctx context.Context, event *adminplusdomain.HealthEvent, sample *adminplusdomain.HealthSample) {
+	if s == nil || s.notifier == nil || event == nil {
+		return
+	}
+	if err := s.notifier.NotifyHealthEvent(ctx, event, sample); err != nil {
+		slog.Warn("admin plus health notification failed", "supplier_id", event.SupplierID, "event_id", event.ID, "type", event.Type, "err", err)
+	}
+}
+
+type FeishuNotifier struct {
+	sender *notifications.Feishu
+}
+
+func NewFeishuNotifierFromEnv(repo notifications.Repository) *FeishuNotifier {
+	sender := notifications.NewFeishuFromEnv(repo)
+	if sender == nil {
+		return nil
+	}
+	return &FeishuNotifier{sender: sender}
+}
+
+func (n *FeishuNotifier) NotifyHealthEvent(ctx context.Context, event *adminplusdomain.HealthEvent, sample *adminplusdomain.HealthSample) error {
+	if n == nil || n.sender == nil || event == nil {
+		return nil
+	}
+	return n.sender.SendEvent(ctx, notifications.Event{
+		Type:           "health." + string(event.Type),
+		ID:             event.ID,
+		SupplierID:     event.SupplierID,
+		ThrottleKey:    fmt.Sprintf("supplier:%d:model:%s:type:%s", event.SupplierID, event.Model, event.Type),
+		ThrottleWindow: notifications.DefaultThrottleWindow,
+		Text:           buildFeishuHealthText(event, sample),
+	})
+}
+
+func buildFeishuHealthText(event *adminplusdomain.HealthEvent, sample *adminplusdomain.HealthSample) string {
+	statusCode := event.StatusCode
+	source := "-"
+	capturedAt := event.CreatedAt
+	if sample != nil {
+		source = sample.Source
+		capturedAt = sample.CapturedAt
+		if statusCode == 0 {
+			statusCode = sample.StatusCode
+		}
+	}
+	return fmt.Sprintf(
+		"【Sub2API Admin Plus 健康通知】\n供应商ID：%d\n模型：%s\n事件：%s\n观测值：%d\n阈值：%d\nHTTP：%d\n错误：%s\n来源：%s\n时间：%s",
+		event.SupplierID,
+		event.Model,
+		event.Type,
+		event.ObservedValue,
+		event.ThresholdValue,
+		statusCode,
+		event.ErrorClass,
+		source,
+		capturedAt.Format(time.RFC3339),
+	)
 }
 
 func (s *Service) ListSamples(ctx context.Context, filter SampleFilter) ([]*adminplusdomain.HealthSample, error) {

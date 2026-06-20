@@ -2,10 +2,16 @@ package reconciliation
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
@@ -22,13 +28,23 @@ type RunResult struct {
 	Summary adminplusdomain.ReconciliationSummary `json:"summary"`
 }
 
-type Service struct{}
-
-func NewService() *Service {
-	return &Service{}
+type Notifier interface {
+	NotifyReconciliationAnomaly(ctx context.Context, in RunInput, result *RunResult) error
 }
 
-func (s *Service) Run(_ context.Context, in RunInput) (*RunResult, error) {
+type Service struct {
+	notifier Notifier
+}
+
+func NewService() *Service {
+	return NewServiceWithNotifier(nil)
+}
+
+func NewServiceWithNotifier(notifier Notifier) *Service {
+	return &Service{notifier: notifier}
+}
+
+func (s *Service) Run(ctx context.Context, in RunInput) (*RunResult, error) {
 	if len(in.SupplierBills) == 0 && len(in.LocalUsages) == 0 {
 		return nil, badRequest("RECONCILIATION_INPUT_REQUIRED", "supplier bills or local usages are required")
 	}
@@ -63,10 +79,208 @@ func (s *Service) Run(_ context.Context, in RunInput) (*RunResult, error) {
 		}
 		lines = append(lines, localOnlyLine(usage))
 	}
-	return &RunResult{
+	result := &RunResult{
 		Lines:   lines,
 		Summary: summarize(lines, len(in.SupplierBills), len(in.LocalUsages)),
-	}, nil
+	}
+	s.notifyReconciliationAnomaly(ctx, in, result)
+	return result, nil
+}
+
+func (s *Service) notifyReconciliationAnomaly(ctx context.Context, in RunInput, result *RunResult) {
+	if s == nil || s.notifier == nil || result == nil || !hasReconciliationAnomaly(result) {
+		return
+	}
+	if err := s.notifier.NotifyReconciliationAnomaly(ctx, in, result); err != nil {
+		slog.Warn("admin plus reconciliation notification failed", "err", err)
+	}
+}
+
+type FeishuNotifier struct {
+	sender *notifications.Feishu
+}
+
+func NewFeishuNotifierFromEnv(repo notifications.Repository) *FeishuNotifier {
+	sender := notifications.NewFeishuFromEnv(repo)
+	if sender == nil {
+		return nil
+	}
+	return &FeishuNotifier{sender: sender}
+}
+
+func (n *FeishuNotifier) NotifyReconciliationAnomaly(ctx context.Context, in RunInput, result *RunResult) error {
+	if n == nil || n.sender == nil || result == nil || !hasReconciliationAnomaly(result) {
+		return nil
+	}
+	eventID, dedupeKey := buildReconciliationEventIdentity(in, result)
+	return n.sender.SendEvent(ctx, notifications.Event{
+		Type:           "reconciliation.anomaly",
+		ID:             eventID,
+		SupplierID:     singleSupplierID(in.SupplierBills),
+		DedupeKey:      dedupeKey,
+		ThrottleKey:    "anomaly",
+		ThrottleWindow: notifications.DefaultThrottleWindow,
+		Text:           buildFeishuReconciliationText(result),
+	})
+}
+
+func hasReconciliationAnomaly(result *RunResult) bool {
+	if result == nil {
+		return false
+	}
+	if result.Summary.ProfitCents < 0 {
+		return true
+	}
+	for _, line := range result.Lines {
+		if line == nil {
+			continue
+		}
+		if line.Status != adminplusdomain.ReconciliationStatusMatched {
+			return true
+		}
+	}
+	return false
+}
+
+func buildFeishuReconciliationText(result *RunResult) string {
+	if result == nil {
+		return ""
+	}
+	statusCounts := reconciliationStatusCounts(result.Lines)
+	currency := firstLineCurrency(result.Lines)
+	return fmt.Sprintf(
+		"【Sub2API Admin Plus 对账异常通知】\n供应商账单：%d\n本地用量：%d\n匹配：%d\n供应商单边：%d\n本地单边：%d\n币种不一致：%d\n成本异常：%d\n成本：%s\n收入：%s\n利润：%s\n利润率：%s",
+		result.Summary.TotalSupplierLines,
+		result.Summary.TotalLocalLines,
+		result.Summary.MatchedLines,
+		statusCounts[adminplusdomain.ReconciliationStatusSupplierOnly],
+		statusCounts[adminplusdomain.ReconciliationStatusLocalOnly],
+		statusCounts[adminplusdomain.ReconciliationStatusCurrencyMismatch],
+		statusCounts[adminplusdomain.ReconciliationStatusCostMismatch],
+		formatReconCents(result.Summary.CostCents, currency),
+		formatReconCents(result.Summary.RevenueCents, currency),
+		formatReconCents(result.Summary.ProfitCents, currency),
+		formatReconPercent(result.Summary.ProfitMargin),
+	)
+}
+
+func buildReconciliationEventIdentity(in RunInput, result *RunResult) (int64, string) {
+	digest := sha256.Sum256([]byte(reconciliationIdentitySeed(in, result)))
+	value := int64(binary.BigEndian.Uint64(digest[:8]) & 0x7fffffffffffffff)
+	if value == 0 {
+		value = 1
+	}
+	return value, fmt.Sprintf("feishu:reconciliation.anomaly:%x", digest[:16])
+}
+
+func reconciliationIdentitySeed(in RunInput, result *RunResult) string {
+	parts := make([]string, 0, len(in.SupplierBills)+len(in.LocalUsages)+len(result.Lines)+1)
+	parts = append(parts, fmt.Sprintf("summary:%d:%d:%d:%d:%d:%d",
+		result.Summary.TotalSupplierLines,
+		result.Summary.TotalLocalLines,
+		result.Summary.CostCents,
+		result.Summary.RevenueCents,
+		result.Summary.ProfitCents,
+		result.Summary.MatchedLines,
+	))
+	for _, bill := range in.SupplierBills {
+		if bill == nil {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("bill:%d:%d:%s:%s:%s:%d:%s",
+			bill.ID,
+			bill.SupplierID,
+			normalizeKey(bill.ExternalRequestID),
+			normalizeKey(bill.Model),
+			normalizeCurrency(bill.Currency),
+			bill.CostCents,
+			bill.StartedAt.UTC().Format(time.RFC3339Nano),
+		))
+	}
+	for _, usage := range in.LocalUsages {
+		if usage == nil {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("usage:%d:%s:%s:%s:%d:%s",
+			usage.ID,
+			normalizeKey(usage.ExternalRequestID),
+			normalizeKey(usage.Model),
+			normalizeCurrency(usage.Currency),
+			usage.RevenueCents,
+			usage.StartedAt.UTC().Format(time.RFC3339Nano),
+		))
+	}
+	for _, line := range result.Lines {
+		if line == nil || line.Status == adminplusdomain.ReconciliationStatusMatched {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("line:%s:%d:%d:%s:%s:%d:%d",
+			line.Status,
+			line.SupplierBillID,
+			line.LocalUsageID,
+			normalizeKey(line.ExternalRequestID),
+			normalizeKey(line.Model),
+			line.CostCents,
+			line.RevenueCents,
+		))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "|")
+}
+
+func reconciliationStatusCounts(lines []*adminplusdomain.ReconciliationLine) map[adminplusdomain.ReconciliationStatus]int64 {
+	counts := make(map[adminplusdomain.ReconciliationStatus]int64)
+	for _, line := range lines {
+		if line == nil {
+			continue
+		}
+		counts[line.Status]++
+	}
+	return counts
+}
+
+func singleSupplierID(bills []*adminplusdomain.SupplierBillLine) int64 {
+	var supplierID int64
+	for _, bill := range bills {
+		if bill == nil || bill.SupplierID <= 0 {
+			continue
+		}
+		if supplierID == 0 {
+			supplierID = bill.SupplierID
+			continue
+		}
+		if supplierID != bill.SupplierID {
+			return 0
+		}
+	}
+	return supplierID
+}
+
+func firstLineCurrency(lines []*adminplusdomain.ReconciliationLine) string {
+	for _, line := range lines {
+		if line == nil {
+			continue
+		}
+		return normalizeCurrency(line.Currency)
+	}
+	return "USD"
+}
+
+func formatReconCents(cents int64, currency string) string {
+	sign := ""
+	value := cents
+	if value < 0 {
+		sign = "-"
+		value = -value
+	}
+	return fmt.Sprintf("%s%.2f %s", sign, float64(value)/100, normalizeCurrency(currency))
+}
+
+func formatReconPercent(value *float64) string {
+	if value == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%.2f%%", *value*100)
 }
 
 type localIndexes struct {

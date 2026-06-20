@@ -8,11 +8,21 @@ type SupplierBillLine struct {
 	Source            string         `json:"source"`
 	ExternalBillID    string         `json:"external_bill_id,omitempty"`
 	ExternalRequestID string         `json:"external_request_id,omitempty"`
+	APIKeyName        string         `json:"api_key_name,omitempty"`
 	Model             string         `json:"model"`
+	Endpoint          string         `json:"endpoint,omitempty"`
+	RequestType       string         `json:"request_type,omitempty"`
+	BillingMode       string         `json:"billing_mode,omitempty"`
+	ReasoningEffort   string         `json:"reasoning_effort,omitempty"`
 	Currency          string         `json:"currency"`
 	CostCents         int64          `json:"cost_cents"`
 	InputTokens       int64          `json:"input_tokens"`
 	OutputTokens      int64          `json:"output_tokens"`
+	CacheReadTokens   int64          `json:"cache_read_tokens"`
+	TotalTokens       int64          `json:"total_tokens"`
+	FirstTokenMS      int64          `json:"first_token_ms"`
+	DurationMS        int64          `json:"duration_ms"`
+	UserAgent         string         `json:"user_agent,omitempty"`
 	StartedAt         time.Time      `json:"started_at"`
 	EndedAt           *time.Time     `json:"ended_at,omitempty"`
 	RawPayload        map[string]any `json:"raw_payload,omitempty"`

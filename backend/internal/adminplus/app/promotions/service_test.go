@@ -13,7 +13,8 @@ import (
 
 func TestServiceRecordPromotionRecommendsRechargeForEmptySupplier(t *testing.T) {
 	repo := newFakePromotionRepository()
-	svc := NewService(repo)
+	notifier := &fakePromotionNotifier{}
+	svc := NewServiceWithNotifier(repo, notifier)
 	bonus := 20.0
 
 	event, err := svc.RecordPromotion(context.Background(), RecordPromotionInput{
@@ -32,6 +33,8 @@ func TestServiceRecordPromotionRecommendsRechargeForEmptySupplier(t *testing.T) 
 	require.False(t, event.SwitchEligible)
 	require.Equal(t, "USD", event.Currency)
 	require.Equal(t, adminplusdomain.PromotionStatusOpen, event.Status)
+	require.Len(t, notifier.events, 1)
+	require.Equal(t, event.ID, notifier.events[0].ID)
 }
 
 func TestServiceRecordPromotionMarksSwitchCandidateWhenBalanceIsUsable(t *testing.T) {
@@ -108,6 +111,15 @@ func TestServiceRecordPromotionValidatesTimeRange(t *testing.T) {
 type fakePromotionRepository struct {
 	nextEventID int64
 	events      []*adminplusdomain.PromotionEvent
+}
+
+type fakePromotionNotifier struct {
+	events []*adminplusdomain.PromotionEvent
+}
+
+func (n *fakePromotionNotifier) NotifyPromotion(_ context.Context, event *adminplusdomain.PromotionEvent) error {
+	n.events = append(n.events, clonePromotionEvent(event))
+	return nil
 }
 
 func newFakePromotionRepository() *fakePromotionRepository {

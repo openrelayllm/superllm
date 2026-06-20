@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "Sub2API Admin Plus Operator",
+  "name": "Sub2API Plus Session Capture",
   "version": "0.1.0",
-  "description": "Execute Admin Plus supplier collection tasks from browser sessions.",
+  "description": "Capture supplier browser sessions and report them to Sub2API Plus.",
   "permissions": [
     "storage",
     "tabs",
-    "scripting"
+    "scripting",
+    "cookies"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -16,7 +17,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Admin Plus Operator",
+    "default_title": "Sub2API Plus Session Capture",
     "default_popup": "src/popup.html"
   },
   "content_scripts": [
@@ -25,7 +26,6 @@
         "<all_urls>"
       ],
       "js": [
-        "src/content/parser.js",
         "src/content/sub2api.js"
       ],
       "run_at": "document_idle"

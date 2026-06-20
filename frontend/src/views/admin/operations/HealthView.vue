@@ -162,6 +162,14 @@
                 </tbody>
               </table>
             </div>
+            <Pagination
+              v-if="samplePagination.total > 0"
+              :page="samplePagination.page"
+              :total="samplePagination.total"
+              :page-size="samplePagination.page_size"
+              @update:page="handleSamplePageChange"
+              @update:pageSize="handleSamplePageSizeChange"
+            />
           </div>
 
           <div class="card overflow-hidden">
@@ -188,6 +196,14 @@
                 </div>
               </div>
             </div>
+            <Pagination
+              v-if="eventPagination.total > 0"
+              :page="eventPagination.page"
+              :total="eventPagination.total"
+              :page-size="eventPagination.page_size"
+              @update:page="handleEventPageChange"
+              @update:pageSize="handleEventPageSizeChange"
+            />
           </div>
         </div>
       </section>
@@ -199,6 +215,8 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useAppStore } from '@/stores/app'
 import {
   acknowledgeHealthEvent,
@@ -223,6 +241,8 @@ const supplierAccounts = ref<SupplierAccount[]>([])
 const samples = ref<HealthSample[]>([])
 const events = ref<HealthEvent[]>([])
 const lastProbe = ref<{ sample: HealthSample; events: HealthEvent[] } | null>(null)
+const samplePagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0, pages: 0 })
+const eventPagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0, pages: 0 })
 
 const form = reactive({
   supplier_id: 0,
@@ -321,12 +341,20 @@ async function loadPage() {
   try {
     const [supplierResult, sampleResult, eventResult] = await Promise.all([
       listSuppliers(),
-      listHealthSamples({ limit: 100 }),
-      listHealthEvents({ limit: 100 })
+      listHealthSamples({ page: samplePagination.page, page_size: samplePagination.page_size }),
+      listHealthEvents({ page: eventPagination.page, page_size: eventPagination.page_size })
     ])
     suppliers.value = supplierResult.items
     samples.value = sampleResult.items
     events.value = eventResult.items
+    samplePagination.total = sampleResult.total || 0
+    samplePagination.pages = sampleResult.pages || 0
+    samplePagination.page = sampleResult.page || samplePagination.page
+    samplePagination.page_size = sampleResult.page_size || samplePagination.page_size
+    eventPagination.total = eventResult.total || 0
+    eventPagination.pages = eventResult.pages || 0
+    eventPagination.page = eventResult.page || eventPagination.page
+    eventPagination.page_size = eventResult.page_size || eventPagination.page_size
     if (!form.supplier_id && suppliers.value[0]) {
       form.supplier_id = suppliers.value[0].id
     } else if (form.supplier_id) {
@@ -337,6 +365,28 @@ async function loadPage() {
   } finally {
     loading.value = false
   }
+}
+
+function handleSamplePageChange(page: number) {
+  samplePagination.page = page
+  void loadPage()
+}
+
+function handleSamplePageSizeChange(pageSize: number) {
+  samplePagination.page_size = pageSize
+  samplePagination.page = 1
+  void loadPage()
+}
+
+function handleEventPageChange(page: number) {
+  eventPagination.page = page
+  void loadPage()
+}
+
+function handleEventPageSizeChange(pageSize: number) {
+  eventPagination.page_size = pageSize
+  eventPagination.page = 1
+  void loadPage()
 }
 
 async function runProbe() {

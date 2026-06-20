@@ -80,15 +80,25 @@
             </div>
           </div>
         </div>
+        <Pagination
+          v-if="pagination.total > 0"
+          :page="pagination.page"
+          :total="pagination.total"
+          :page-size="pagination.page_size"
+          @update:page="handlePageChange"
+          @update:pageSize="handlePageSizeChange"
+        />
       </section>
     </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useAppStore } from '@/stores/app'
 import {
   generateActions,
@@ -118,6 +128,7 @@ const balanceEvents = ref<BalanceEvent[]>([])
 const promotionEvents = ref<PromotionEvent[]>([])
 const healthEvents = ref<HealthEvent[]>([])
 const recommendations = ref<ActionRecommendation[]>([])
+const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0, pages: 0 })
 
 const statuses: ActionRecommendation['status'][] = ['acknowledged', 'approved', 'executed', 'rejected']
 
@@ -159,7 +170,10 @@ async function loadPage() {
       listBalanceEvents({ limit: 100 }),
       listPromotionEvents({ limit: 100 }),
       listHealthEvents({ limit: 100 }),
-      listActionRecommendations({ limit: 100 })
+      listActionRecommendations({
+        page: pagination.page,
+        page_size: pagination.page_size
+      })
     ])
     suppliers.value = supplierResult.items
     rateSnapshots.value = rateResult.items
@@ -167,11 +181,26 @@ async function loadPage() {
     promotionEvents.value = promotionResult.items
     healthEvents.value = healthResult.items
     recommendations.value = actionResult.items
+    pagination.total = actionResult.total || 0
+    pagination.pages = actionResult.pages || 0
+    pagination.page = actionResult.page || pagination.page
+    pagination.page_size = actionResult.page_size || pagination.page_size
   } catch (error) {
     appStore.showError((error as { message?: string }).message || '加载动作建议失败')
   } finally {
     loading.value = false
   }
+}
+
+function handlePageChange(page: number) {
+  pagination.page = page
+  void loadPage()
+}
+
+function handlePageSizeChange(pageSize: number) {
+  pagination.page_size = pageSize
+  pagination.page = 1
+  void loadPage()
 }
 
 function supplierSignals(): SupplierSignal[] {

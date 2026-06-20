@@ -3,6 +3,15 @@ import { apiClient } from '../client'
 export interface AdminPlusListResponse<T> {
   items: T[]
   total: number
+  page?: number
+  page_size?: number
+  pages?: number
+}
+
+export interface AdminPlusPaginationParams {
+  page?: number
+  page_size?: number
+  limit?: number
 }
 
 export type SupplierKind = 'source_account' | 'relay' | 'browser_only' | 'custom'
@@ -39,6 +48,84 @@ export interface Supplier {
   updated_at: string
 }
 
+export interface SupplierSiteMatchRequest {
+  url?: string
+  origin?: string
+  host?: string
+  path?: string
+  title?: string
+  favicon_url?: string
+}
+
+export interface SupplierSiteMatchCandidate {
+  id: number
+  name: string
+  kind: SupplierKind
+  type: SupplierType
+  dashboard_url?: string
+  api_base_url?: string
+  match_fields?: string[]
+}
+
+export interface SupplierSiteMatchResult {
+  status: 'matched' | 'ambiguous' | 'unknown' | 'unsupported'
+  supplier_id?: number
+  supplier?: SupplierSiteMatchCandidate
+  candidates?: SupplierSiteMatchCandidate[]
+  suggested_supplier?: Partial<CreateSupplierPayload>
+}
+
+export interface SupplierBrowserSession {
+  supplier_id: number
+  origin: string
+  api_base_url?: string
+  session_summary?: Record<string, unknown>
+  captured_at?: string
+  expires_at?: string | null
+  source_extension_task_id?: number
+  created_at?: string
+  updated_at?: string
+  status: 'valid' | 'expired'
+  has_encrypted_bundle: boolean
+}
+
+export interface SupplierSessionProbeResult {
+  supplier_id: number
+  status: string
+  system_type: string
+  origin: string
+  api_base_url?: string
+  capabilities: Record<string, boolean>
+  profile?: {
+    id?: number
+    email?: string
+    username?: string
+    role?: string
+    status?: string
+    balance: number
+    concurrency?: number
+    allowed_groups?: number[]
+  }
+  balance_cents?: number
+  balance_currency?: string
+  diagnostics?: Record<string, unknown>
+  probed_at: string
+}
+
+export interface ProbeSupplierSessionResponse {
+  probe: SupplierSessionProbeResult
+  balance_snapshot?: BalanceSnapshot
+  balance_event?: BalanceEvent | null
+}
+
+export interface UpsertSupplierBrowserSessionPayload {
+  origin: string
+  api_base_url?: string
+  captured_at?: string
+  expires_at?: string | null
+  session_bundle: Record<string, unknown>
+}
+
 export interface CreateSupplierPayload {
   name: string
   kind: SupplierKind
@@ -58,6 +145,8 @@ export interface CreateSupplierPayload {
   balance_cents?: number
   balance_currency?: string
 }
+
+export type UpdateSupplierPayload = CreateSupplierPayload
 
 export interface UpdateSupplierStatusPayload {
   runtime_status: SupplierRuntimeStatus
@@ -108,12 +197,15 @@ export interface CreateSupplierAccountPayload {
   project_id?: string
   rate_profile?: string
   configured_concurrency?: number
+  observed_max_concurrency?: number
   balance_threshold_cents?: number
   balance_cents?: number
   balance_currency?: string
   runtime_status?: SupplierRuntimeStatus
   health_status?: SupplierHealthStatus
 }
+
+export type UpdateSupplierAccountPayload = Omit<CreateSupplierAccountPayload, 'local_sub2api_account_id'>
 
 export interface RateSnapshotEntryPayload {
   model: string
@@ -261,11 +353,21 @@ export interface SupplierBillLine {
   source: string
   external_bill_id?: string
   external_request_id?: string
+  api_key_name?: string
   model: string
+  endpoint?: string
+  request_type?: string
+  billing_mode?: string
+  reasoning_effort?: string
   currency: string
   cost_cents: number
   input_tokens: number
   output_tokens: number
+  cache_read_tokens: number
+  total_tokens: number
+  first_token_ms: number
+  duration_ms: number
+  user_agent?: string
   started_at: string
   ended_at?: string | null
   raw_payload?: Record<string, unknown>
@@ -360,7 +462,7 @@ export interface ReconciliationResult {
 export interface ExtensionTask {
   id: number
   supplier_id: number
-  type: 'fetch_rates' | 'fetch_balance' | 'fetch_promotions' | 'export_bills' | 'fetch_health'
+  type: 'fetch_rates' | 'fetch_groups' | 'fetch_balance' | 'fetch_promotions' | 'export_bills' | 'fetch_health' | 'capture_supplier_session'
   schedule_key?: string
   status: 'pending' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled'
   priority: number
@@ -407,10 +509,12 @@ export interface ScheduledTask {
 export interface SchedulerRun {
   run_id: string
   mode: string
+  dry_run: boolean
   requested_at: string
   task_types: ExtensionTaskType[]
   created_count: number
   skipped_count: number
+  eligible_count: number
   items: ScheduledTask[]
 }
 
@@ -418,6 +522,14 @@ export interface SchedulerStatus {
   enabled: boolean
   interval_seconds: number
   queue: string
+}
+
+export interface ExtensionManifestInfo {
+  name: string
+  version: string
+  description: string
+  permissions: string[]
+  path: string
 }
 
 export interface ActionRecommendation {
@@ -436,6 +548,22 @@ export interface ActionRecommendation {
   created_at: string
 }
 
+export interface NotificationDelivery {
+  id: number
+  channel: 'feishu'
+  event_type: string
+  event_id: number
+  supplier_id: number
+  dedupe_key: string
+  status: 'sending' | 'succeeded' | 'failed'
+  attempts: number
+  last_error?: string
+  payload?: Record<string, unknown>
+  sent_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface SupplierSignal {
   supplier_id: number
   name?: string
@@ -446,7 +574,7 @@ export interface SupplierSignal {
   effective_cost_cents: number
 }
 
-export async function listSuppliers(params?: Partial<Record<'kind' | 'type' | 'runtime_status' | 'health_status' | 'q', string>>): Promise<AdminPlusListResponse<Supplier>> {
+export async function listSuppliers(params?: Partial<Record<'kind' | 'type' | 'runtime_status' | 'health_status' | 'q', string>> & AdminPlusPaginationParams): Promise<AdminPlusListResponse<Supplier>> {
   const { data } = await apiClient.get<AdminPlusListResponse<Supplier>>('/admin-plus/suppliers', { params })
   return data
 }
@@ -456,38 +584,75 @@ export async function createSupplier(payload: CreateSupplierPayload): Promise<Su
   return data
 }
 
+export async function updateSupplier(id: number, payload: UpdateSupplierPayload): Promise<Supplier> {
+  const { data } = await apiClient.put<Supplier>(`/admin-plus/suppliers/${id}`, payload)
+  return data
+}
+
+export async function deleteSupplier(id: number): Promise<void> {
+  await apiClient.delete(`/admin-plus/suppliers/${id}`)
+}
+
 export async function updateSupplierStatus(id: number, payload: UpdateSupplierStatusPayload): Promise<Supplier> {
   const { data } = await apiClient.patch<Supplier>(`/admin-plus/suppliers/${id}/status`, payload)
   return data
 }
 
-export async function listLocalSub2APIAccounts(params?: { q?: string; limit?: number }): Promise<AdminPlusListResponse<LocalSub2APIAccount>> {
+export async function matchSupplierSite(payload: SupplierSiteMatchRequest): Promise<SupplierSiteMatchResult> {
+  const { data } = await apiClient.post<SupplierSiteMatchResult>('/admin-plus/suppliers/site-match', payload)
+  return data
+}
+
+export async function getSupplierSession(id: number): Promise<SupplierBrowserSession> {
+  const { data } = await apiClient.get<SupplierBrowserSession>(`/admin-plus/suppliers/${id}/session`)
+  return data
+}
+
+export async function probeSupplierSession(id: number, payload?: {
+  low_balance_threshold_cents?: number
+  record_balance_snapshot?: boolean
+}): Promise<ProbeSupplierSessionResponse> {
+  const { data } = await apiClient.post<ProbeSupplierSessionResponse>(`/admin-plus/suppliers/${id}/session/probe`, payload || {})
+  return data
+}
+
+export async function upsertSupplierBrowserSession(id: number, payload: UpsertSupplierBrowserSessionPayload): Promise<SupplierBrowserSession> {
+  const { data } = await apiClient.post<SupplierBrowserSession>(`/admin-plus/suppliers/${id}/browser-sessions`, payload)
+  return data
+}
+
+export async function listLocalSub2APIAccounts(params?: { q?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalSub2APIAccount>> {
   const { data } = await apiClient.get<AdminPlusListResponse<LocalSub2APIAccount>>('/admin-plus/sub2api/accounts', { params })
   return data
 }
 
-export async function listLocalUsageLines(params?: { account_id?: number; model?: string; from?: string; to?: string; limit?: number }): Promise<AdminPlusListResponse<LocalUsageLine>> {
+export async function listLocalUsageLines(params?: { account_id?: number; model?: string; from?: string; to?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalUsageLine>> {
   const { data } = await apiClient.get<AdminPlusListResponse<LocalUsageLine>>('/admin-plus/sub2api/usage-lines', { params })
   return data
 }
 
-export async function listLocalUsageSummary(params?: { account_id?: number; model?: string; from?: string; to?: string; limit?: number }): Promise<AdminPlusListResponse<LocalUsageSummary>> {
+export async function listLocalUsageSummary(params?: { account_id?: number; model?: string; from?: string; to?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalUsageSummary>> {
   const { data } = await apiClient.get<AdminPlusListResponse<LocalUsageSummary>>('/admin-plus/sub2api/usage-summary', { params })
   return data
 }
 
-export async function listLocalAccountRuntime(params?: { account_id?: number; q?: string; limit?: number }): Promise<AdminPlusListResponse<LocalAccountRuntime>> {
+export async function listLocalAccountRuntime(params?: { account_id?: number; q?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalAccountRuntime>> {
   const { data } = await apiClient.get<AdminPlusListResponse<LocalAccountRuntime>>('/admin-plus/sub2api/account-runtime', { params })
   return data
 }
 
-export async function listSupplierAccounts(supplierId: number): Promise<AdminPlusListResponse<SupplierAccount>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<SupplierAccount>>(`/admin-plus/suppliers/${supplierId}/accounts`)
+export async function listSupplierAccounts(supplierId: number, params?: AdminPlusPaginationParams): Promise<AdminPlusListResponse<SupplierAccount>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<SupplierAccount>>(`/admin-plus/suppliers/${supplierId}/accounts`, { params })
   return data
 }
 
 export async function createSupplierAccount(supplierId: number, payload: CreateSupplierAccountPayload): Promise<SupplierAccount> {
   const { data } = await apiClient.post<SupplierAccount>(`/admin-plus/suppliers/${supplierId}/accounts`, payload)
+  return data
+}
+
+export async function updateSupplierAccount(supplierId: number, accountId: number, payload: UpdateSupplierAccountPayload): Promise<SupplierAccount> {
+  const { data } = await apiClient.put<SupplierAccount>(`/admin-plus/suppliers/${supplierId}/accounts/${accountId}`, payload)
   return data
 }
 
@@ -505,12 +670,12 @@ export async function recordRateSnapshot(payload: {
   return data
 }
 
-export async function listRateSnapshots(params?: { supplier_id?: number; model?: string; limit?: number }) {
+export async function listRateSnapshots(params?: { supplier_id?: number; model?: string } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<RateSnapshot>>('/admin-plus/rates/snapshots', { params })
   return data
 }
 
-export async function listRateEvents(params?: { supplier_id?: number; status?: string; limit?: number }) {
+export async function listRateEvents(params?: { supplier_id?: number; status?: string } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<RateChangeEvent>>('/admin-plus/rates/events', { params })
   return data
 }
@@ -533,12 +698,12 @@ export async function recordBalanceSnapshot(payload: {
   return data
 }
 
-export async function listBalanceSnapshots(params?: { supplier_id?: number; limit?: number }) {
+export async function listBalanceSnapshots(params?: { supplier_id?: number } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<BalanceSnapshot>>('/admin-plus/balances/snapshots', { params })
   return data
 }
 
-export async function listBalanceEvents(params?: { supplier_id?: number; status?: string; limit?: number }) {
+export async function listBalanceEvents(params?: { supplier_id?: number; status?: string } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<BalanceEvent>>('/admin-plus/balances/events', { params })
   return data
 }
@@ -566,7 +731,7 @@ export async function recordPromotion(payload: {
   return data
 }
 
-export async function listPromotionEvents(params?: { supplier_id?: number; status?: string; recommendation?: string; limit?: number }) {
+export async function listPromotionEvents(params?: { supplier_id?: number; status?: string; recommendation?: string } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<PromotionEvent>>('/admin-plus/promotions', { params })
   return data
 }
@@ -601,12 +766,12 @@ export async function probeOpenAIResponsesHealth(payload: ProbeOpenAIResponsesHe
   return data
 }
 
-export async function listHealthSamples(params?: { supplier_id?: number; model?: string; limit?: number }) {
+export async function listHealthSamples(params?: { supplier_id?: number; model?: string } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<HealthSample>>('/admin-plus/health/samples', { params })
   return data
 }
 
-export async function listHealthEvents(params?: { supplier_id?: number; status?: string; type?: string; limit?: number }) {
+export async function listHealthEvents(params?: { supplier_id?: number; status?: string; type?: string } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<HealthEvent>>('/admin-plus/health/events', { params })
   return data
 }
@@ -621,7 +786,7 @@ export async function importBillLines(lines: Array<Omit<SupplierBillLine, 'id' |
   return data
 }
 
-export async function listBillLines(params?: { supplier_id?: number; limit?: number }) {
+export async function listBillLines(params?: { supplier_id?: number } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<SupplierBillLine>>('/admin-plus/billing/lines', { params })
   return data
 }
@@ -647,8 +812,29 @@ export async function createExtensionTask(payload: {
   return data
 }
 
-export async function listExtensionTasks(params?: { supplier_id?: number; status?: string; type?: string; limit?: number }) {
+export async function listExtensionTasks(params?: { supplier_id?: number; status?: string; type?: string } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<ExtensionTask>>('/admin-plus/extension/tasks', { params })
+  return data
+}
+
+export async function getExtensionManifest(): Promise<ExtensionManifestInfo> {
+  const { data } = await apiClient.get<ExtensionManifestInfo>('/admin-plus/extension/manifest')
+  return data
+}
+
+export function extensionPackageURL(adminPlusOrigin?: string): string {
+  const baseURL = apiClient.defaults.baseURL || '/api/v1'
+  const packageURL = `${String(baseURL).replace(/\/+$/, '')}/admin-plus/extension/package.zip`
+  if (!adminPlusOrigin) return packageURL
+  const separator = packageURL.includes('?') ? '&' : '?'
+  return `${packageURL}${separator}admin_plus_origin=${encodeURIComponent(adminPlusOrigin)}`
+}
+
+export async function downloadExtensionPackage(adminPlusOrigin?: string): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>('/admin-plus/extension/package.zip', {
+    params: adminPlusOrigin ? { admin_plus_origin: adminPlusOrigin } : undefined,
+    responseType: 'blob'
+  })
   return data
 }
 
@@ -662,6 +848,7 @@ export async function runScheduler(payload: {
   supplier_id?: number
   task_types?: ExtensionTaskType[]
   window_minutes?: number
+  dry_run?: boolean
 }): Promise<SchedulerRun> {
   const { data } = await apiClient.post<SchedulerRun>('/admin-plus/scheduler/run', payload)
   return data
@@ -720,7 +907,7 @@ export async function generateActions(payload: {
   return data
 }
 
-export async function listActionRecommendations(params?: { supplier_id?: number; status?: string; severity?: string; type?: string; limit?: number }) {
+export async function listActionRecommendations(params?: { supplier_id?: number; status?: string; severity?: string; type?: string } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<ActionRecommendation>>('/admin-plus/actions/recommendations', { params })
   return data
 }
@@ -730,15 +917,27 @@ export async function updateActionRecommendationStatus(id: number, status: Actio
   return data
 }
 
+export async function listNotificationDeliveries(params?: { supplier_id?: number; status?: string; channel?: string; event_type?: string } & AdminPlusPaginationParams) {
+  const { data } = await apiClient.get<AdminPlusListResponse<NotificationDelivery>>('/admin-plus/notifications/deliveries', { params })
+  return data
+}
+
 export const adminPlusAPI = {
   listSuppliers,
   createSupplier,
+  updateSupplier,
+  deleteSupplier,
   updateSupplierStatus,
+  matchSupplierSite,
+  getSupplierSession,
+  probeSupplierSession,
+  upsertSupplierBrowserSession,
   listLocalSub2APIAccounts,
   listLocalUsageLines,
   listLocalUsageSummary,
   listSupplierAccounts,
   createSupplierAccount,
+  updateSupplierAccount,
   deleteSupplierAccount,
   recordRateSnapshot,
   listRateSnapshots,
@@ -761,6 +960,9 @@ export const adminPlusAPI = {
   runReconciliation,
   createExtensionTask,
   listExtensionTasks,
+  getExtensionManifest,
+  extensionPackageURL,
+  downloadExtensionPackage,
   getSchedulerStatus,
   runScheduler,
   claimExtensionTask,
@@ -770,7 +972,8 @@ export const adminPlusAPI = {
   failExtensionTask,
   generateActions,
   listActionRecommendations,
-  updateActionRecommendationStatus
+  updateActionRecommendationStatus,
+  listNotificationDeliveries
 }
 
 export default adminPlusAPI

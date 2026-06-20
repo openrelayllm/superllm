@@ -9,16 +9,20 @@ package main
 import (
 	"context"
 	"github.com/Wei-Shaw/sub2api/ent"
+	provider "github.com/Wei-Shaw/sub2api/internal/adminplus/adapters/sub2api/provider"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/billing"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/promotions"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/reconciliation"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -122,39 +126,52 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	sqlRepository := suppliers.NewSQLRepositoryWithCipher(db, readDB, credentialCipher)
 	suppliersService := suppliers.NewService(sqlRepository)
 	supplierHandler := adminplus.NewSupplierHandler(suppliersService)
+	notificationsSQLRepository := notifications.NewSQLRepository(db)
 	ratesSQLRepository := rates.NewSQLRepository(db)
-	ratesService := rates.NewService(ratesSQLRepository)
+	ratesFeishuNotifier := rates.NewFeishuNotifierFromEnv(notificationsSQLRepository)
+	ratesService := rates.NewServiceWithNotifier(ratesSQLRepository, ratesFeishuNotifier)
 	rateHandler := adminplus.NewRateHandler(ratesService)
 	balancesSQLRepository := balances.NewSQLRepository(db)
-	feishuNotifier := balances.NewFeishuNotifierFromEnv()
+	feishuNotifier := balances.NewFeishuNotifierFromEnv(notificationsSQLRepository)
 	balancesService := balances.NewServiceWithNotifier(balancesSQLRepository, feishuNotifier)
 	balanceHandler := adminplus.NewBalanceHandler(balancesService)
 	promotionsSQLRepository := promotions.NewSQLRepository(db)
-	promotionsService := promotions.NewService(promotionsSQLRepository)
+	promotionsFeishuNotifier := promotions.NewFeishuNotifierFromEnv(notificationsSQLRepository)
+	promotionsService := promotions.NewServiceWithNotifier(promotionsSQLRepository, promotionsFeishuNotifier)
 	promotionHandler := adminplus.NewPromotionHandler(promotionsService)
 	healthSQLRepository := health.NewSQLRepository(db)
-	healthService := health.NewService(healthSQLRepository)
+	healthFeishuNotifier := health.NewFeishuNotifierFromEnv(notificationsSQLRepository)
+	healthService := health.NewServiceWithNotifier(healthSQLRepository, healthFeishuNotifier)
 	healthHandler := adminplus.NewHealthHandler(healthService)
+	notificationHandler := adminplus.NewNotificationHandler(notificationsSQLRepository)
 	billingSQLRepository := billing.NewSQLRepository(db)
 	billingService := billing.NewService(billingSQLRepository)
 	billingHandler := adminplus.NewBillingHandler(billingService)
+	sessionsSQLRepository := sessions.NewSQLRepository(db)
+	sessionProfileClient := provider.NewSessionProfileClient(nil)
+	sessionsService := sessions.NewServiceWithDependencies(sessionsSQLRepository, secretEncryptor, suppliersService, sessionProfileClient)
+	suppliergroupsSQLRepository := suppliergroups.NewSQLRepository(db)
+	suppliergroupsService := suppliergroups.NewService(suppliergroupsSQLRepository, sessionsService, sessionProfileClient)
+	supplierGroupHandler := adminplus.NewSupplierGroupHandler(suppliergroupsService)
 	extensionSQLRepository := extension.NewSQLRepository(db)
-	ingestProcessor := extension.NewIngestProcessor(ratesService, balancesService, promotionsService, healthService, billingService)
+	ingestProcessor := extension.NewIngestProcessorWithCipher(ratesService, balancesService, promotionsService, healthService, billingService, sessionsService, secretEncryptor)
 	extensionService := extension.NewServiceWithDependencies(extensionSQLRepository, ingestProcessor, suppliersService)
 	extensionHandler := adminplus.NewExtensionHandler(extensionService)
+	sessionHandler := adminplus.NewSessionHandler(sessionsService, balancesService)
 	schedulerService := scheduler.NewService(suppliersService, extensionService)
 	schedulerHandler := adminplus.NewSchedulerHandler(schedulerService)
 	actionsSQLRepository := actions.NewSQLRepository(db)
 	actionsService := actions.NewService(actionsSQLRepository)
 	actionHandler := adminplus.NewActionHandler(actionsService)
-	reconciliationService := reconciliation.NewService()
+	reconciliationFeishuNotifier := reconciliation.NewFeishuNotifierFromEnv(notificationsSQLRepository)
+	reconciliationService := reconciliation.NewServiceWithNotifier(reconciliationFeishuNotifier)
 	reconciliationHandler := adminplus.NewReconciliationHandler(reconciliationService)
 	sub2apiSQLRepository := sub2api.NewSQLRepository(readDB)
 	sub2APIRedis := sub2api.ProvideReadRedis(redisClient, configConfig)
 	runtimeRepository := sub2api.NewRuntimeRepository(readDB, sub2APIRedis)
 	sub2apiService := sub2api.NewService(sub2apiSQLRepository, runtimeRepository)
 	sub2APIHandler := adminplus.NewSub2APIHandler(sub2apiService)
-	adminPlusHandlers := handler.ProvideAdminPlusHandlers(supplierHandler, rateHandler, balanceHandler, promotionHandler, healthHandler, billingHandler, extensionHandler, schedulerHandler, actionHandler, reconciliationHandler, sub2APIHandler)
+	adminPlusHandlers := handler.ProvideAdminPlusHandlers(supplierHandler, supplierGroupHandler, rateHandler, balanceHandler, promotionHandler, healthHandler, notificationHandler, billingHandler, extensionHandler, sessionHandler, schedulerHandler, actionHandler, reconciliationHandler, sub2APIHandler)
 	notificationEmailService := service.NewNotificationEmailService(settingRepository, emailService)
 	handlerSettingHandler := handler.ProvideSettingHandler(settingService, buildInfo, notificationEmailService)
 	handlers := handler.ProvideHandlers(authHandler, adminHandlers, adminPlusHandlers, handlerSettingHandler)

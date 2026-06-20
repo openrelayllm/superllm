@@ -1,5 +1,9 @@
 # Payment System Configuration Guide
 
+> Admin Plus note: this file is inherited from the upstream Sub2API copy baseline.
+> It documents Sub2API's original payment system and is kept as reference only.
+> Payment is not part of the current Sub2API Admin Plus MVP scope.
+
 Sub2API has a built-in payment system that enables user self-service top-up without deploying a separate payment service.
 
 ---

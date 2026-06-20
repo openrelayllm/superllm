@@ -1,5 +1,8 @@
 # 支付系统配置指南
 
+> Admin Plus 说明：本文档来自上游 Sub2API 复制基线，只作为 Sub2API 原支付系统参考保留。
+> 支付系统不属于当前 Sub2API Admin Plus MVP 范围。
+
 Sub2API 内置支付系统，支持用户自助充值，无需部署独立的支付服务。
 
 ---

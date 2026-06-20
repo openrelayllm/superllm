@@ -16,8 +16,10 @@ type MemoryRepository struct {
 	mu            sync.RWMutex
 	nextID        int64
 	nextAccountID int64
+	nextGroupID   int64
 	suppliers     map[int64]*adminplusdomain.Supplier
 	accounts      map[int64]*adminplusdomain.SupplierAccount
+	groups        map[int64]*adminplusdomain.SupplierGroup
 	localAccounts map[int64]*adminplusdomain.LocalSub2APIAccount
 }
 
@@ -25,8 +27,10 @@ func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
 		nextID:        1,
 		nextAccountID: 1,
+		nextGroupID:   1,
 		suppliers:     make(map[int64]*adminplusdomain.Supplier),
 		accounts:      make(map[int64]*adminplusdomain.SupplierAccount),
+		groups:        make(map[int64]*adminplusdomain.SupplierGroup),
 		localAccounts: map[int64]*adminplusdomain.LocalSub2APIAccount{
 			1: {
 				ID:             1,
@@ -106,6 +110,30 @@ func (r *MemoryRepository) List(_ context.Context, filter SupplierFilter) ([]*ad
 	return items, nil
 }
 
+func (r *MemoryRepository) Update(_ context.Context, supplier *adminplusdomain.Supplier) (*adminplusdomain.Supplier, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	existing, ok := r.suppliers[supplier.ID]
+	if !ok {
+		return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_NOT_FOUND", "supplier not found")
+	}
+	cp := cloneSupplier(supplier)
+	cp.ID = existing.ID
+	cp.CreatedAt = existing.CreatedAt
+	if cp.BrowserLoginUsername == "" {
+		cp.BrowserLoginUsername = existing.BrowserLoginUsername
+	}
+	if cp.BrowserLoginPassword == "" {
+		cp.BrowserLoginPassword = existing.BrowserLoginPassword
+	}
+	if cp.BrowserLoginToken == "" {
+		cp.BrowserLoginToken = existing.BrowserLoginToken
+	}
+	r.suppliers[cp.ID] = cp
+	return cloneSupplier(cp), nil
+}
+
 func (r *MemoryRepository) UpdateStatus(_ context.Context, id int64, runtimeStatus adminplusdomain.SupplierRuntimeStatus, healthStatus adminplusdomain.SupplierHealthStatus) (*adminplusdomain.Supplier, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -118,6 +146,27 @@ func (r *MemoryRepository) UpdateStatus(_ context.Context, id int64, runtimeStat
 	supplier.HealthStatus = healthStatus
 	supplier.UpdatedAt = time.Now().UTC()
 	return cloneSupplier(supplier), nil
+}
+
+func (r *MemoryRepository) Delete(_ context.Context, id int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.suppliers[id]; !ok {
+		return infraerrors.New(http.StatusNotFound, "SUPPLIER_NOT_FOUND", "supplier not found")
+	}
+	delete(r.suppliers, id)
+	for accountID, account := range r.accounts {
+		if account.SupplierID == id {
+			delete(r.accounts, accountID)
+		}
+	}
+	for groupID, group := range r.groups {
+		if group.SupplierID == id {
+			delete(r.groups, groupID)
+		}
+	}
+	return nil
 }
 
 func (r *MemoryRepository) ListAccounts(_ context.Context, supplierID int64) ([]*adminplusdomain.SupplierAccount, error) {
@@ -162,6 +211,24 @@ func (r *MemoryRepository) CreateAccount(_ context.Context, account *adminplusdo
 	return cloneSupplierAccount(cp), nil
 }
 
+func (r *MemoryRepository) UpdateAccount(_ context.Context, account *adminplusdomain.SupplierAccount) (*adminplusdomain.SupplierAccount, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	existing, ok := r.accounts[account.ID]
+	if !ok || existing.SupplierID != account.SupplierID {
+		return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_ACCOUNT_NOT_FOUND", "supplier account binding not found")
+	}
+	cp := cloneSupplierAccount(account)
+	cp.LocalSub2APIAccountID = existing.LocalSub2APIAccountID
+	cp.LocalAccountName = existing.LocalAccountName
+	cp.LocalAccountPlatform = existing.LocalAccountPlatform
+	cp.LocalAccountType = existing.LocalAccountType
+	cp.CreatedAt = existing.CreatedAt
+	r.accounts[cp.ID] = cp
+	return cloneSupplierAccount(cp), nil
+}
+
 func (r *MemoryRepository) DeleteAccount(_ context.Context, supplierID int64, accountID int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -195,6 +262,101 @@ func (r *MemoryRepository) ListLocalAccounts(_ context.Context, query string, li
 		items = items[:limit]
 	}
 	return items, nil
+}
+
+func (r *MemoryRepository) UpsertGroups(_ context.Context, groups []*adminplusdomain.SupplierGroup) ([]*adminplusdomain.SupplierGroup, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	items := make([]*adminplusdomain.SupplierGroup, 0, len(groups))
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		if _, ok := r.suppliers[group.SupplierID]; !ok {
+			return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_NOT_FOUND", "supplier not found")
+		}
+		var existingID int64
+		for id, existing := range r.groups {
+			if existing.SupplierID == group.SupplierID && existing.ExternalGroupID == group.ExternalGroupID {
+				existingID = id
+				break
+			}
+		}
+		cp := cloneSupplierGroup(group)
+		if existingID == 0 {
+			cp.ID = r.nextGroupID
+			r.nextGroupID++
+			if cp.CreatedAt.IsZero() {
+				cp.CreatedAt = cp.UpdatedAt
+			}
+		} else {
+			existing := r.groups[existingID]
+			cp.ID = existing.ID
+			cp.CreatedAt = existing.CreatedAt
+		}
+		r.groups[cp.ID] = cp
+		items = append(items, cloneSupplierGroup(cp))
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].ID < items[j].ID
+	})
+	return items, nil
+}
+
+func (r *MemoryRepository) ListGroups(_ context.Context, supplierID int64, status adminplusdomain.SupplierGroupStatus) ([]*adminplusdomain.SupplierGroup, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if _, ok := r.suppliers[supplierID]; !ok {
+		return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_NOT_FOUND", "supplier not found")
+	}
+	items := make([]*adminplusdomain.SupplierGroup, 0)
+	for _, group := range r.groups {
+		if group.SupplierID != supplierID {
+			continue
+		}
+		if status != "" && group.Status != status {
+			continue
+		}
+		items = append(items, cloneSupplierGroup(group))
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Status == items[j].Status {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].Status < items[j].Status
+	})
+	return items, nil
+}
+
+func (r *MemoryRepository) MarkMissingGroups(_ context.Context, supplierID int64, seenExternalGroupIDs []string, missingAt time.Time) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.suppliers[supplierID]; !ok {
+		return 0, infraerrors.New(http.StatusNotFound, "SUPPLIER_NOT_FOUND", "supplier not found")
+	}
+	seen := make(map[string]struct{}, len(seenExternalGroupIDs))
+	for _, id := range seenExternalGroupIDs {
+		seen[strings.TrimSpace(id)] = struct{}{}
+	}
+	count := 0
+	for _, group := range r.groups {
+		if group.SupplierID != supplierID {
+			continue
+		}
+		if _, ok := seen[group.ExternalGroupID]; ok {
+			continue
+		}
+		if group.Status == adminplusdomain.SupplierGroupStatusMissing {
+			continue
+		}
+		group.Status = adminplusdomain.SupplierGroupStatusMissing
+		group.UpdatedAt = missingAt
+		count++
+	}
+	return count, nil
 }
 
 func matchesFilter(supplier *adminplusdomain.Supplier, filter SupplierFilter) bool {
@@ -236,5 +398,21 @@ func cloneSupplierAccount(in *adminplusdomain.SupplierAccount) *adminplusdomain.
 		return nil
 	}
 	out := *in
+	return &out
+}
+
+func cloneSupplierGroup(in *adminplusdomain.SupplierGroup) *adminplusdomain.SupplierGroup {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if len(in.RawPayload) > 0 {
+		out.RawPayload = make(map[string]any, len(in.RawPayload))
+		for key, value := range in.RawPayload {
+			out.RawPayload[key] = value
+		}
+	} else {
+		out.RawPayload = map[string]any{}
+	}
 	return &out
 }

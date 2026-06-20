@@ -1,5 +1,8 @@
 ﻿# ADMIN_PAYMENT_INTEGRATION_API
 
+> Admin Plus 说明：本文档来自上游 Sub2API 复制基线，只作为 Sub2API 原外部支付集成参考保留。
+> 支付集成不属于当前 Sub2API Admin Plus MVP 范围。
+
 > 单文件中英双语文档 / Single-file bilingual documentation (Chinese + English)
 
 ---

@@ -132,12 +132,16 @@ deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
 docs/*
+!docs/README.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/code-structure.md
 !docs/mvp0-baseline.md
 !docs/sub2api-admin-plus-prd.md
+!docs/roadmap/
+!docs/roadmap/Chrome/
+!docs/roadmap/Chrome/README.md
 !docs/legal/
 !docs/legal/*.md
 .serena/

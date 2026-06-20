@@ -20,7 +20,7 @@ Implemented:
 - Supplier account/key child bindings to local Sub2API `accounts.id`.
 - Rate, balance, health, promotion, billing, reconciliation, extension task, and action recommendation APIs.
 - OpenAI-compatible Responses health probe for bound local OpenAI accounts, defaulting to `gpt-5.5`.
-- Feishu/Lark webhook notifications for supplier balance events.
+- Feishu/Lark webhook notifications for supplier balance, rate, health, and promotion events, with SQL delivery audit, event-level dedupe, and an Admin Plus delivery log page.
 - Scheduler API and page for generating idempotent Chrome extension tasks.
 - Chrome extension task result ingestion into rate, balance, promotion, health, and billing tables.
 - Browser login credentials encrypted at rest and exposed only through a valid extension task lease.
@@ -35,7 +35,7 @@ Not implemented yet:
 
 - Supplier-specific Chrome extension adapters for stable Sub2API/New API page login, scraping, and bill export.
 - Sub2API window-cost/runtime limit adapter beyond current concurrency keys.
-- Notification and audit execution loop.
+- Notification rate-limit, multi-channel delivery, and reconciliation-alert loop.
 - Confirmed action execution through Sub2API Admin API.
 
 ## MVP 0 Rules
@@ -125,7 +125,7 @@ E2E defaults:
 - `ADMIN_PLUS_E2E_DB_URL=postgresql://root:root@127.0.0.1:5432/sub2api_admin_plus?sslmode=disable`
 - `ADMIN_PLUS_E2E_REDIS_URL=redis://127.0.0.1:6379/0`
 
-The E2E script creates `e2e-*` rows in PostgreSQL, temporary Redis runtime keys, and a local OpenAI-compatible `/v1/responses` server to verify real API/DB/Redis/HTTP probe paths. These rows, keys, and local HTTP server are test fixtures, not mock production collection or proof that a real external supplier account is usable.
+The E2E script creates `e2e-*` PostgreSQL rows, temporary Redis runtime keys, and a local OpenAI-compatible `/v1/responses` test server to verify real API/DB/Redis/HTTP probe paths. It cleans its fixtures by default. To inspect historical E2E rows without deleting them, run `node tools/cleanup-admin-plus-e2e.mjs`; set `ADMIN_PLUS_CLEAN_E2E_EXECUTE=1` only when you intentionally want to delete those test fixtures.
 
 ## Health Probe
 
@@ -133,16 +133,23 @@ The E2E script creates `e2e-*` rows in PostgreSQL, temporary Redis runtime keys,
 
 The default probe model is `gpt-5.5`. Real external probing requires a valid OpenAI-compatible key and base URL in the bound Sub2API account. Without that, only local fixture verification can pass.
 
-## Balance Notifications
+## Feishu Notifications
 
-Supplier balance events can be sent to a Feishu/Lark custom bot:
+Supplier balance, rate, health, promotion, and reconciliation anomaly events can be sent to a Feishu/Lark custom bot:
+
+```bash
+export ADMIN_PLUS_FEISHU_WEBHOOK_URL='https://open.feishu.cn/open-apis/bot/v2/hook/...'
+export ADMIN_PLUS_FEISHU_WEBHOOK_SECRET='optional-signature-secret'
+```
+
+Legacy balance-only variables are still accepted for compatibility:
 
 ```bash
 export ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_URL='https://open.feishu.cn/open-apis/bot/v2/hook/...'
 export ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_SECRET='optional-signature-secret'
 ```
 
-Notifications are emitted only when a balance event is created, for example `low_balance`, `depleted`, or `recovered`. Delivery failure is logged and does not roll back the balance snapshot or event.
+Notifications are emitted when business events are created, for example `low_balance`, `depleted`, rate increases, slow health probes, request errors, supplier promotions, or reconciliation anomalies. Each event is written to `admin_plus_notification_deliveries` before sending, so repeated delivery for the same event/channel is skipped. High-frequency rate, health, and promotion events use windowed dedupe keys to avoid alert floods. Delivery failure is logged in SQL and visible in Admin Plus without rolling back snapshots or events.
 
 ## Chrome Extension
 

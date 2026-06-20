@@ -17,39 +17,47 @@ func NewSub2APIHandler(service *sub2apiapp.Service) *Sub2APIHandler {
 }
 
 func (h *Sub2APIHandler) ListLocalUsageLines(c *gin.Context) {
+	page := parsePagination(c)
 	filter, ok := parseUsageFilter(c)
 	if !ok {
 		return
 	}
+	filter.Limit = fetchLimitForPagination(page)
 	items, err := h.service.ListLocalUsageLines(c.Request.Context(), filter)
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func (h *Sub2APIHandler) ListLocalUsageSummaries(c *gin.Context) {
+	page := parsePagination(c)
 	filter, ok := parseUsageFilter(c)
 	if !ok {
 		return
 	}
+	filter.Limit = fetchLimitForPagination(page)
 	items, err := h.service.ListLocalUsageSummaries(c.Request.Context(), filter)
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func (h *Sub2APIHandler) ListAccountRuntime(c *gin.Context) {
+	page := parsePagination(c)
 	items, err := h.service.ListAccountRuntime(c.Request.Context(), sub2apiapp.RuntimeFilter{
 		AccountID: parseInt64Query(c, "account_id"),
 		Query:     c.Query("q"),
-		Limit:     parseIntQuery(c, "limit"),
+		Limit:     fetchLimitForPagination(page),
 	})
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func parseUsageFilter(c *gin.Context) (sub2apiapp.UsageFilter, bool) {

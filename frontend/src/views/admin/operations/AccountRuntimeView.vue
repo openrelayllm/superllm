@@ -27,10 +27,10 @@
           </label>
           <label class="block md:col-span-2">
             <span class="input-label">搜索</span>
-            <input v-model.trim="filters.q" class="input" placeholder="账号名 / 平台 / ID" @keyup.enter="loadRuntime" />
+            <input v-model.trim="filters.q" class="input" placeholder="账号名 / 平台 / ID" @keyup.enter="submitFilters" />
           </label>
           <div class="flex items-end">
-            <button type="button" class="btn btn-primary w-full" :disabled="loading" @click="loadRuntime">
+            <button type="button" class="btn btn-primary w-full" :disabled="loading" @click="submitFilters">
               查询
             </button>
           </div>
@@ -118,6 +118,14 @@
             </tbody>
           </table>
         </div>
+        <Pagination
+          v-if="pagination.total > 0"
+          :page="pagination.page"
+          :total="pagination.total"
+          :page-size="pagination.page_size"
+          @update:page="handlePageChange"
+          @update:pageSize="handlePageSizeChange"
+        />
       </section>
     </div>
   </AppLayout>
@@ -127,6 +135,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useAppStore } from '@/stores/app'
 import {
   listLocalAccountRuntime,
@@ -140,6 +150,7 @@ const appStore = useAppStore()
 const loading = ref(false)
 const accounts = ref<LocalSub2APIAccount[]>([])
 const runtimeItems = ref<LocalAccountRuntime[]>([])
+const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0, pages: 0 })
 
 const filters = reactive({
   account_id: 0,
@@ -159,16 +170,37 @@ async function loadRuntime() {
       listLocalAccountRuntime({
         account_id: filters.account_id || undefined,
         q: filters.q || undefined,
-        limit: 200
+        page: pagination.page,
+        page_size: pagination.page_size
       })
     ])
     accounts.value = accountResult.items
     runtimeItems.value = runtimeResult.items
+    pagination.total = runtimeResult.total || 0
+    pagination.pages = runtimeResult.pages || 0
+    pagination.page = runtimeResult.page || pagination.page
+    pagination.page_size = runtimeResult.page_size || pagination.page_size
   } catch (error) {
     appStore.showError((error as { message?: string }).message || '加载账号运行态失败')
   } finally {
     loading.value = false
   }
+}
+
+function submitFilters() {
+  pagination.page = 1
+  void loadRuntime()
+}
+
+function handlePageChange(page: number) {
+  pagination.page = page
+  void loadRuntime()
+}
+
+function handlePageSizeChange(pageSize: number) {
+  pagination.page_size = pageSize
+  pagination.page = 1
+  void loadRuntime()
 }
 
 function platformLabel(value: string): string {

@@ -78,16 +78,18 @@ func (h *PromotionHandler) RecordPromotion(c *gin.Context) {
 }
 
 func (h *PromotionHandler) ListEvents(c *gin.Context) {
+	page := parsePagination(c)
 	items, err := h.service.ListEvents(c.Request.Context(), promotionsapp.EventFilter{
 		SupplierID:     parseInt64Query(c, "supplier_id"),
 		Status:         adminplusdomain.PromotionStatus(c.Query("status")),
 		Recommendation: adminplusdomain.PromotionRecommendation(c.Query("recommendation")),
-		Limit:          parseIntQuery(c, "limit"),
+		Limit:          fetchLimitForPagination(page),
 	})
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, gin.H{"items": items, "total": len(items)})
+	paged, total := paginateSlice(items, page)
+	response.Success(c, paginatedData(paged, total, page))
 }
 
 func (h *PromotionHandler) AcknowledgeEvent(c *gin.Context) {

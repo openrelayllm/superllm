@@ -183,7 +183,7 @@ CREATE TABLE IF NOT EXISTS admin_plus_extension_tasks (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     finished_at TIMESTAMPTZ NULL,
-    CONSTRAINT admin_plus_extension_tasks_type_check CHECK (type IN ('fetch_rates', 'fetch_balance', 'fetch_promotions', 'export_bills', 'fetch_health')),
+    CONSTRAINT admin_plus_extension_tasks_type_check CHECK (type IN ('fetch_rates', 'fetch_groups', 'fetch_balance', 'fetch_promotions', 'export_bills', 'fetch_health', 'capture_supplier_session')),
     CONSTRAINT admin_plus_extension_tasks_status_check CHECK (status IN ('pending', 'claimed', 'running', 'succeeded', 'failed', 'cancelled')),
     CONSTRAINT admin_plus_extension_tasks_attempts_check CHECK (attempts >= 0 AND max_attempts > 0)
 );

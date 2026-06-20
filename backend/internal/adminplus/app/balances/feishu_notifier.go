@@ -1,89 +1,37 @@
 package balances
 
 import (
-	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 )
 
-const (
-	envFeishuWebhookURL    = "ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_URL"
-	envFeishuWebhookSecret = "ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_SECRET"
-	defaultFeishuTimeout   = 10 * time.Second
-)
-
 type FeishuNotifier struct {
-	webhookURL string
-	secret     string
-	httpClient *http.Client
+	sender *notifications.Feishu
 }
 
-func NewFeishuNotifierFromEnv() *FeishuNotifier {
-	webhookURL := strings.TrimSpace(os.Getenv(envFeishuWebhookURL))
-	if webhookURL == "" {
+func NewFeishuNotifierFromEnv(repo notifications.Repository) *FeishuNotifier {
+	sender := notifications.NewFeishuFromEnv(repo)
+	if sender == nil {
 		return nil
 	}
-	return &FeishuNotifier{
-		webhookURL: webhookURL,
-		secret:     strings.TrimSpace(os.Getenv(envFeishuWebhookSecret)),
-		httpClient: &http.Client{Timeout: defaultFeishuTimeout},
-	}
+	return &FeishuNotifier{sender: sender}
 }
 
 func (n *FeishuNotifier) NotifyBalanceEvent(ctx context.Context, event *adminplusdomain.BalanceEvent, snapshot *adminplusdomain.BalanceSnapshot) error {
-	if n == nil || strings.TrimSpace(n.webhookURL) == "" || event == nil {
+	if n == nil || n.sender == nil || event == nil {
 		return nil
 	}
-	payload := n.buildPayload(event, snapshot)
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.webhookURL, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := n.httpClient
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("feishu webhook returned status %d", resp.StatusCode)
-	}
-	return nil
-}
-
-func (n *FeishuNotifier) buildPayload(event *adminplusdomain.BalanceEvent, snapshot *adminplusdomain.BalanceSnapshot) map[string]any {
-	text := buildFeishuBalanceText(event, snapshot)
-	payload := map[string]any{
-		"msg_type": "text",
-		"content": map[string]any{
-			"text": text,
-		},
-	}
-	if n.secret != "" {
-		timestamp := time.Now().Unix()
-		payload["timestamp"] = fmt.Sprintf("%d", timestamp)
-		payload["sign"] = feishuSign(timestamp, n.secret)
-	}
-	return payload
+	return n.sender.SendEvent(ctx, notifications.Event{
+		Type:       "balance." + string(event.Type),
+		ID:         event.ID,
+		SupplierID: event.SupplierID,
+		Text:       buildFeishuBalanceText(event, snapshot),
+	})
 }
 
 func buildFeishuBalanceText(event *adminplusdomain.BalanceEvent, snapshot *adminplusdomain.BalanceSnapshot) string {
@@ -133,10 +81,4 @@ func balanceEventLabel(eventType adminplusdomain.BalanceEventType) string {
 
 func formatBalanceCents(cents int64, currency string) string {
 	return fmt.Sprintf("%.2f %s", float64(cents)/100, strings.ToUpper(strings.TrimSpace(currency)))
-}
-
-func feishuSign(timestamp int64, secret string) string {
-	stringToSign := fmt.Sprintf("%d\n%s", timestamp, secret)
-	mac := hmac.New(sha256.New, []byte(stringToSign))
-	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }

@@ -2,6 +2,7 @@ package extension
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	promotionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/promotions"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
+	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/stretchr/testify/require"
 )
@@ -22,6 +24,7 @@ func TestCompleteTaskIngestsRateResult(t *testing.T) {
 		promotionsapp.NewService(promotionsapp.NewMemoryRepository()),
 		healthapp.NewService(healthapp.NewMemoryRepository()),
 		billingapp.NewService(billingapp.NewMemoryRepository()),
+		sessionsapp.NewService(sessionsapp.NewMemoryRepository(), stubSessionCipher{}),
 	)
 	svc := NewServiceWithResultProcessor(NewMemoryRepository(), processor)
 	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
@@ -80,6 +83,7 @@ func TestCompleteTaskIngestsBillExportResult(t *testing.T) {
 		promotionsapp.NewService(promotionsapp.NewMemoryRepository()),
 		healthapp.NewService(healthapp.NewMemoryRepository()),
 		billingapp.NewService(billRepo),
+		sessionsapp.NewService(sessionsapp.NewMemoryRepository(), stubSessionCipher{}),
 	)
 	svc := NewServiceWithResultProcessor(NewMemoryRepository(), processor)
 	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
@@ -131,6 +135,91 @@ func TestCompleteTaskIngestsBillExportResult(t *testing.T) {
 	ingest, ok := completed.Result["ingest"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, 1, ingest["bill_lines"])
+}
+
+func TestCompleteTaskEncryptsCapturedSessionBundle(t *testing.T) {
+	sessionRepo := sessionsapp.NewMemoryRepository()
+	processor := NewIngestProcessorWithCipher(
+		ratesapp.NewService(newIngestRateRepository()),
+		balancesapp.NewService(balancesapp.NewMemoryRepository()),
+		promotionsapp.NewService(promotionsapp.NewMemoryRepository()),
+		healthapp.NewService(healthapp.NewMemoryRepository()),
+		billingapp.NewService(billingapp.NewMemoryRepository()),
+		sessionsapp.NewService(sessionRepo, stubSessionCipher{}),
+		stubSessionCipher{},
+	)
+	svc := NewServiceWithResultProcessor(NewMemoryRepository(), processor)
+	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return now }
+	svc.newToken = func() (string, error) { return "lease-token", nil }
+
+	task, err := svc.CreateLeasedTask(context.Background(), CreateLeasedTaskInput{
+		SupplierID: 7,
+		Type:       adminplusdomain.ExtensionTaskTypeCaptureSession,
+		DeviceID:   "chrome-1",
+		LeaseTTL:   time.Minute,
+	})
+	require.NoError(t, err)
+
+	completed, err := svc.CompleteTask(context.Background(), CompleteTaskInput{
+		TaskID:     task.ID,
+		DeviceID:   "chrome-1",
+		LeaseToken: "lease-token",
+		Result: map[string]any{
+			"source": "chrome",
+			"session_bundle": map[string]any{
+				"origin":      "https://relay.example.com",
+				"captured_at": "2026-06-20T10:00:00Z",
+				"tokens": map[string]any{
+					"access_token": "secret-access-token",
+				},
+				"cookies": []any{
+					map[string]any{"name": "sid", "value": "secret-cookie"},
+				},
+				"context": map[string]any{
+					"api_base_url": "https://relay.example.com/api",
+				},
+				"required_headers": map[string]any{
+					"origin":  "https://relay.example.com",
+					"referer": "https://relay.example.com/dashboard",
+				},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, adminplusdomain.ExtensionTaskStatusSucceeded, completed.Status)
+	require.NotContains(t, completed.Result, "session_bundle")
+	resultJSON, err := json.Marshal(completed.Result)
+	require.NoError(t, err)
+	require.NotContains(t, string(resultJSON), "secret-access-token")
+	require.NotContains(t, string(resultJSON), "secret-cookie")
+	summary, ok := completed.Result["session_summary"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, true, summary["has_access_token"])
+	require.Equal(t, 1, summary["cookie_count"])
+	ingest, ok := completed.Result["ingest"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, true, ingest["session_captured"])
+	require.NotContains(t, ingest, "session_bundle_ciphertext")
+
+	latest, err := sessionRepo.Get(context.Background(), 7)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), latest.SupplierID)
+	require.Equal(t, "https://relay.example.com", latest.Origin)
+	require.Equal(t, "https://relay.example.com/api", latest.APIBaseURL)
+	require.Equal(t, int64(task.ID), latest.SourceExtensionTaskID)
+	require.Contains(t, latest.SessionBundleCiphertext, "encrypted:")
+}
+
+type stubSessionCipher struct{}
+
+func (stubSessionCipher) Encrypt(plaintext string) (string, error) {
+	return "encrypted:opaque", nil
+}
+
+func (stubSessionCipher) Decrypt(ciphertext string) (string, error) {
+	return `{}`, nil
 }
 
 type ingestRateRepository struct {

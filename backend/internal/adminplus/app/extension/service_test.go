@@ -86,6 +86,32 @@ func TestServiceHeartbeatAndCompleteRequireLease(t *testing.T) {
 	require.NotNil(t, done.FinishedAt)
 }
 
+func TestServiceCreateLeasedTaskCreatesClaimedTask(t *testing.T) {
+	repo := NewMemoryRepository()
+	svc := NewService(repo)
+	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return now }
+	svc.newToken = func() (string, error) { return "lease-token", nil }
+
+	task, err := svc.CreateLeasedTask(context.Background(), CreateLeasedTaskInput{
+		SupplierID: 7,
+		Type:       adminplusdomain.ExtensionTaskTypeCaptureSession,
+		DeviceID:   "chrome-1",
+		Payload:    map[string]any{"source_host": "relay.example.com"},
+		LeaseTTL:   time.Minute,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, adminplusdomain.ExtensionTaskStatusClaimed, task.Status)
+	require.Equal(t, "chrome-1", task.DeviceID)
+	require.Equal(t, "lease-token", task.LeaseToken)
+	require.Equal(t, 1, task.Attempts)
+	require.Equal(t, 1, task.MaxAttempts)
+	require.NotNil(t, task.LeaseExpiresAt)
+	require.Equal(t, now.Add(time.Minute), *task.LeaseExpiresAt)
+	require.Equal(t, "relay.example.com", task.Payload["source_host"])
+}
+
 func TestServiceFailTaskRetriesUntilMaxAttempts(t *testing.T) {
 	repo := NewMemoryRepository()
 	svc := NewService(repo)

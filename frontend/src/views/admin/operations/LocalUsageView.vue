@@ -38,7 +38,7 @@
             <input v-model="filters.to" type="datetime-local" class="input" />
           </label>
           <div class="flex items-end">
-            <button type="button" class="btn btn-primary w-full" :disabled="loading" @click="loadUsage">
+            <button type="button" class="btn btn-primary w-full" :disabled="loading" @click="submitFilters">
               查询
             </button>
           </div>
@@ -102,6 +102,14 @@
             </tbody>
           </table>
         </div>
+        <Pagination
+          v-if="pagination.total > 0"
+          :page="pagination.page"
+          :total="pagination.total"
+          :page-size="pagination.page_size"
+          @update:page="handlePageChange"
+          @update:pageSize="handlePageSizeChange"
+        />
       </section>
     </div>
   </AppLayout>
@@ -111,6 +119,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useAppStore } from '@/stores/app'
 import {
   listLocalSub2APIAccounts,
@@ -124,6 +134,7 @@ const appStore = useAppStore()
 const loading = ref(false)
 const accounts = ref<LocalSub2APIAccount[]>([])
 const summaries = ref<LocalUsageSummary[]>([])
+const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0, pages: 0 })
 
 const filters = reactive({
   account_id: 0,
@@ -169,16 +180,37 @@ async function loadUsage() {
         model: filters.model || undefined,
         from: toRFC3339(filters.from),
         to: toRFC3339(filters.to),
-        limit: 200
+        page: pagination.page,
+        page_size: pagination.page_size
       })
     ])
     accounts.value = accountResult.items
     summaries.value = summaryResult.items
+    pagination.total = summaryResult.total || 0
+    pagination.pages = summaryResult.pages || 0
+    pagination.page = summaryResult.page || pagination.page
+    pagination.page_size = summaryResult.page_size || pagination.page_size
   } catch (error) {
     appStore.showError((error as { message?: string }).message || '加载本地用量失败')
   } finally {
     loading.value = false
   }
+}
+
+function submitFilters() {
+  pagination.page = 1
+  void loadUsage()
+}
+
+function handlePageChange(page: number) {
+  pagination.page = page
+  void loadUsage()
+}
+
+function handlePageSizeChange(pageSize: number) {
+  pagination.page_size = pageSize
+  pagination.page = 1
+  void loadUsage()
 }
 
 onMounted(loadUsage)

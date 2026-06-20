@@ -5,6 +5,18 @@
 项目：`sub2api-admin-plus`  
 定位：Sub2API 的非侵入式自动化运营扩展系统
 
+## 0. 文档 Review 结论
+
+本次 review 后，PRD 采用更严格的完成口径：
+
+- 产品目标、架构设计和接口草案不等同于已完成实现。
+- “已完成”只能用于已经走真实 HTTP handler、service、SQL repository、前端真实 API 或真实只读 Sub2API DB/Redis 的能力。
+- E2E 中的 `e2e-*` 数据、本地 OpenAI-compatible `/v1/responses` 测试服务和插件解析样例只证明本地链路有效，不代表真实外部供应商采集完成；E2E 默认清理本次夹具，历史夹具用 `node tools/cleanup-admin-plus-e2e.mjs` dry-run 检查。
+- Chrome 插件只有在真实登录目标供应商页面、读取实际页面数据并回传后，才能标记为该供应商适配完成。
+- 自动执行只有在管理员确认后真实调用本地 Sub2API Admin API，并记录审计后，才能标记完成。
+
+当前产品缺口集中在：首批 Sub2API 供应商真实适配、Chrome 当前网站识别与会话包上报、后端会话 API 采集、每日账单自动导出、动作确认执行、多通道通知和操作审计闭环。
+
 ## 1. 背景
 
 当前 Sub2API 已承担核心网关职责，包括账号管理、API Key 分发、计费、调度、并发控制、使用记录和渠道监控。实际运营中还存在一批偏“运营自动化”和“供应商管理”的需求：
@@ -12,7 +24,7 @@
 - 下游/上游供应商费率会变化，需要定时抓取、比对并告警。
 - 需要把供应商账单导出后与本地 Sub2API 使用记录对账，计算真实成本、收入和利润。
 - 需要持续监控第三方节点速度，例如首 token 时间、总耗时、可用率、错误率和可并发数。
-- 需要在供应商父级配置后台登录账号、密码或临时 token，通过 Chrome 插件登录供应商后台，完成网页侧数据抓取和账单导出；供应商 Admin API Key 只作为可选高级集成，不作为 MVP 必需条件。
+- 需要在供应商父级配置后台登录账号、密码或临时 token，通过 Chrome 插件识别当前供应商后台、一键登录或读取已登录会话，并把第三方会话包上报给 Admin Plus；后端优先使用会话包模拟已登录 API 请求完成采集，网页侧抓取和账单导出只作为兜底能力。供应商 Admin API Key 只作为可选高级集成，不作为 MVP 必需条件。
 - 需要保持主系统 `/Users/coso/Documents/dev/go/sub2api` 可持续跟随上游更新，不能把自用运营逻辑侵入 Sub2API 核心代码。
 
 因此，`sub2api-admin-plus` 作为独立扩展系统开发，复用 Sub2API 的技术栈、管理员权限和公开集成点，只开发自动化运营业务能力。
@@ -31,7 +43,7 @@
 6. 优惠与充值机会监控：即使某个供应商当前没有余额，也持续关注其费率和优惠活动；有优惠时提醒及时充值，以便获得更低成本。
 7. 自动化运营告警：余额不足、费率上涨、节点故障、对账异常、毛利过低、供应商优惠活动时及时通知。
 8. 自动化执行闭环：在管理员确认后，通过 Sub2API Admin API 调整账号调度状态、优先级或并发。
-9. Chrome 插件协同：当供应商没有完整 API 或数据库权限时，通过浏览器插件完成登录、导出和页面数据抓取。
+9. Chrome 插件协同：当供应商没有完整 API 或数据库权限时，通过浏览器插件完成当前网站识别、一键登录、会话包获取和上报；后端优先用会话包调用供应商内部 API，只有 API 不可用时才使用浏览器导出和页面抓取兜底。
 
 ### 2.2 非侵入目标
 
@@ -43,7 +55,7 @@
 2. Sub2API Admin API。
 3. Sub2API PostgreSQL 只读查询。
 4. Sub2API Redis 只读查询。
-5. Chrome 插件登录供应商后台抓取网页数据。
+5. Chrome 插件登录供应商后台获取第三方会话包，网页数据抓取仅作为兜底。
 6. 可选在 Sub2API 后台配置外链入口，但不依赖 iframe。
 7. 仅当缺少通用扩展点时，向上游 Sub2API 提交小型通用 PR。
 
@@ -85,6 +97,7 @@
 - Admin Plus 后端校验请求时，复用 Sub2API JWT/管理员判断逻辑，或调用本地 Sub2API `/api/v1/auth/me` 校验当前 token。
 - 服务端执行写操作调用本地 Sub2API 时，使用经校验后的管理员 JWT 或本地 Sub2API 允许的 Admin API Key，具体按 Sub2API 现有接口要求选择。
 - Chrome 插件与 admin-plus 通信时，使用 admin-plus 生成的短期设备 token，设备 token 只代表插件任务执行权限，不代表用户体系。
+- Chrome 插件不提供管理员登录 UI，不接收 Sub2API 管理员账号、密码、2FA 或 OAuth 输入；未连接时只打开 sub2apiplus Web 登录/授权页，登录和授权都在 Web 页面完成。
 
 授权规则：
 
@@ -116,6 +129,7 @@ Admin Plus: https://sub2api-plus.demo.com
 - 共享父域 cookie。
 - 跨子域读取 `localStorage`。
 - Chrome 插件同步 Sub2API 登录 token。
+- 在 Chrome 插件内实现 Admin Plus 登录表单。
 - 给 Sub2API 增加 SSO 或 token handoff PR。
 
 复制 Sub2API 后端代码的价值在于复用 DTO、JWT 校验、管理员判断、响应结构和只读查询模型；MVP 登录链路优先走 Sub2API 现有认证 API 代理，避免在 admin-plus 中复制一套会写 Sub2API DB/Redis 的认证服务。
@@ -146,7 +160,15 @@ MVP 必须支持读取和运营 Sub2API 已添加的源站 LLM 账号，以及 S
 - Admin API：账号列表、使用记录、渠道监控、账单导出、余额调整等可公开管理接口。
 - PostgreSQL 只读：`usage_logs`、`accounts`、`channel_monitors`、`channel_monitor_histories`、`channel_monitor_daily_rollups` 等分析数据。
 - Redis 只读：并发会话、窗口费用等运行态数据，例如 `session_limit:account:{accountID}`、`window_cost:account:{accountID}`。
-- Chrome 插件：当供应商未开放管理 API 或无法直连 DB/Redis 时，使用供应商父级配置的后台账号密码或临时 token 登录后台，导出 CSV、读取余额和并发信息。
+- Chrome 插件：当供应商未开放管理 API 或无法直连 DB/Redis 时，使用供应商父级配置的后台账号密码或临时 token 登录后台，获取 access token、cookie、CSRF token、组织/账号上下文和 API base URL 等会话包；后端使用会话包调用供应商内部 API。只有会话 API 不可用时，才通过插件导出 CSV、读取少量页面指标或上传诊断截图。
+
+余额采集必须区分三种口径：
+
+- 供应商用户余额：我们作为下游用户在供应商 Sub2API 实例中的余额或有效额度。MVP 余额监控主路径采集这个值，通常由 Provider Adapter 使用插件上报的登录会话调用供应商用户侧 profile/账户接口读取。
+- 供应商上游源站账号余额：供应商自己的 OpenAI、Anthropic、Gemini 等源站账号额度。作为普通下游默认没有权限，只有供应商明确提供 Admin API Key、只读数据库或只读 Redis 时才采集。
+- 本地 Sub2API 账号 quota/usage：这是本地网关账号用量和限额，只能用于本地调度、成本核算和对账，不能当作供应商余额。
+
+因此，Sub2API 同源供应商可以采集余额，但默认只采集“我们在供应商侧的下游用户余额”。普通下游会话不得默认调用供应商 `/api/v1/admin/*`。
 
 ### 6.3 Sub2API 源站账号运营能力
 
@@ -254,7 +276,8 @@ MVP 数据源：
 
 - Sub2API 供应商 Admin API 的渠道/模型定价接口。
 - Sub2API 供应商数据库的渠道定价表，只读查询。
-- Chrome 插件从供应商后台费率页面抓取。
+- 后端使用 Chrome 插件上报的供应商会话包调用供应商内部 API。
+- Chrome 插件从供应商后台费率页面抓取仅作为兜底。
 - 手动维护费率作为兜底。
 
 核心能力：
@@ -275,7 +298,8 @@ MVP 数据源：
 数据来源：
 
 - 供应商 Sub2API 公告、后台页面或配置接口。
-- Chrome 插件读取供应商后台活动、充值页和公告。
+- 后端使用供应商会话包调用供应商内部 API 或公告接口。
+- Chrome 插件读取供应商后台活动、充值页和公告仅作为兜底。
 - 手动录入优惠活动。
 
 核心能力：
@@ -349,7 +373,8 @@ MVP 数据源：
 - 本地 Sub2API `channel_monitor_histories`。
 - 本地 Sub2API Redis 并发会话只读数据。
 - 供应商 Sub2API 的相同指标。
-- Chrome 插件读取供应商后台余额和并发卡片。
+- 后端使用供应商会话包调用供应商内部 API。
+- Chrome 插件读取供应商后台余额和并发卡片仅作为兜底。
 
 ### 7.7 自动化运营策略
 
@@ -384,24 +409,30 @@ MVP 数据源：
 
 ### 7.8 Chrome 插件
 
-Chrome 插件负责浏览器侧自动化。
+Chrome 插件负责浏览器侧会话能力，不负责业务采集主路径。详细路线图见 `docs/roadmap/Chrome/README.md`。
 
 MVP 职责：
 
-- 接收 admin-plus 下发的任务。
-- 使用供应商父级配置的后台账号密码或临时 token 登录供应商后台。
-- 打开供应商使用记录页面。
-- 按天导出 CSV。
-- 读取供应商余额、请求数、可并发数等页面数据。
-- 把导出的文件和结构化数据上传到 admin-plus。
-- 上报任务状态、失败截图和错误原因。
+- 自动识别当前 active tab 是否匹配已配置供应商。
+- 先检测是否已通过 sub2apiplus Web 页面授权；未授权时只提示并打开 sub2apiplus Web 登录/授权页。
+- 插件不设计管理员登录 UI，不提供账号、密码、2FA 或 OAuth 输入。
+- 在供应商后台页面展示匹配状态、登录状态和一键动作。
+- 使用供应商父级配置的后台账号密码、临时 token，或运营者已手动登录的浏览器状态，完成一键登录/一键获取会话。
+- 获取并上报第三方会话包，包括 access token、cookie、CSRF token、组织 ID、账号 ID、API base URL、过期时间和必要请求头。
+- 上报任务状态、登录失败原因、会话探测诊断和必要截图。
+- 仅在后端确认会话 API 不可用时，执行 CSV 下载、页面指标读取或截图等浏览器兜底任务。
 
 插件不负责：
 
+- 费率变化判断。
+- 账单归一化。
 - 对账计算。
+- 余额阈值判断。
 - 策略判断。
 - 直接修改本地 Sub2API。
 - 保存长期明文密码。
+- 保存 Sub2API 管理员身份。
+- 绕过 sub2apiplus 登录态匿名上传供应商会话包。
 
 ### 7.9 账号采购与库存成本预留
 
@@ -616,7 +647,7 @@ MVP 不做：
 
 ### 9.3 上游余额不足处理
 
-参与者：运营者、Admin Plus、Chrome 插件、供应商 Sub2API。
+参与者：运营者、Admin Plus、Provider Adapter、Chrome 插件、供应商 Sub2API。
 
 前置条件：
 
@@ -634,8 +665,9 @@ MVP 不做：
 
 异常流程：
 
-- 如果 API 无法读取余额，创建 Chrome 插件抓取任务。
-- 如果插件抓取失败，标记凭据或页面结构异常并提升告警等级。
+- 如果 Admin API、只读 DB/Redis 均无法读取余额，优先使用 Chrome 插件已上报的供应商会话包调用供应商内部 API。
+- 如果会话 API 仍无法读取余额，再创建 Chrome 浏览器兜底任务。
+- 如果兜底任务失败，标记凭据、会话或页面结构异常并提升告警等级。
 
 ### 9.4 上游故障切换
 
@@ -663,7 +695,7 @@ MVP 不做：
 
 ### 9.5 无余额供应商优惠监控
 
-参与者：运营者、Admin Plus、Chrome 插件、供应商后台。
+参与者：运营者、Admin Plus、Provider Adapter、Chrome 插件、供应商后台。
 
 前置条件：
 
@@ -673,7 +705,7 @@ MVP 不做：
 
 主流程：
 
-1. 系统继续定时抓取该供应商的费率、公告、充值页和优惠信息。
+1. 系统继续通过 Admin API、只读数据源或供应商会话 API 定时抓取该供应商的费率、公告、充值页和优惠信息。
 2. 系统发现充值赠送、折扣费率、套餐折扣或限时活动。
 3. 系统计算优惠后的预计成本和预计毛利。
 4. 系统与当前可用供应商成本做比较。
@@ -685,11 +717,11 @@ MVP 不做：
 
 - 如果优惠即将结束但余额仍为 0，系统提高提醒等级。
 - 如果充值后健康指标不达标，供应商仍不能进入切换候选。
-- 如果优惠信息无法自动抓取，系统创建 Chrome 插件任务或提示手动录入。
+- 如果优惠信息无法通过后端数据源和会话 API 自动抓取，系统创建 Chrome 浏览器兜底任务或提示手动录入。
 
 ### 9.6 每日利润核算
 
-参与者：运营者、Admin Plus、Chrome 插件、供应商 Sub2API。
+参与者：运营者、Admin Plus、Provider Adapter、Chrome 插件、供应商 Sub2API。
 
 前置条件：
 
@@ -761,8 +793,9 @@ flowchart LR
   Worker -->|只读 Redis| SupplierRedis[(供应商 Redis)]
 
   Worker --> TaskQueue[插件任务队列]
-  ChromeExt[Chrome 插件] -->|领取任务 / 上传结果| PlusAPI
-  ChromeExt -->|登录 / 导出 / 抓取| SupplierWeb[供应商后台网页]
+  ChromeExt[Chrome 插件] -->|识别当前网站 / 一键登录 / 上传会话包| PlusAPI
+  ChromeExt -->|登录 / 读取浏览器会话 / 兜底导出| SupplierWeb[供应商后台网页]
+  PlusAPI -->|使用会话包| SupplierInternalAPI[供应商内部 API]
 
   PlusAPI -->|确认后写入| Sub2APIAdmin
 ```
@@ -1026,18 +1059,27 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
   participant W as Worker
+  participant V as Provider Adapter
   participant E as Chrome 插件
   participant U as 供应商后台
+  participant I as 供应商内部 API
   participant B as Admin Plus 后端
   participant L as 本地 Sub2API DB
   participant D as Admin Plus DB
 
-  W->>D: 创建账单导出任务
-  E->>B: 领取任务
-  E->>U: 登录供应商后台
-  E->>U: 导出指定日期 CSV
-  E->>B: 上传 CSV 和页面指标
-  B->>D: 保存账单导入批次
+  W->>D: 创建账单采集任务
+  B->>D: 读取供应商会话包和数据源配置
+  B->>V: 发起账单采集
+  alt 会话 API 可用
+    V->>I: 使用会话包调用账单 API
+    I-->>V: 返回账单明细
+  else 必须浏览器导出
+    B->>D: 创建 Chrome 兜底导出任务
+    E->>B: 领取任务
+    E->>U: 使用浏览器会话导出指定日期 CSV
+    E->>B: 上传原始 CSV 和诊断信息
+  end
+  B->>D: 保存账单导入批次和明细
   B->>L: 只读查询本地 usage_logs
   B->>D: 按供应商账号/Key 子级匹配本地账号
   B->>D: 生成对账结果
@@ -1074,10 +1116,12 @@ flowchart TD
   B1 --> C{可用数据源}
   C -->|管理 API| D[调用供应商 Sub2API API]
   C -->|只读 DB| E[查询供应商 DB]
-  C -->|Chrome| F[创建插件抓取任务]
+  C -->|会话 API| F[使用 Chrome 上报会话包调用内部 API]
+  C -->|Chrome fallback| F1[创建浏览器兜底任务]
   D --> G[归一化费率]
   E --> G
   F --> G
+  F1 --> G
   G --> H[写入费率快照]
   H --> I{与上一快照是否不同}
   I -->|否| J[结束]
@@ -1360,14 +1404,21 @@ erDiagram
 - `supplier_id`
 - `supplier_account_id`
 - `request_id`
+- `api_key_name`
 - `model`
+- `endpoint`
+- `request_type`
+- `billing_mode`
+- `reasoning_effort`
 - `input_tokens`
 - `output_tokens`
-- `cache_tokens`
+- `cache_read_tokens`
+- `total_tokens`
 - `cost`
 - `currency`
 - `first_token_ms`
 - `duration_ms`
+- `user_agent`
 - `occurred_at`
 - `raw_payload`
 
@@ -1456,60 +1507,93 @@ Chrome 插件任务。
 - `claimed_at`
 - `finished_at`
 
-## 16. 接口草案
+## 16. 接口设计与当前落地状态
 
-### 16.1 供应商
+### 16.1 已落地 API
 
-- `GET /api/admin-plus/suppliers`
-- `POST /api/admin-plus/suppliers`
-- `GET /api/admin-plus/suppliers/:id`
-- `PUT /api/admin-plus/suppliers/:id`
-- `POST /api/admin-plus/suppliers/:id/test`
-- `POST /api/admin-plus/suppliers/:id/disable`
+当前运行时已注册以下 `/api/v1/admin-plus/*` 路由，均走 Sub2API 管理员中间件：
 
-### 16.2 凭据
+```text
+GET    /api/v1/admin-plus/suppliers
+POST   /api/v1/admin-plus/suppliers
+GET    /api/v1/admin-plus/suppliers/:id
+PUT    /api/v1/admin-plus/suppliers/:id
+DELETE /api/v1/admin-plus/suppliers/:id
+PATCH  /api/v1/admin-plus/suppliers/:id/status
+GET    /api/v1/admin-plus/suppliers/:id/accounts
+POST   /api/v1/admin-plus/suppliers/:id/accounts
+PUT    /api/v1/admin-plus/suppliers/:id/accounts/:accountID
+DELETE /api/v1/admin-plus/suppliers/:id/accounts/:accountID
 
-- `GET /api/admin-plus/suppliers/:id/credentials`
-- `POST /api/admin-plus/suppliers/:id/credentials`
-- `POST /api/admin-plus/credentials/:id/test`
-- `DELETE /api/admin-plus/credentials/:id`
+GET    /api/v1/admin-plus/sub2api/accounts
+GET    /api/v1/admin-plus/sub2api/account-runtime
+GET    /api/v1/admin-plus/sub2api/usage-lines
+GET    /api/v1/admin-plus/sub2api/usage-summary
 
-### 16.3 供应商账号/Key 子级
+POST   /api/v1/admin-plus/rates/snapshots
+GET    /api/v1/admin-plus/rates/snapshots
+GET    /api/v1/admin-plus/rates/events
+PATCH  /api/v1/admin-plus/rates/events/:id/ack
 
-- `GET /api/admin-plus/sub2api/accounts`
-- `GET /api/admin-plus/suppliers/:id/accounts`
-- `POST /api/admin-plus/suppliers/:id/accounts`
-- `PUT /api/admin-plus/suppliers/:id/accounts/:accountBindingId`
-- `DELETE /api/admin-plus/suppliers/:id/accounts/:accountBindingId`
-- `POST /api/admin-plus/suppliers/:id/accounts/:accountBindingId/sync`
+POST   /api/v1/admin-plus/balances/snapshots
+GET    /api/v1/admin-plus/balances/snapshots
+GET    /api/v1/admin-plus/balances/events
+PATCH  /api/v1/admin-plus/balances/events/:id/ack
 
-### 16.4 费率
+POST   /api/v1/admin-plus/promotions
+GET    /api/v1/admin-plus/promotions
+PATCH  /api/v1/admin-plus/promotions/:id/ack
 
-- `GET /api/admin-plus/rates/snapshots`
-- `POST /api/admin-plus/rates/poll`
-- `GET /api/admin-plus/rates/changes`
-- `POST /api/admin-plus/rates/changes/:id/ack`
+POST   /api/v1/admin-plus/health/probe
+POST   /api/v1/admin-plus/health/samples
+GET    /api/v1/admin-plus/health/samples
+GET    /api/v1/admin-plus/health/events
+PATCH  /api/v1/admin-plus/health/events/:id/ack
 
-### 16.5 优惠
+GET    /api/v1/admin-plus/notifications/deliveries
 
-- `GET /api/admin-plus/promotions`
-- `POST /api/admin-plus/promotions/poll`
-- `GET /api/admin-plus/promotions/:id`
-- `POST /api/admin-plus/promotions/:id/ack`
-- `POST /api/admin-plus/promotions/:id/create-topup-advice`
+POST   /api/v1/admin-plus/billing/lines/import
+GET    /api/v1/admin-plus/billing/lines
 
-### 16.6 账单与对账
+POST   /api/v1/admin-plus/extension/tasks
+GET    /api/v1/admin-plus/extension/tasks
+POST   /api/v1/admin-plus/extension/tasks/claim
+POST   /api/v1/admin-plus/extension/tasks/:id/heartbeat
+POST   /api/v1/admin-plus/extension/tasks/:id/browser-credential
+POST   /api/v1/admin-plus/extension/tasks/:id/complete
+POST   /api/v1/admin-plus/extension/tasks/:id/fail
 
-- `POST /api/admin-plus/bills/import`
-- `POST /api/admin-plus/bills/export-task`
-- `GET /api/admin-plus/bills/imports`
-- `POST /api/admin-plus/reconciliation/runs`
-- `GET /api/admin-plus/reconciliation/runs`
-- `GET /api/admin-plus/reconciliation/runs/:id`
-- `GET /api/admin-plus/reconciliation/runs/:id/items`
-- `GET /api/admin-plus/reconciliation/runs/:id/export`
+GET    /api/v1/admin-plus/scheduler/status
+POST   /api/v1/admin-plus/scheduler/run
 
-### 16.7 健康监控
+POST   /api/v1/admin-plus/reconciliation/run
+
+POST   /api/v1/admin-plus/actions/generate
+GET    /api/v1/admin-plus/actions/recommendations
+PATCH  /api/v1/admin-plus/actions/recommendations/:id/status
+```
+
+已落地 API 的限制：
+
+- `actions` 当前只生成和更新建议状态，尚未执行本地 Sub2API Admin API 写操作。
+- `scheduler` 当前可以生成任务，但真实供应商周期采集取决于具体 provider adapter 和 Chrome adapter 是否完成。
+- `extension` 当前具备任务协议和结果摄取，供应商专用页面适配仍需逐个完成。
+- `billing` 当前支持结构化账单导入和查询，网页自动下载账单文件尚未完成。
+
+### 16.2 规划 API
+
+以下接口属于产品规划或后续增强，不能按当前完成状态验收：
+
+- 供应商凭据独立 CRUD、凭据测试和凭据审计接口。
+- 供应商账号/Key 子级更新、同步和批量绑定接口。
+- 费率主动 poll 接口和 provider adapter 直接抓取接口。
+- 优惠主动 poll、详情和充值建议接口。
+- 账单导出任务、对账批次查询、对账明细查询和 CSV 导出接口。
+- 动作建议详情、审批、拒绝和执行接口。
+- Chrome 插件设备注册、上传文件和截图接口。
+- 通知规则、通知重试和多通道接口。
+
+### 16.3 健康探测说明
 
 - `POST /api/v1/admin-plus/health/probe`
 - `POST /api/v1/admin-plus/health/samples`
@@ -1524,23 +1608,6 @@ Chrome 插件任务。
 - 仅支持绑定到本地 Sub2API `accounts` 的 OpenAI-compatible API Key 账号。
 - 后端读取本地账号凭据并请求 `/v1/responses`，前端不接收 API Key。
 - 探测成功或失败都会落健康样本；请求错误、慢首字、慢总耗时和并发饱和按规则生成事件。
-
-### 16.8 策略建议
-
-- `GET /api/admin-plus/actions`
-- `GET /api/admin-plus/actions/:id`
-- `POST /api/admin-plus/actions/:id/approve`
-- `POST /api/admin-plus/actions/:id/reject`
-- `POST /api/admin-plus/actions/:id/execute`
-
-### 16.9 Chrome 插件
-
-- `POST /api/admin-plus/extension/devices/register`
-- `POST /api/admin-plus/extension/tasks/claim`
-- `POST /api/admin-plus/extension/tasks/:id/heartbeat`
-- `POST /api/admin-plus/extension/tasks/:id/complete`
-- `POST /api/admin-plus/extension/tasks/:id/fail`
-- `POST /api/admin-plus/extension/uploads`
 
 ## 17. 与本地 Sub2API 的集成
 
@@ -1603,36 +1670,54 @@ Chrome 插件任务。
 
 ## 18. Chrome 插件设计
 
+当前 Chrome 插件设计的完整事实源为 `docs/roadmap/Chrome/README.md`。本节只保留 PRD 摘要。
+
 ### 18.1 插件架构
 
 ```mermaid
 flowchart LR
   Popup[插件 Popup] --> BG[Background Service Worker]
+  Popup --> PlusWeb[sub2apiplus Web 登录/授权页]
   BG --> API[Admin Plus API]
+  BG --> Detector[当前网站识别]
   BG --> Content[Content Script]
   Content --> Page[供应商后台页面]
-  Content --> Download[CSV 下载]
-  BG --> Upload[上传结果]
+  Content --> Session[会话包提取]
+  Content --> Login[一键登录]
+  Content --> Fallback[兜底导出/截图]
+  BG --> Upload[上传会话包/兜底材料]
 ```
 
 ### 18.2 任务类型
 
-- `login_supplier`
-- `export_usage_csv`
-- `scrape_rate_page`
-- `scrape_promotion_page`
-- `scrape_balance`
-- `scrape_concurrency`
-- `capture_debug_screenshot`
+主路径任务：
+
+- `identify_current_site`
+- `capture_supplier_session`
+- `refresh_supplier_session`
+- `probe_supplier_session`
+
+兜底任务：
+
+- `fallback_export_usage_csv`
+- `fallback_scrape_page_metric`
+- `fallback_capture_debug_screenshot`
+
+旧版 `scrape_rate_page`、`scrape_promotion_page`、`scrape_balance`、`scrape_concurrency`、`export_usage_csv` 不再作为插件主路径，只能在会话 API 不可用时作为 fallback。
 
 ### 18.3 安全要求
 
 - 插件设备需要在 admin-plus 页面配对。
+- 插件未连接 sub2apiplus 时，不允许读取供应商凭据或上传供应商会话包，只允许打开 sub2apiplus Web 登录/授权页。
+- sub2apiplus 已登录时，Web 授权页可一键授权插件并下发可吊销设备 token。
 - 设备 token 有效期可控，可吊销。
 - 插件不长期保存明文密码。
 - 任务 payload 中的敏感字段只在执行窗口短期解密。
-- 上传结果前做供应商 ID 和任务 ID 校验。
+- 上传会话包、原始文件或诊断信息前做供应商 ID 和任务 ID 校验。
 - 失败时允许上传截图，但截图需要按供应商配置决定是否脱敏。
+- 插件不保存 Sub2API 管理员 token。
+- 插件不提供管理员登录 UI。
+- 会话包必须服务端加密存储，并记录设备 ID、任务 ID、来源页面和采集时间。
 
 ## 19. 健康评分草案
 
@@ -1803,10 +1888,12 @@ flowchart LR
 
 - 插件设备配对。
 - 任务领取。
-- 供应商登录。
-- CSV 导出。
-- 费率、余额、并发页面抓取。
-- 结果上传。
+- 当前网站自动识别。
+- 供应商一键登录。
+- 已登录页面一键获取会话。
+- 第三方会话包上报。
+- 后端会话探测结果展示。
+- 浏览器兜底 CSV 导出、页面指标读取和截图上传。
 
 ## 22. 验收指标
 
@@ -1847,6 +1934,11 @@ MVP 必须满足：
 
 风险：供应商后台账号密码、临时 token、只读数据库连接或可选管理 API Key 泄露。
 处理：加密存储、脱敏展示、审计使用、最小权限、只读数据库账号；新增供应商不要求管理 API Key。
+
+### 23.3A 会话请求越权与 SSRF
+
+风险：插件上报供应商会话后，如果后端直接信任插件提交的 URL 或请求参数，Provider Adapter 可能变成任意请求代理，造成 SSRF、越权访问供应商 admin 接口或高敏凭据外泄。
+处理：插件只上报会话包和页面上下文，不上报任意请求指令；Provider Adapter 必须按供应商 `base_url`、`api_base_url`、host 白名单和已登记接口路径发起请求；普通下游会话默认只允许访问用户侧只读接口，写操作和 `/api/v1/admin/*` 必须有明确授权、能力开关和审计。
 
 ### 23.4 读取 DB/Redis 依赖内部结构
 
@@ -1917,7 +2009,7 @@ MVP 必须满足：
 
 更新日期：2026-06-20
 
-已完成：
+### 27.1 已完成的基础能力
 
 - 完整复制 Sub2API 前后端架构和 UI 风格，Admin Plus 独立运行。
 - 复用 Sub2API 管理员登录与管理员中间件，不新增权限系统。
@@ -1927,10 +2019,15 @@ MVP 必须满足：
 - 新增供应商不要求 Admin API Key，支持记录浏览器登录账号、密码、临时 token 的配置状态和脱敏展示。
 - 完成费率快照、费率变更事件、事件确认。
 - 完成余额快照、余额事件、低余额/耗尽/恢复规则。
-- 完成余额事件飞书通知：
-  - `ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_URL` 启用飞书自定义机器人通知。
-  - `ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_SECRET` 可选启用飞书签名。
-  - 通知失败只记录日志，不回滚余额快照或余额事件。
+- 完成飞书自定义机器人基础通知：
+  - `ADMIN_PLUS_FEISHU_WEBHOOK_URL` 启用通用飞书通知。
+  - `ADMIN_PLUS_FEISHU_WEBHOOK_SECRET` 可选启用飞书签名。
+  - 兼容旧变量 `ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_URL` 和 `ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_SECRET`。
+  - 当前覆盖余额事件、费率变更事件、健康事件、优惠事件和对账异常事件。
+  - 发送前写入 `admin_plus_notification_deliveries`。
+  - 同一业务事件同一通道通过 `dedupe_key` 去重。
+  - 费率、健康和优惠等高频事件支持窗口去重，避免同一事件窗口重复刷屏。
+  - 通知成功或失败都会记录投递状态，不回滚业务快照或事件。
 - 完成优惠事件、无余额供应商充值建议规则。
 - 完成健康样本、首 token/总耗时/错误/并发饱和事件。
 - 完成 OpenAI-compatible Responses 健康探测接口和前端入口：
@@ -1943,12 +2040,14 @@ MVP 必须满足：
   - 手动或周期触发生成插件任务。
   - 基于 `schedule_key` 防止同一窗口重复创建。
   - 无余额供应商只生成监控/优惠类任务，不生成可切换执行类任务。
-- 完成插件任务结果摄取：
-  - 插件完成 `fetch_rates` 后写入费率快照和变更事件。
-  - 插件完成 `fetch_balance` 后写入余额快照和余额事件。
-  - 插件完成 `fetch_promotions` 后写入优惠事件。
-  - 插件完成 `fetch_health` 后写入健康样本和事件。
-  - 插件完成 `export_bills` 后写入供应商账单明细。
+- 完成旧版插件任务结果摄取基础能力：
+  - 插件完成 `fetch_rates` 后可写入费率快照和变更事件。
+  - 插件完成 `fetch_balance` 后可写入余额快照和余额事件。
+  - 插件完成 `fetch_promotions` 后可写入优惠事件。
+  - 插件完成 `fetch_health` 后可写入健康样本和事件。
+  - 插件完成 `export_bills` 后可写入供应商账单明细。
+  - 该能力只证明任务协议和摄取链路可用，不再作为 Chrome 插件目标架构主路径。
+  - 新主路径应改为 `capture_supplier_session` 上报会话包，由后端 Provider Adapter 使用会话 API 采集并写入业务表。
 - 完成供应商账单导入、对账服务和动作建议生成。
 - 完成本地 Sub2API 只读 DB 适配：
   - 读取真实 `accounts` 用于账号/Key 绑定。
@@ -1972,32 +2071,53 @@ MVP 必须满足：
   - 账单对账
   - 本地用量
   - 动作建议
+  - 通知记录
+- 供应商管理页已按 Sub2API 后台账号管理页的工作台交互改造：
+  - 筛选条：搜索、供应商归类、系统类型、运行状态、健康状态。
+  - 右侧工具：刷新、更多操作、添加供应商。
+  - 表格：选择列、供应商、归类/类型、状态、余额、采集凭据、地址、创建时间、行内操作。
+  - 批量操作：全选当前页、清除选择、批量状态、批量删除。
+  - CRUD：创建、编辑、状态调整、删除均调用真实 Admin Plus API。
+- 账号/Key 绑定页已按父供应商、子账号/Key 模型改造：
+  - 筛选条：供应商、本地账号搜索、运行状态、健康状态。
+  - 表格：选择列、供应商父级、本地 Sub2API 账号、供应商侧账号/Key、状态、余额、并发、费率档案、创建时间、行内操作。
+  - CRUD：绑定、编辑、批量状态、删除均调用真实 Admin Plus API。
+  - 当本地账号为空或读取失败时，页面明确提示检查 `SUB2API_READONLY_DATABASE_URL`，不再静默显示空下拉。
 - API E2E 脚本覆盖真实 HTTP、真实 PostgreSQL、真实 Redis 运行态、供应商父子绑定、本地用量读取、OpenAI-compatible Responses 健康探测、调度生成、插件任务结果摄取、账单对账和动作建议。
+- API E2E 已覆盖供应商父级 `PUT` 更新、供应商账号/Key 子级 `PUT` 更新和删除，避免编辑 UI 停留在未验证状态。
 - 完成供应商浏览器登录凭据加密存储。
 - 完成插件任务租约读取供应商浏览器凭据接口：`POST /api/v1/admin-plus/extension/tasks/:id/browser-credential`。
-- 完成 `extension/` Chrome MV3 最小执行器：
-  - 从 Admin Plus 页面读取本域 `auth_token`。
-  - 领取任务、心跳、按租约读取供应商凭据。
-  - 打开供应商后台并尝试登录。
-  - 解析真实页面数据后完成任务；无法解析时失败任务，不生成 mock 结果。
-  - 抽出 `parser.js` 页面解析纯函数，并用 `node extension/test-parser.cjs` 覆盖基础样例。
+- 完成新版 `extension/` Chrome MV3 会话获取器基础链路：
+  - Popup 不提供 Sub2API 管理员登录 UI，不展示/输入管理员 Token。
+  - 插件从已登录 sub2apiplus Web 页面完成连接；未登录时只打开 Web 登录页。
+  - 插件识别当前 active tab 与已配置供应商的匹配关系。
+  - 插件创建 `capture_supplier_session` 短租约任务，按租约读取供应商浏览器凭据。
+  - 插件打开或复用供应商后台，辅助一键登录或识别已登录状态。
+  - 插件提取前端 storage、Cookie、CSRF 和请求上下文组成会话包，并上报后端。
+  - 后端完成任务时删除明文 `session_bundle`，只保留摘要和加密会话包。
+  - `parser.js` 页面解析纯函数和旧任务领取协议保留为浏览器兜底/兼容路径，不作为 Chrome 插件新的主路径继续扩展。
 
-部分完成：
+### 27.2 基础闭环已完成但不能视为生产完成
 
-- 插件任务后端协议、调度生成、租约凭据读取、结果摄取和 Chrome 最小执行器已完成，但面向具体 Sub2API/New API 供应商后台的稳定页面适配仍未完成。
-- 账单对账服务已完成，插件任务可摄取结构化账单结果，但供应商网页自动下载账单文件和解析仍未完成。
+- 插件任务后端协议、调度生成、租约凭据读取、结果摄取和 Chrome 最小执行器已完成，但这是旧版页面抓取路径的基础能力；新方向需要优先完成当前网站识别、一键登录、会话包上报和后端会话 API 采集。
+- 账单对账服务已完成，插件任务可摄取结构化账单结果，但新主路径应由后端使用供应商会话 API 获取账单；供应商网页自动下载账单文件和解析只作为兜底能力。
 - 动作建议生成已完成，但“管理员确认后调用 Sub2API Admin API 执行动作”未完成。
 - 本地 Sub2API DB/Redis 只读已完成基础账号、用量、并发运行态读取，但窗口成本和 Channel Monitor 深度指标适配未完成。
+- 飞书通知发送已接入余额、费率、健康、优惠和对账异常事件，SQL 投递审计、事件级去重、窗口限流和通知记录页面已完成；多通道和失败重试策略尚未完成。
+- Scheduler 已能生成幂等插件任务，但周期 Worker 的任务审计、超时回收、失败重试可视化和每日账单任务闭环尚未完成。
 
-未完成：
+### 27.3 未完成的核心需求
 
-- 首批供应商专用 Chrome 页面适配器：稳定登录、抓取费率/余额/优惠、导出账单。
-- 第三方供应商 Sub2API/New API Admin API client。
+- 首批供应商专用会话 API 适配器：基于 Chrome 上报的真实登录会话获取费率、余额、优惠和账单；页面抓取/导出只作为 fallback。
+- 第三方供应商 Sub2API/New API Admin API client 和只读 DB/Redis provider adapter。
 - Sub2API Redis 窗口成本 adapter。
 - 每日自动账单导出和定时对账。
-- 多通道通知、通知审计日志和动作执行闭环。
+- 多通道通知和失败重试策略。
+- 管理员确认后调用 Sub2API Admin API 执行动作建议。
+- 动作执行审计、执行前后快照和失败重试。
+- 凭据使用审计和敏感操作审计页面。
 - 源站 Anthropic/Gemini 账号的额度/限速/模型探测运营适配。
-- 真实外部 OpenAI 账号的生产可用性探测验证；当前只完成 OpenAI-compatible 请求链路和本地 fake upstream E2E，不代表已有生产 Key 可用。
+- 真实外部 OpenAI 账号的生产可用性探测验证；当前只完成 OpenAI-compatible 请求链路和本地测试 upstream E2E，不代表已有生产 Key 可用。
 
 ## 28. 非 mock 验收标准
 
@@ -2008,12 +2128,12 @@ MVP 必须满足：
 - 读取 Sub2API 数据必须来自 Sub2API Admin API、只读 DB 或只读 Redis。
 - 写 Sub2API 状态必须通过 Sub2API Admin API，不能直接写 Sub2API DB/Redis。
 - 前端页面必须调用真实 API，不能依赖静态列表或假数据。
-- E2E 测试允许创建 `e2e-*` 测试夹具，但夹具只用于验证真实链路，不代表供应商真实采集已完成。
+- E2E 测试允许创建 `e2e-*` 测试夹具，但必须默认清理本次夹具；夹具只用于验证真实链路，不代表供应商真实采集已完成。
 - Chrome 插件相关能力只有在插件真实登录目标页面、读取实际页面数据并回传后，才能标记为完成。
 - 定时任务只有在 scheduler 真实触发、记录任务状态、支持失败重试和幂等后，才能标记为完成。
 - 自动执行只有在管理员确认后真实调用 Sub2API Admin API，并记录审计后，才能标记为完成。
 
-当前 E2E 中的 `e2e-test-only-*` 凭据、usage 记录和本地 OpenAI-compatible `/v1/responses` 服务是测试夹具，用于验证本地 API/DB/Redis/HTTP 探测链路；它们不是生产采集器，也不表示 Chrome 插件真实采集或真实外部供应商探测已完成。
+当前 E2E 中的 `e2e-test-only-*` 凭据、usage 记录和本地 OpenAI-compatible `/v1/responses` 服务是测试夹具，用于验证本地 API/DB/Redis/HTTP 探测链路；它们不是生产采集器，也不表示 Chrome 插件真实采集或真实外部供应商探测已完成。历史 `e2e-*` 夹具应通过 `node tools/cleanup-admin-plus-e2e.mjs` 先 dry-run 统计，再显式设置 `ADMIN_PLUS_CLEAN_E2E_EXECUTE=1` 清理。
 
 ## 29. 下一阶段计划
 
@@ -2027,20 +2147,60 @@ MVP 必须满足：
 - 把本地用量明细接入账单对账默认流程。
 - 用真实数据生成第一版成本、健康和利润信号。
 
-### M3：真实采集与调度
+验收：
+
+- 账号绑定页读取真实 Sub2API `accounts`，不是 Admin Plus 自有测试表。
+- 本地用量页读取真实 Sub2API `usage_logs`。
+- Redis 运行态只读 adapter 不写、不删、不清理任何 Sub2API key。
+- 成本、健康和利润信号能追溯到具体供应商账号/Key 子级。
+
+### M3：首批 Sub2API 供应商采集
 
 目标：让费率、余额、优惠、账单和健康数据自动进入系统。
 
 - 扩展 scheduler 任务审计、超时回收和失败重试可视化。
 - 完善周期策略：每 10 分钟生成费率/余额/优惠/健康任务，每日生成账单导出任务。
-- Chrome 插件完成设备配对、领取任务、登录供应商后台、抓取页面数据、上传结果。
 - 首批优先支持上游也是 Sub2API 的供应商。
+- 实现 Sub2API 供应商 Admin API / 只读 DB / 只读 Redis provider adapter。
+- Chrome 插件完成至少一个真实 Sub2API 供应商后台的一键登录或已登录会话上报；Provider Adapter 基于该真实会话完成费率、余额、优惠、健康或账单采集。
+- 插件失败必须回传明确错误，不允许生成 mock 成功结果。
 
-### M4：运营闭环
+验收：
+
+- 可以添加一个真实 Sub2API 供应商父级，并在其下绑定本地账号/Key 子级。
+- 10 分钟任务能产出真实费率、余额、优惠或健康数据中的至少三类。
+- 每日账单任务能导入真实供应商账单或供应商只读库账单。
+- 采集失败时能在插件任务和告警中看到失败原因。
+
+### M4：通知、审计与执行闭环
 
 目标：从监控走向可控执行。
 
 - 通知余额不足、费率变更、优惠、健康异常和对账异常。
+- 增加多通道和失败重试记录。
 - 动作建议详情展示影响范围、成本差异、健康差异和毛利风险。
 - 管理员确认后调用本地 Sub2API Admin API 调整账号状态、优先级或并发。
 - 所有执行动作进入审计日志。
+
+验收：
+
+- 同一供应商同一事件窗口不会重复刷屏。
+- 通知审计表能记录发送时间、事件类型、目标通道、发送结果和错误原因；前端页面需要能查询这些记录。
+- 管理员确认动作后，后端真实调用本地 Sub2API Admin API，而不是只改 Admin Plus 状态。
+- 审计记录包含操作人、动作原因、执行前快照、执行后结果和失败详情。
+
+### M5：前端业务闭环
+
+目标：让运营者不需要直接调用 API，也能完成核心流程。
+
+- 供应商管理页支持父级和账号/Key 子级分层管理。
+- 费率、余额、健康、优惠、账单、动作建议拆成独立导航模块，不复用重复空壳页面。
+- 所有页面使用真实 API，不使用静态 mock 列表。
+- 页面风格继续贴近 Sub2API 后台：列表、弹窗、表单位置和交互习惯保持一致。
+- 添加/编辑表单遵循 Sub2API 现有弹窗或页面模式，不把核心新增表单塞进右侧随意区域。
+
+验收：
+
+- 运营者能从导航完成供应商创建、子级绑定、采集任务生成、事件查看、对账运行和动作建议处理。
+- 前端所有空状态、错误态、加载态可用。
+- Playwright E2E 覆盖核心页面和真实 API 交互。

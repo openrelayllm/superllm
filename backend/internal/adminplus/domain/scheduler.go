@@ -3,13 +3,15 @@ package domain
 import "time"
 
 type SchedulerRun struct {
-	RunID        string              `json:"run_id"`
-	Mode         string              `json:"mode"`
-	RequestedAt  time.Time           `json:"requested_at"`
-	TaskTypes    []ExtensionTaskType `json:"task_types"`
-	CreatedCount int                 `json:"created_count"`
-	SkippedCount int                 `json:"skipped_count"`
-	Items        []ScheduledTask     `json:"items"`
+	RunID         string              `json:"run_id"`
+	Mode          string              `json:"mode"`
+	DryRun        bool                `json:"dry_run"`
+	RequestedAt   time.Time           `json:"requested_at"`
+	TaskTypes     []ExtensionTaskType `json:"task_types"`
+	CreatedCount  int                 `json:"created_count"`
+	SkippedCount  int                 `json:"skipped_count"`
+	EligibleCount int                 `json:"eligible_count"`
+	Items         []ScheduledTask     `json:"items"`
 }
 
 type SchedulerStatus struct {

@@ -135,18 +135,12 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: '调度中心'
+      title: '调度与插件采集'
     }
   },
   {
     path: '/admin/operations/extension-tasks',
-    name: 'AdminPlusExtensionTasks',
-    component: () => import('@/views/admin/operations/ExtensionTasksView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: '插件任务'
-    }
+    redirect: '/admin/operations/scheduler'
   },
   {
     path: '/admin/operations/billing',
@@ -159,16 +153,6 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/admin/operations/local-usage',
-    name: 'AdminPlusLocalUsage',
-    component: () => import('@/views/admin/operations/LocalUsageView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: '本地用量'
-    }
-  },
-  {
     path: '/admin/operations/actions',
     name: 'AdminPlusActions',
     component: () => import('@/views/admin/operations/ActionRecommendationsView.vue'),
@@ -176,6 +160,16 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
       requiresAuth: true,
       requiresAdmin: true,
       title: '动作建议'
+    }
+  },
+  {
+    path: '/admin/operations/notifications',
+    name: 'AdminPlusNotifications',
+    component: () => import('@/views/admin/operations/NotificationsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: '通知记录'
     }
   },
   {
