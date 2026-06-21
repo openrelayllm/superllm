@@ -36,64 +36,69 @@ CREATE TABLE IF NOT EXISTS admin_plus_supplier_usage_cost_lines (
     )
 );
 
-INSERT INTO admin_plus_supplier_usage_cost_lines (
-    supplier_id,
-    source,
-    external_usage_cost_id,
-    external_request_id,
-    model,
-    currency,
-    cost_cents,
-    input_tokens,
-    output_tokens,
-    started_at,
-    ended_at,
-    raw_payload,
-    created_at,
-    api_key_name,
-    endpoint,
-    request_type,
-    billing_mode,
-    reasoning_effort,
-    cache_read_tokens,
-    total_tokens,
-    first_token_ms,
-    duration_ms,
-    user_agent
-)
-SELECT
-    supplier_id,
-    source,
-    external_bill_id,
-    external_request_id,
-    model,
-    currency,
-    cost_cents,
-    input_tokens,
-    output_tokens,
-    started_at,
-    ended_at,
-    raw_payload,
-    created_at,
-    api_key_name,
-    endpoint,
-    request_type,
-    billing_mode,
-    reasoning_effort,
-    cache_read_tokens,
-    total_tokens,
-    first_token_ms,
-    duration_ms,
-    user_agent
-FROM admin_plus_supplier_bill_lines
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM admin_plus_supplier_usage_cost_lines target
-    WHERE target.supplier_id = admin_plus_supplier_bill_lines.supplier_id
-      AND target.external_usage_cost_id = admin_plus_supplier_bill_lines.external_bill_id
-      AND target.external_request_id = admin_plus_supplier_bill_lines.external_request_id
-      AND target.started_at = admin_plus_supplier_bill_lines.started_at
-);
+DO $$
+BEGIN
+    IF to_regclass('public.admin_plus_supplier_bill_lines') IS NOT NULL THEN
+        INSERT INTO admin_plus_supplier_usage_cost_lines (
+            supplier_id,
+            source,
+            external_usage_cost_id,
+            external_request_id,
+            model,
+            currency,
+            cost_cents,
+            input_tokens,
+            output_tokens,
+            started_at,
+            ended_at,
+            raw_payload,
+            created_at,
+            api_key_name,
+            endpoint,
+            request_type,
+            billing_mode,
+            reasoning_effort,
+            cache_read_tokens,
+            total_tokens,
+            first_token_ms,
+            duration_ms,
+            user_agent
+        )
+        SELECT
+            source_lines.supplier_id,
+            source_lines.source,
+            source_lines.external_bill_id,
+            source_lines.external_request_id,
+            source_lines.model,
+            source_lines.currency,
+            source_lines.cost_cents,
+            source_lines.input_tokens,
+            source_lines.output_tokens,
+            source_lines.started_at,
+            source_lines.ended_at,
+            source_lines.raw_payload,
+            source_lines.created_at,
+            source_lines.api_key_name,
+            source_lines.endpoint,
+            source_lines.request_type,
+            source_lines.billing_mode,
+            source_lines.reasoning_effort,
+            source_lines.cache_read_tokens,
+            source_lines.total_tokens,
+            source_lines.first_token_ms,
+            source_lines.duration_ms,
+            source_lines.user_agent
+        FROM admin_plus_supplier_bill_lines source_lines
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM admin_plus_supplier_usage_cost_lines target
+            WHERE target.supplier_id = source_lines.supplier_id
+              AND target.external_usage_cost_id = source_lines.external_bill_id
+              AND target.external_request_id = source_lines.external_request_id
+              AND target.started_at = source_lines.started_at
+        );
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_admin_plus_supplier_usage_cost_lines_supplier_started
     ON admin_plus_supplier_usage_cost_lines(supplier_id, started_at DESC, id DESC);
