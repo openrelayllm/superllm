@@ -25,6 +25,8 @@ export class AdminPlusClient {
         origin: payload.source_origin || '',
         dashboard_url: payload.dashboard_url || '',
         api_base_url: payload.api_base_url || '',
+        third_party_recharge_url: payload.third_party_recharge_url || '',
+        local_recharge_url: payload.local_recharge_url || '',
         auto_create_supplier: payload.auto_create_supplier,
         page_context: payload.page_context || {},
         payload

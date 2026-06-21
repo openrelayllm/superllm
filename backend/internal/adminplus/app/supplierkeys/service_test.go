@@ -2,11 +2,13 @@ package supplierkeys
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -203,10 +205,22 @@ func TestServiceEnsureAllFailsBeforeProviderKeyWhenSub2APIGatewayUnavailable(t *
 	require.Equal(t, "failed", result.Items[0].Action)
 	require.Equal(t, "LOCAL_SUB2API_GROUP_LIST_FAILED", result.Items[0].ErrorCode)
 	require.Contains(t, result.Items[0].ErrorMessage, "failed to list local Sub2API groups")
+	require.Contains(t, result.Items[0].ErrorMessage, "SUB2API_GATEWAY_CONFIG_REQUIRED")
 	require.Empty(t, keyAdapter.calls)
 	keys, listErr := repo.List(context.Background(), ListFilter{SupplierID: 7})
 	require.NoError(t, listErr)
 	require.Empty(t, keys)
+}
+
+func TestLocalGatewayErrorDetailRedactsSensitiveCause(t *testing.T) {
+	err := localGatewayError(
+		"LOCAL_SUB2API_GROUP_LIST_FAILED",
+		"failed to list local Sub2API groups",
+		infraerrors.New(http.StatusUnauthorized, "INVALID_ADMIN_KEY", "invalid api_key value"),
+	)
+
+	require.Contains(t, err.Error(), "error detail redacted because it contains sensitive fields")
+	require.NotContains(t, err.Error(), "invalid api_key value")
 }
 
 func TestServiceEnsureAllBindsExistingKeyAccountToLocalGroup(t *testing.T) {

@@ -46,18 +46,20 @@ type claimExtensionTaskRequest struct {
 }
 
 type captureSessionTaskRequest struct {
-	SupplierID      int64          `json:"supplier_id"`
-	DeviceID        string         `json:"device_id" binding:"required"`
-	LeaseTTLSeconds int64          `json:"lease_ttl_seconds"`
-	URL             string         `json:"url"`
-	Origin          string         `json:"origin"`
-	Host            string         `json:"host"`
-	DashboardURL    string         `json:"dashboard_url"`
-	APIBaseURL      string         `json:"api_base_url"`
-	Name            string         `json:"name"`
-	AutoCreate      *bool          `json:"auto_create_supplier"`
-	PageContext     map[string]any `json:"page_context"`
-	Payload         map[string]any `json:"payload"`
+	SupplierID            int64          `json:"supplier_id"`
+	DeviceID              string         `json:"device_id" binding:"required"`
+	LeaseTTLSeconds       int64          `json:"lease_ttl_seconds"`
+	URL                   string         `json:"url"`
+	Origin                string         `json:"origin"`
+	Host                  string         `json:"host"`
+	DashboardURL          string         `json:"dashboard_url"`
+	APIBaseURL            string         `json:"api_base_url"`
+	ThirdPartyRechargeURL string         `json:"third_party_recharge_url"`
+	LocalRechargeURL      string         `json:"local_recharge_url"`
+	Name                  string         `json:"name"`
+	AutoCreate            *bool          `json:"auto_create_supplier"`
+	PageContext           map[string]any `json:"page_context"`
+	Payload               map[string]any `json:"payload"`
 }
 
 type extensionTaskLeaseRequest struct {
@@ -140,19 +142,11 @@ func (h *ExtensionHandler) CreateCaptureSessionTask(c *gin.Context) {
 
 func (h *ExtensionHandler) resolveCaptureSessionSupplier(c *gin.Context, req captureSessionTaskRequest) (int64, map[string]any, error) {
 	payload := clonePayload(req.Payload)
-	if req.SupplierID > 0 {
-		payload["supplier_id"] = req.SupplierID
-		return req.SupplierID, payload, nil
-	}
-	if h.suppliers == nil {
-		return 0, payload, infraerrors.New(http.StatusBadRequest, "SUPPLIER_ID_REQUIRED", "supplier id is required")
-	}
 	sourceURL := firstNonEmpty(req.URL, req.DashboardURL, stringFromPayload(payload, "source_url"))
 	sourceHost := firstNonEmpty(req.Host, stringFromPayload(payload, "source_host"))
 	origin := firstNonEmpty(req.Origin, req.DashboardURL)
-	if sourceURL == "" && origin == "" && sourceHost == "" {
-		return 0, payload, infraerrors.New(http.StatusBadRequest, "SUPPLIER_SITE_REQUIRED", "site url or supplier id is required")
-	}
+	thirdPartyRechargeURL := firstNonEmpty(req.ThirdPartyRechargeURL, stringFromPayload(payload, "third_party_recharge_url"))
+	localRechargeURL := firstNonEmpty(req.LocalRechargeURL, stringFromPayload(payload, "local_recharge_url"))
 	if sourceURL != "" {
 		payload["source_url"] = sourceURL
 	}
@@ -162,12 +156,54 @@ func (h *ExtensionHandler) resolveCaptureSessionSupplier(c *gin.Context, req cap
 	if origin != "" {
 		payload["source_origin"] = origin
 	}
+	if thirdPartyRechargeURL != "" {
+		payload["third_party_recharge_url"] = thirdPartyRechargeURL
+	}
+	if localRechargeURL != "" {
+		payload["local_recharge_url"] = localRechargeURL
+	}
+	if req.SupplierID > 0 {
+		if h.suppliers != nil {
+			if _, err := h.suppliers.EnrichRechargeURLs(c.Request.Context(), req.SupplierID, suppliersapp.CreateFromSiteCandidateInput{
+				DashboardURL:          firstNonEmpty(req.DashboardURL, origin, sourceURL),
+				APIBaseURL:            req.APIBaseURL,
+				ThirdPartyRechargeURL: thirdPartyRechargeURL,
+				LocalRechargeURL:      localRechargeURL,
+				SourceHost:            sourceHost,
+				SourceURL:             sourceURL,
+			}); err != nil {
+				return 0, payload, err
+			}
+		}
+		payload["supplier_id"] = req.SupplierID
+		return req.SupplierID, payload, nil
+	}
+	if h.suppliers == nil {
+		return 0, payload, infraerrors.New(http.StatusBadRequest, "SUPPLIER_ID_REQUIRED", "supplier id is required")
+	}
+	if sourceURL == "" && origin == "" && sourceHost == "" {
+		return 0, payload, infraerrors.New(http.StatusBadRequest, "SUPPLIER_SITE_REQUIRED", "site url or supplier id is required")
+	}
 	match, err := h.suppliers.MatchSite(c.Request.Context(), suppliersapp.SiteMatchInput{
 		URL:    sourceURL,
 		Origin: origin,
 		Host:   sourceHost,
 	})
 	if err == nil && len(match.Suppliers) == 1 {
+		supplier, enrichErr := h.suppliers.EnrichRechargeURLs(c.Request.Context(), match.Suppliers[0].ID, suppliersapp.CreateFromSiteCandidateInput{
+			DashboardURL:          firstNonEmpty(req.DashboardURL, origin, sourceURL),
+			APIBaseURL:            req.APIBaseURL,
+			ThirdPartyRechargeURL: thirdPartyRechargeURL,
+			LocalRechargeURL:      localRechargeURL,
+			SourceHost:            sourceHost,
+			SourceURL:             sourceURL,
+		})
+		if enrichErr != nil {
+			return 0, payload, enrichErr
+		}
+		if supplier != nil {
+			match.Suppliers[0] = supplier
+		}
 		payload["supplier_id"] = match.Suppliers[0].ID
 		payload["supplier_match_status"] = match.Status
 		payload["supplier_auto_created"] = false
@@ -181,12 +217,14 @@ func (h *ExtensionHandler) resolveCaptureSessionSupplier(c *gin.Context, req cap
 	}
 	title, _ := req.PageContext["title"].(string)
 	ensured, err := h.suppliers.EnsureFromSiteCandidate(c.Request.Context(), suppliersapp.CreateFromSiteCandidateInput{
-		Name:         req.Name,
-		DashboardURL: firstNonEmpty(req.DashboardURL, origin, sourceURL),
-		APIBaseURL:   req.APIBaseURL,
-		SourceHost:   sourceHost,
-		SourceURL:    sourceURL,
-		Title:        title,
+		Name:                  req.Name,
+		DashboardURL:          firstNonEmpty(req.DashboardURL, origin, sourceURL),
+		APIBaseURL:            req.APIBaseURL,
+		ThirdPartyRechargeURL: thirdPartyRechargeURL,
+		LocalRechargeURL:      localRechargeURL,
+		SourceHost:            sourceHost,
+		SourceURL:             sourceURL,
+		Title:                 title,
 	})
 	if err != nil {
 		return 0, payload, err

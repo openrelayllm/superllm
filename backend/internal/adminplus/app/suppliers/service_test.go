@@ -48,6 +48,22 @@ func TestServiceCreateCandidateRequiresPositiveBalance(t *testing.T) {
 	require.Equal(t, "SUPPLIER_BALANCE_REQUIRED_FOR_CANDIDATE", infraerrors.Reason(err))
 }
 
+func TestServiceCreateSupplierPersistsRechargeURLs(t *testing.T) {
+	svc := NewService(NewMemoryRepository())
+
+	supplier, err := svc.Create(context.Background(), CreateSupplierInput{
+		Name:                  "Relay",
+		Kind:                  adminplusdomain.SupplierKindRelay,
+		Type:                  adminplusdomain.SupplierTypeSub2API,
+		ThirdPartyRechargeURL: " https://relay.example.com/custom/topup ",
+		LocalRechargeURL:      " https://sub2apiplus.example.com/custom/topup ",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "https://relay.example.com/custom/topup", supplier.ThirdPartyRechargeURL)
+	require.Equal(t, "https://sub2apiplus.example.com/custom/topup", supplier.LocalRechargeURL)
+}
+
 func TestServiceCreateSupplierAccountBindsLocalAccount(t *testing.T) {
 	svc := NewService(NewMemoryRepository())
 	supplier, err := svc.Create(context.Background(), CreateSupplierInput{
@@ -211,6 +227,48 @@ func TestServiceEnsureFromSiteCandidateCreatesSub2APISupplier(t *testing.T) {
 	require.True(t, matched.Matched)
 	require.False(t, matched.Created)
 	require.Equal(t, result.Supplier.ID, matched.Supplier.ID)
+}
+
+func TestServiceEnsureFromSiteCandidateInfersThirdPartyRechargeURL(t *testing.T) {
+	svc := NewService(NewMemoryRepository())
+
+	result, err := svc.EnsureFromSiteCandidate(context.Background(), CreateFromSiteCandidateInput{
+		Name:       "AI Pixel",
+		SourceHost: "ai-pixel.online",
+		SourceURL:  "https://ai-pixel.online/custom/9acb40a98e688a94",
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.Created)
+	require.Equal(t, "https://ai-pixel.online/custom/9acb40a98e688a94", result.Supplier.ThirdPartyRechargeURL)
+	require.Equal(t, "https://ai-pixel.online", result.Supplier.DashboardURL)
+}
+
+func TestServiceEnrichRechargeURLsOnlyFillsEmptyFields(t *testing.T) {
+	svc := NewService(NewMemoryRepository())
+	supplier, err := svc.Create(context.Background(), CreateSupplierInput{
+		Name:         "Relay",
+		Kind:         adminplusdomain.SupplierKindRelay,
+		Type:         adminplusdomain.SupplierTypeSub2API,
+		DashboardURL: "https://relay.example.com",
+	})
+	require.NoError(t, err)
+
+	enriched, err := svc.EnrichRechargeURLs(context.Background(), supplier.ID, CreateFromSiteCandidateInput{
+		SourceURL:        "https://relay.example.com/custom/first",
+		LocalRechargeURL: "https://sub2apiplus.example.com/custom/first",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "https://relay.example.com/custom/first", enriched.ThirdPartyRechargeURL)
+	require.Equal(t, "https://sub2apiplus.example.com/custom/first", enriched.LocalRechargeURL)
+
+	unchanged, err := svc.EnrichRechargeURLs(context.Background(), supplier.ID, CreateFromSiteCandidateInput{
+		ThirdPartyRechargeURL: "https://relay.example.com/custom/replaced",
+		LocalRechargeURL:      "https://sub2apiplus.example.com/custom/replaced",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "https://relay.example.com/custom/first", unchanged.ThirdPartyRechargeURL)
+	require.Equal(t, "https://sub2apiplus.example.com/custom/first", unchanged.LocalRechargeURL)
 }
 
 func TestServiceUpdateSupplierKeepsBrowserCredentialWhenSecretsOmitted(t *testing.T) {

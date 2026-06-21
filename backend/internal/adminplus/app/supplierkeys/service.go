@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -782,7 +783,7 @@ func (s *Service) ensureLocalGroup(ctx context.Context, supplier *adminplusdomai
 	name := defaultLocalGroupName(supplier, group)
 	groups, err := s.sub2apiGateway.GetAllGroupsIncludingInactive(ctx)
 	if err != nil {
-		return nil, false, infraerrors.New(http.StatusBadGateway, "LOCAL_SUB2API_GROUP_LIST_FAILED", "failed to list local Sub2API groups").WithCause(err)
+		return nil, false, localGatewayError("LOCAL_SUB2API_GROUP_LIST_FAILED", "failed to list local Sub2API groups", err)
 	}
 	for i := range groups {
 		if strings.EqualFold(strings.TrimSpace(groups[i].Name), name) {
@@ -822,7 +823,7 @@ func (s *Service) ensureLocalGroup(ctx context.Context, supplier *adminplusdomai
 	if strings.Contains(strings.ToUpper(err.Error()), "GROUP_EXISTS") || strings.Contains(strings.ToLower(err.Error()), "group name already exists") {
 		groups, listErr := s.sub2apiGateway.GetAllGroupsIncludingInactive(ctx)
 		if listErr != nil {
-			return nil, false, infraerrors.New(http.StatusBadGateway, "LOCAL_SUB2API_GROUP_LIST_FAILED", "failed to list local Sub2API groups").WithCause(listErr)
+			return nil, false, localGatewayError("LOCAL_SUB2API_GROUP_LIST_FAILED", "failed to list local Sub2API groups", listErr)
 		}
 		for i := range groups {
 			if strings.EqualFold(strings.TrimSpace(groups[i].Name), name) {
@@ -831,7 +832,7 @@ func (s *Service) ensureLocalGroup(ctx context.Context, supplier *adminplusdomai
 			}
 		}
 	}
-	return nil, false, infraerrors.New(http.StatusBadGateway, "LOCAL_SUB2API_GROUP_CREATE_FAILED", "failed to create local Sub2API group").WithCause(err)
+	return nil, false, localGatewayError("LOCAL_SUB2API_GROUP_CREATE_FAILED", "failed to create local Sub2API group", err)
 }
 
 func (s *Service) ensureLocalAccountStateForAccount(ctx context.Context, localAccount *service.Account, localGroupID int64, baseURL string, key *adminplusdomain.SupplierKey, group *adminplusdomain.SupplierGroup) (bool, *service.Account, error) {
@@ -863,7 +864,7 @@ func (s *Service) ensureLocalAccountStateForGroups(ctx context.Context, localAcc
 	}
 	updated, err := s.sub2apiGateway.UpdateAccount(ctx, localAccount.ID, input)
 	if err != nil {
-		return false, nil, infraerrors.New(http.StatusBadGateway, "LOCAL_SUB2API_ACCOUNT_STATE_SYNC_FAILED", "failed to sync local Sub2API account state").WithCause(err)
+		return false, nil, localGatewayError("LOCAL_SUB2API_ACCOUNT_STATE_SYNC_FAILED", "failed to sync local Sub2API account state", err)
 	}
 	return groupChanged, updated, nil
 }
@@ -1441,4 +1442,60 @@ func badRequest(reason string, message string) error {
 
 func internalError(message string) error {
 	return infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", message)
+}
+
+func localGatewayError(reason string, message string, cause error) error {
+	detail := localGatewayErrorDetail(cause)
+	if detail != "" {
+		message = message + ": " + detail
+	}
+	if cause != nil && supplierKeysContainsSensitiveMarker(cause.Error()) {
+		cause = errors.New("error detail redacted because it contains sensitive fields")
+	}
+	return infraerrors.New(http.StatusBadGateway, reason, message).WithCause(cause)
+}
+
+func localGatewayErrorDetail(err error) string {
+	if err == nil {
+		return ""
+	}
+	appErr := infraerrors.FromError(err)
+	parts := make([]string, 0, 2)
+	if strings.TrimSpace(appErr.Reason) != "" {
+		parts = append(parts, strings.TrimSpace(appErr.Reason))
+	}
+	if strings.TrimSpace(appErr.Message) != "" && strings.TrimSpace(appErr.Message) != infraerrors.UnknownMessage {
+		parts = append(parts, strings.TrimSpace(appErr.Message))
+	}
+	detail := strings.Join(parts, ": ")
+	if detail == "" {
+		detail = strings.TrimSpace(err.Error())
+	}
+	if detail == "" {
+		return ""
+	}
+	if supplierKeysContainsSensitiveMarker(detail) {
+		return "error detail redacted because it contains sensitive fields"
+	}
+	return trimLimit(detail, 240)
+}
+
+func supplierKeysContainsSensitiveMarker(value string) bool {
+	lower := strings.ToLower(value)
+	for _, marker := range []string{
+		"access_token",
+		"refresh_token",
+		"authorization",
+		"bearer ",
+		"cookie",
+		"password",
+		"secret",
+		"session_bundle",
+		"api_key",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }

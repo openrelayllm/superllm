@@ -28,7 +28,7 @@ func (r *SQLRepository) GetSupplier(ctx context.Context, supplierID int64) (*adm
 	}
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, name, kind, type, runtime_status, health_status,
-			dashboard_url, api_base_url, contact, notes,
+			dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
 			postgres_configured, redis_configured, browser_login_enabled,
 			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
 			balance_cents, balance_currency, balance_updated_at, created_at, updated_at
@@ -432,6 +432,8 @@ func scanSupplier(scanner scanner) (*adminplusdomain.Supplier, error) {
 		&healthStatus,
 		&supplier.DashboardURL,
 		&supplier.APIBaseURL,
+		&supplier.ThirdPartyRechargeURL,
+		&supplier.LocalRechargeURL,
 		&supplier.Contact,
 		&supplier.Notes,
 		&supplier.Credential.PostgresConfigured,

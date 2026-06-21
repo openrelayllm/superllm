@@ -12,43 +12,47 @@ import (
 )
 
 type CreateSupplierInput struct {
-	Name                 string
-	Kind                 adminplusdomain.SupplierKind
-	Type                 adminplusdomain.SupplierType
-	RuntimeStatus        adminplusdomain.SupplierRuntimeStatus
-	HealthStatus         adminplusdomain.SupplierHealthStatus
-	DashboardURL         string
-	APIBaseURL           string
-	Contact              string
-	Notes                string
-	PostgresReadDSN      string
-	RedisReadDSN         string
-	BrowserLoginEnabled  bool
-	BrowserLoginUsername string
-	BrowserLoginPassword string
-	BrowserLoginToken    string
-	BalanceCents         int64
-	BalanceCurrency      string
+	Name                  string
+	Kind                  adminplusdomain.SupplierKind
+	Type                  adminplusdomain.SupplierType
+	RuntimeStatus         adminplusdomain.SupplierRuntimeStatus
+	HealthStatus          adminplusdomain.SupplierHealthStatus
+	DashboardURL          string
+	APIBaseURL            string
+	ThirdPartyRechargeURL string
+	LocalRechargeURL      string
+	Contact               string
+	Notes                 string
+	PostgresReadDSN       string
+	RedisReadDSN          string
+	BrowserLoginEnabled   bool
+	BrowserLoginUsername  string
+	BrowserLoginPassword  string
+	BrowserLoginToken     string
+	BalanceCents          int64
+	BalanceCurrency       string
 }
 
 type UpdateSupplierInput struct {
-	Name                 string
-	Kind                 adminplusdomain.SupplierKind
-	Type                 adminplusdomain.SupplierType
-	RuntimeStatus        adminplusdomain.SupplierRuntimeStatus
-	HealthStatus         adminplusdomain.SupplierHealthStatus
-	DashboardURL         string
-	APIBaseURL           string
-	Contact              string
-	Notes                string
-	PostgresReadDSN      string
-	RedisReadDSN         string
-	BrowserLoginEnabled  bool
-	BrowserLoginUsername string
-	BrowserLoginPassword string
-	BrowserLoginToken    string
-	BalanceCents         int64
-	BalanceCurrency      string
+	Name                  string
+	Kind                  adminplusdomain.SupplierKind
+	Type                  adminplusdomain.SupplierType
+	RuntimeStatus         adminplusdomain.SupplierRuntimeStatus
+	HealthStatus          adminplusdomain.SupplierHealthStatus
+	DashboardURL          string
+	APIBaseURL            string
+	ThirdPartyRechargeURL string
+	LocalRechargeURL      string
+	Contact               string
+	Notes                 string
+	PostgresReadDSN       string
+	RedisReadDSN          string
+	BrowserLoginEnabled   bool
+	BrowserLoginUsername  string
+	BrowserLoginPassword  string
+	BrowserLoginToken     string
+	BalanceCents          int64
+	BalanceCurrency       string
 }
 
 type CreateSupplierAccountInput struct {
@@ -90,12 +94,14 @@ type UpdateSupplierStatusInput struct {
 }
 
 type CreateFromSiteCandidateInput struct {
-	Name         string
-	DashboardURL string
-	APIBaseURL   string
-	SourceHost   string
-	SourceURL    string
-	Title        string
+	Name                  string
+	DashboardURL          string
+	APIBaseURL            string
+	ThirdPartyRechargeURL string
+	LocalRechargeURL      string
+	SourceHost            string
+	SourceURL             string
+	Title                 string
 }
 
 type SupplierFilter struct {
@@ -159,15 +165,17 @@ func (s *Service) Create(ctx context.Context, in CreateSupplierInput) (*adminplu
 		return nil, internalError("supplier service is not configured")
 	}
 	normalized, err := normalizeSupplierInput(supplierInput{
-		Name:            in.Name,
-		Kind:            in.Kind,
-		Type:            in.Type,
-		RuntimeStatus:   in.RuntimeStatus,
-		HealthStatus:    in.HealthStatus,
-		DashboardURL:    in.DashboardURL,
-		APIBaseURL:      in.APIBaseURL,
-		BalanceCents:    in.BalanceCents,
-		BalanceCurrency: in.BalanceCurrency,
+		Name:                  in.Name,
+		Kind:                  in.Kind,
+		Type:                  in.Type,
+		RuntimeStatus:         in.RuntimeStatus,
+		HealthStatus:          in.HealthStatus,
+		DashboardURL:          in.DashboardURL,
+		APIBaseURL:            in.APIBaseURL,
+		ThirdPartyRechargeURL: in.ThirdPartyRechargeURL,
+		LocalRechargeURL:      in.LocalRechargeURL,
+		BalanceCents:          in.BalanceCents,
+		BalanceCurrency:       in.BalanceCurrency,
 	})
 	if err != nil {
 		return nil, err
@@ -175,18 +183,20 @@ func (s *Service) Create(ctx context.Context, in CreateSupplierInput) (*adminplu
 
 	now := s.now().UTC()
 	supplier := &adminplusdomain.Supplier{
-		Name:                 normalized.Name,
-		Kind:                 normalized.Kind,
-		Type:                 normalized.Type,
-		RuntimeStatus:        normalized.RuntimeStatus,
-		HealthStatus:         normalized.HealthStatus,
-		DashboardURL:         normalized.DashboardURL,
-		APIBaseURL:           normalized.APIBaseURL,
-		Contact:              trimLimit(in.Contact, 120),
-		Notes:                trimLimit(in.Notes, 500),
-		BrowserLoginUsername: strings.TrimSpace(in.BrowserLoginUsername),
-		BrowserLoginPassword: strings.TrimSpace(in.BrowserLoginPassword),
-		BrowserLoginToken:    strings.TrimSpace(in.BrowserLoginToken),
+		Name:                  normalized.Name,
+		Kind:                  normalized.Kind,
+		Type:                  normalized.Type,
+		RuntimeStatus:         normalized.RuntimeStatus,
+		HealthStatus:          normalized.HealthStatus,
+		DashboardURL:          normalized.DashboardURL,
+		APIBaseURL:            normalized.APIBaseURL,
+		ThirdPartyRechargeURL: normalized.ThirdPartyRechargeURL,
+		LocalRechargeURL:      normalized.LocalRechargeURL,
+		Contact:               trimLimit(in.Contact, 120),
+		Notes:                 trimLimit(in.Notes, 500),
+		BrowserLoginUsername:  strings.TrimSpace(in.BrowserLoginUsername),
+		BrowserLoginPassword:  strings.TrimSpace(in.BrowserLoginPassword),
+		BrowserLoginToken:     strings.TrimSpace(in.BrowserLoginToken),
 		Credential: adminplusdomain.SupplierCredentialStatus{
 			PostgresConfigured:             strings.TrimSpace(in.PostgresReadDSN) != "",
 			RedisConfigured:                strings.TrimSpace(in.RedisReadDSN) != "",
@@ -248,16 +258,18 @@ func (s *Service) CreateFromSiteCandidate(ctx context.Context, in CreateFromSite
 		name = name[:80]
 	}
 	return s.Create(ctx, CreateSupplierInput{
-		Name:                name,
-		Kind:                adminplusdomain.SupplierKindRelay,
-		Type:                adminplusdomain.SupplierTypeSub2API,
-		RuntimeStatus:       adminplusdomain.SupplierRuntimeStatusMonitorOnly,
-		HealthStatus:        adminplusdomain.SupplierHealthStatusNormal,
-		DashboardURL:        siteOrigin,
-		APIBaseURL:          apiBaseURL,
-		Notes:               "created from Chrome extension site candidate",
-		BrowserLoginEnabled: true,
-		BalanceCurrency:     "CNY",
+		Name:                  name,
+		Kind:                  adminplusdomain.SupplierKindRelay,
+		Type:                  adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus:         adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:          adminplusdomain.SupplierHealthStatusNormal,
+		DashboardURL:          siteOrigin,
+		APIBaseURL:            apiBaseURL,
+		ThirdPartyRechargeURL: firstNonEmpty(in.ThirdPartyRechargeURL, inferThirdPartyRechargeURL(in.SourceURL), inferThirdPartyRechargeURL(in.DashboardURL)),
+		LocalRechargeURL:      in.LocalRechargeURL,
+		Notes:                 "created from Chrome extension site candidate",
+		BrowserLoginEnabled:   true,
+		BalanceCurrency:       "CNY",
 	})
 }
 
@@ -271,8 +283,12 @@ func (s *Service) EnsureFromSiteCandidate(ctx context.Context, in CreateFromSite
 		Host:   in.SourceHost,
 	})
 	if err == nil && len(match.Suppliers) == 1 {
+		supplier, enrichErr := s.enrichSupplierRechargeURLs(ctx, match.Suppliers[0], in)
+		if enrichErr != nil {
+			return nil, enrichErr
+		}
 		return &EnsureFromSiteCandidateResult{
-			Supplier:    match.Suppliers[0],
+			Supplier:    supplier,
 			Matched:     true,
 			MatchStatus: match.Status,
 		}, nil
@@ -297,8 +313,12 @@ func (s *Service) EnsureFromSiteCandidate(ctx context.Context, in CreateFromSite
 			return nil, matchErr
 		}
 		if len(match.Suppliers) == 1 {
+			supplier, enrichErr := s.enrichSupplierRechargeURLs(ctx, match.Suppliers[0], in)
+			if enrichErr != nil {
+				return nil, enrichErr
+			}
 			return &EnsureFromSiteCandidateResult{
-				Supplier:    match.Suppliers[0],
+				Supplier:    supplier,
 				Matched:     true,
 				MatchStatus: match.Status,
 			}, nil
@@ -309,6 +329,20 @@ func (s *Service) EnsureFromSiteCandidate(ctx context.Context, in CreateFromSite
 		Supplier: created,
 		Created:  true,
 	}, nil
+}
+
+func (s *Service) EnrichRechargeURLs(ctx context.Context, id int64, in CreateFromSiteCandidateInput) (*adminplusdomain.Supplier, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("supplier service is not configured")
+	}
+	if id <= 0 {
+		return nil, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	supplier, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.enrichSupplierRechargeURLs(ctx, supplier, in)
 }
 
 func (s *Service) MatchSite(ctx context.Context, in SiteMatchInput) (*SiteMatchResult, error) {
@@ -419,15 +453,17 @@ func (s *Service) Update(ctx context.Context, id int64, in UpdateSupplierInput) 
 		return nil, err
 	}
 	normalized, err := normalizeSupplierInput(supplierInput{
-		Name:            in.Name,
-		Kind:            in.Kind,
-		Type:            in.Type,
-		RuntimeStatus:   in.RuntimeStatus,
-		HealthStatus:    in.HealthStatus,
-		DashboardURL:    in.DashboardURL,
-		APIBaseURL:      in.APIBaseURL,
-		BalanceCents:    in.BalanceCents,
-		BalanceCurrency: in.BalanceCurrency,
+		Name:                  in.Name,
+		Kind:                  in.Kind,
+		Type:                  in.Type,
+		RuntimeStatus:         in.RuntimeStatus,
+		HealthStatus:          in.HealthStatus,
+		DashboardURL:          in.DashboardURL,
+		APIBaseURL:            in.APIBaseURL,
+		ThirdPartyRechargeURL: in.ThirdPartyRechargeURL,
+		LocalRechargeURL:      in.LocalRechargeURL,
+		BalanceCents:          in.BalanceCents,
+		BalanceCurrency:       in.BalanceCurrency,
 	})
 	if err != nil {
 		return nil, err
@@ -441,6 +477,8 @@ func (s *Service) Update(ctx context.Context, id int64, in UpdateSupplierInput) 
 	updated.HealthStatus = normalized.HealthStatus
 	updated.DashboardURL = normalized.DashboardURL
 	updated.APIBaseURL = normalized.APIBaseURL
+	updated.ThirdPartyRechargeURL = normalized.ThirdPartyRechargeURL
+	updated.LocalRechargeURL = normalized.LocalRechargeURL
 	updated.Contact = trimLimit(in.Contact, 120)
 	updated.Notes = trimLimit(in.Notes, 500)
 	updated.BrowserLoginUsername = strings.TrimSpace(in.BrowserLoginUsername)
@@ -682,15 +720,17 @@ func (s *Service) DeleteAccount(ctx context.Context, supplierID int64, accountID
 }
 
 type supplierInput struct {
-	Name            string
-	Kind            adminplusdomain.SupplierKind
-	Type            adminplusdomain.SupplierType
-	RuntimeStatus   adminplusdomain.SupplierRuntimeStatus
-	HealthStatus    adminplusdomain.SupplierHealthStatus
-	DashboardURL    string
-	APIBaseURL      string
-	BalanceCents    int64
-	BalanceCurrency string
+	Name                  string
+	Kind                  adminplusdomain.SupplierKind
+	Type                  adminplusdomain.SupplierType
+	RuntimeStatus         adminplusdomain.SupplierRuntimeStatus
+	HealthStatus          adminplusdomain.SupplierHealthStatus
+	DashboardURL          string
+	APIBaseURL            string
+	ThirdPartyRechargeURL string
+	LocalRechargeURL      string
+	BalanceCents          int64
+	BalanceCurrency       string
 }
 
 func normalizeSupplierInput(in supplierInput) (supplierInput, error) {
@@ -738,16 +778,26 @@ func normalizeSupplierInput(in supplierInput) (supplierInput, error) {
 	if err != nil {
 		return supplierInput{}, err
 	}
+	thirdPartyRechargeURL, err := normalizeOptionalURL(in.ThirdPartyRechargeURL, "SUPPLIER_THIRD_PARTY_RECHARGE_URL_INVALID")
+	if err != nil {
+		return supplierInput{}, err
+	}
+	localRechargeURL, err := normalizeOptionalURL(in.LocalRechargeURL, "SUPPLIER_LOCAL_RECHARGE_URL_INVALID")
+	if err != nil {
+		return supplierInput{}, err
+	}
 	return supplierInput{
-		Name:            name,
-		Kind:            in.Kind,
-		Type:            in.Type,
-		RuntimeStatus:   runtimeStatus,
-		HealthStatus:    healthStatus,
-		DashboardURL:    dashboardURL,
-		APIBaseURL:      apiBaseURL,
-		BalanceCents:    in.BalanceCents,
-		BalanceCurrency: normalizeCurrency(in.BalanceCurrency),
+		Name:                  name,
+		Kind:                  in.Kind,
+		Type:                  in.Type,
+		RuntimeStatus:         runtimeStatus,
+		HealthStatus:          healthStatus,
+		DashboardURL:          dashboardURL,
+		APIBaseURL:            apiBaseURL,
+		ThirdPartyRechargeURL: thirdPartyRechargeURL,
+		LocalRechargeURL:      localRechargeURL,
+		BalanceCents:          in.BalanceCents,
+		BalanceCurrency:       normalizeCurrency(in.BalanceCurrency),
 	}, nil
 }
 
@@ -782,6 +832,50 @@ func normalizeCandidateAPIBaseURL(raw string, fallback *url.URL) (string, error)
 		v = fallback.Scheme + "://" + fallback.Host
 	}
 	return normalizeOptionalURL(v, "SUPPLIER_API_BASE_URL_INVALID")
+}
+
+func (s *Service) enrichSupplierRechargeURLs(ctx context.Context, supplier *adminplusdomain.Supplier, in CreateFromSiteCandidateInput) (*adminplusdomain.Supplier, error) {
+	if supplier == nil {
+		return supplier, nil
+	}
+	thirdPartyRechargeURL, err := normalizeOptionalURL(firstNonEmpty(in.ThirdPartyRechargeURL, inferThirdPartyRechargeURL(in.SourceURL), inferThirdPartyRechargeURL(in.DashboardURL)), "SUPPLIER_THIRD_PARTY_RECHARGE_URL_INVALID")
+	if err != nil {
+		return nil, err
+	}
+	localRechargeURL, err := normalizeOptionalURL(in.LocalRechargeURL, "SUPPLIER_LOCAL_RECHARGE_URL_INVALID")
+	if err != nil {
+		return nil, err
+	}
+	if (thirdPartyRechargeURL == "" || supplier.ThirdPartyRechargeURL != "") && (localRechargeURL == "" || supplier.LocalRechargeURL != "") {
+		return supplier, nil
+	}
+	updated := *supplier
+	if updated.ThirdPartyRechargeURL == "" {
+		updated.ThirdPartyRechargeURL = thirdPartyRechargeURL
+	}
+	if updated.LocalRechargeURL == "" {
+		updated.LocalRechargeURL = localRechargeURL
+	}
+	updated.UpdatedAt = s.now().UTC()
+	return s.repo.Update(ctx, &updated)
+}
+
+func inferThirdPartyRechargeURL(raw string) string {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return ""
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	path := strings.ToLower(u.EscapedPath())
+	for _, marker := range []string{"/custom/", "/recharge", "/payment", "/topup", "/redeem", "/card", "/pay"} {
+		if strings.Contains(path, marker) {
+			return v
+		}
+	}
+	return ""
 }
 
 func normalizeSiteMatchInput(in SiteMatchInput) (string, string, error) {

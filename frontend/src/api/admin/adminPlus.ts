@@ -54,6 +54,8 @@ export interface Supplier {
   health_status: SupplierHealthStatus
   dashboard_url?: string
   api_base_url?: string
+  third_party_recharge_url?: string
+  local_recharge_url?: string
   contact?: string
   notes?: string
   credential: SupplierCredentialStatus
@@ -80,6 +82,8 @@ export interface SupplierSiteMatchCandidate {
   type: SupplierType
   dashboard_url?: string
   api_base_url?: string
+  third_party_recharge_url?: string
+  local_recharge_url?: string
   match_fields?: string[]
 }
 
@@ -225,6 +229,8 @@ export interface CreateSupplierPayload {
   health_status?: SupplierHealthStatus
   dashboard_url?: string
   api_base_url?: string
+  third_party_recharge_url?: string
+  local_recharge_url?: string
   contact?: string
   notes?: string
   postgres_read_dsn?: string

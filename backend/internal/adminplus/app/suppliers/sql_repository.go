@@ -59,15 +59,15 @@ func (r *SQLRepository) Create(ctx context.Context, supplier *adminplusdomain.Su
 	row := r.db.QueryRowContext(ctx, `
 		INSERT INTO admin_plus_suppliers (
 			name, kind, type, runtime_status, health_status,
-			dashboard_url, api_base_url, contact, notes,
+			dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
 			postgres_configured, redis_configured, browser_login_enabled,
 			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
 			browser_login_username_ciphertext, browser_login_password_ciphertext, browser_login_token_ciphertext,
 			balance_cents, balance_currency, balance_updated_at, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
 		RETURNING id, name, kind, type, runtime_status, health_status,
-			dashboard_url, api_base_url, contact, notes,
+			dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
 			postgres_configured, redis_configured, browser_login_enabled,
 			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
 			balance_cents, balance_currency, balance_updated_at, created_at, updated_at
@@ -79,6 +79,8 @@ func (r *SQLRepository) Create(ctx context.Context, supplier *adminplusdomain.Su
 		string(supplier.HealthStatus),
 		supplier.DashboardURL,
 		supplier.APIBaseURL,
+		supplier.ThirdPartyRechargeURL,
+		supplier.LocalRechargeURL,
 		supplier.Contact,
 		supplier.Notes,
 		supplier.Credential.PostgresConfigured,
@@ -158,7 +160,7 @@ func (r *SQLRepository) Get(ctx context.Context, id int64) (*adminplusdomain.Sup
 	}
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, name, kind, type, runtime_status, health_status,
-			dashboard_url, api_base_url, contact, notes,
+			dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
 			postgres_configured, redis_configured, browser_login_enabled,
 			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
 			balance_cents, balance_currency, balance_updated_at, created_at, updated_at
@@ -197,7 +199,7 @@ func (r *SQLRepository) List(ctx context.Context, filter SupplierFilter) ([]*adm
 
 	query := `
 		SELECT id, name, kind, type, runtime_status, health_status,
-			dashboard_url, api_base_url, contact, notes,
+			dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
 			postgres_configured, redis_configured, browser_login_enabled,
 			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
 			balance_cents, balance_currency, balance_updated_at, created_at, updated_at
@@ -252,25 +254,27 @@ func (r *SQLRepository) Update(ctx context.Context, supplier *adminplusdomain.Su
 			health_status = $6,
 			dashboard_url = $7,
 			api_base_url = $8,
-			contact = $9,
-			notes = $10,
-			postgres_configured = $11,
-			redis_configured = $12,
-			browser_login_enabled = $13,
-			browser_login_username_configured = $14,
-			browser_login_password_configured = $15,
-			browser_login_token_configured = $16,
-			masked_browser_login_username = $17,
-			browser_login_username_ciphertext = CASE WHEN $18 <> '' THEN $18 ELSE browser_login_username_ciphertext END,
-			browser_login_password_ciphertext = CASE WHEN $19 <> '' THEN $19 ELSE browser_login_password_ciphertext END,
-			browser_login_token_ciphertext = CASE WHEN $20 <> '' THEN $20 ELSE browser_login_token_ciphertext END,
-			balance_cents = $21,
-			balance_currency = $22,
-			balance_updated_at = $23,
-			updated_at = $24
+			third_party_recharge_url = $9,
+			local_recharge_url = $10,
+			contact = $11,
+			notes = $12,
+			postgres_configured = $13,
+			redis_configured = $14,
+			browser_login_enabled = $15,
+			browser_login_username_configured = $16,
+			browser_login_password_configured = $17,
+			browser_login_token_configured = $18,
+			masked_browser_login_username = $19,
+			browser_login_username_ciphertext = CASE WHEN $20 <> '' THEN $20 ELSE browser_login_username_ciphertext END,
+			browser_login_password_ciphertext = CASE WHEN $21 <> '' THEN $21 ELSE browser_login_password_ciphertext END,
+			browser_login_token_ciphertext = CASE WHEN $22 <> '' THEN $22 ELSE browser_login_token_ciphertext END,
+			balance_cents = $23,
+			balance_currency = $24,
+			balance_updated_at = $25,
+			updated_at = $26
 		WHERE id = $1
 		RETURNING id, name, kind, type, runtime_status, health_status,
-			dashboard_url, api_base_url, contact, notes,
+			dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
 			postgres_configured, redis_configured, browser_login_enabled,
 			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
 			balance_cents, balance_currency, balance_updated_at, created_at, updated_at
@@ -283,6 +287,8 @@ func (r *SQLRepository) Update(ctx context.Context, supplier *adminplusdomain.Su
 		string(supplier.HealthStatus),
 		supplier.DashboardURL,
 		supplier.APIBaseURL,
+		supplier.ThirdPartyRechargeURL,
+		supplier.LocalRechargeURL,
 		supplier.Contact,
 		supplier.Notes,
 		supplier.Credential.PostgresConfigured,
@@ -312,7 +318,7 @@ func (r *SQLRepository) UpdateStatus(ctx context.Context, id int64, runtimeStatu
 		SET runtime_status = $2, health_status = $3, updated_at = NOW()
 		WHERE id = $1
 		RETURNING id, name, kind, type, runtime_status, health_status,
-			dashboard_url, api_base_url, contact, notes,
+			dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
 			postgres_configured, redis_configured, browser_login_enabled,
 			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
 			balance_cents, balance_currency, balance_updated_at, created_at, updated_at
@@ -613,6 +619,8 @@ func scanSupplier(scanner supplierScanner) (*adminplusdomain.Supplier, error) {
 		&healthStatus,
 		&supplier.DashboardURL,
 		&supplier.APIBaseURL,
+		&supplier.ThirdPartyRechargeURL,
+		&supplier.LocalRechargeURL,
 		&supplier.Contact,
 		&supplier.Notes,
 		&supplier.Credential.PostgresConfigured,

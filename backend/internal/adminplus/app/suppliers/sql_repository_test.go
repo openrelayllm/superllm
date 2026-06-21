@@ -38,6 +38,8 @@ func TestSQLRepositoryCreatePersistsSupplier(t *testing.T) {
 			"normal",
 			"https://relay.example.com/admin",
 			"https://relay.example.com",
+			"https://relay.example.com/custom/topup",
+			"https://sub2apiplus.example.com/custom/topup",
 			"ops@example.com",
 			"primary upstream",
 			true,
@@ -65,6 +67,8 @@ func TestSQLRepositoryCreatePersistsSupplier(t *testing.T) {
 			"normal",
 			"https://relay.example.com/admin",
 			"https://relay.example.com",
+			"https://relay.example.com/custom/topup",
+			"https://sub2apiplus.example.com/custom/topup",
 			"ops@example.com",
 			"primary upstream",
 			true,
@@ -82,17 +86,19 @@ func TestSQLRepositoryCreatePersistsSupplier(t *testing.T) {
 		))
 
 	got, err := repo.Create(context.Background(), &adminplusdomain.Supplier{
-		Name:                 "Primary Relay",
-		Kind:                 adminplusdomain.SupplierKindRelay,
-		Type:                 adminplusdomain.SupplierTypeSub2API,
-		RuntimeStatus:        adminplusdomain.SupplierRuntimeStatusCandidate,
-		HealthStatus:         adminplusdomain.SupplierHealthStatusNormal,
-		DashboardURL:         "https://relay.example.com/admin",
-		APIBaseURL:           "https://relay.example.com",
-		Contact:              "ops@example.com",
-		Notes:                "primary upstream",
-		BrowserLoginUsername: "ops@example.com",
-		BrowserLoginPassword: "secret",
+		Name:                  "Primary Relay",
+		Kind:                  adminplusdomain.SupplierKindRelay,
+		Type:                  adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus:         adminplusdomain.SupplierRuntimeStatusCandidate,
+		HealthStatus:          adminplusdomain.SupplierHealthStatusNormal,
+		DashboardURL:          "https://relay.example.com/admin",
+		APIBaseURL:            "https://relay.example.com",
+		ThirdPartyRechargeURL: "https://relay.example.com/custom/topup",
+		LocalRechargeURL:      "https://sub2apiplus.example.com/custom/topup",
+		Contact:               "ops@example.com",
+		Notes:                 "primary upstream",
+		BrowserLoginUsername:  "ops@example.com",
+		BrowserLoginPassword:  "secret",
 		Credential: adminplusdomain.SupplierCredentialStatus{
 			PostgresConfigured:             true,
 			RedisConfigured:                true,
@@ -111,6 +117,8 @@ func TestSQLRepositoryCreatePersistsSupplier(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(7), got.ID)
 	require.Equal(t, adminplusdomain.SupplierRuntimeStatusCandidate, got.RuntimeStatus)
+	require.Equal(t, "https://relay.example.com/custom/topup", got.ThirdPartyRechargeURL)
+	require.Equal(t, "https://sub2apiplus.example.com/custom/topup", got.LocalRechargeURL)
 	require.True(t, got.Credential.PostgresConfigured)
 }
 
@@ -173,6 +181,8 @@ func TestSQLRepositoryListFiltersWithParameterizedQuery(t *testing.T) {
 			"",
 			"",
 			"",
+			"",
+			"",
 			false,
 			false,
 			false,
@@ -214,6 +224,8 @@ func TestSQLRepositoryUpdateStatus(t *testing.T) {
 			"sub2api",
 			"disabled",
 			"paused",
+			"",
+			"",
 			"",
 			"",
 			"",
@@ -365,6 +377,8 @@ func newSupplierRows() *sqlmock.Rows {
 		"health_status",
 		"dashboard_url",
 		"api_base_url",
+		"third_party_recharge_url",
+		"local_recharge_url",
 		"contact",
 		"notes",
 		"postgres_configured",

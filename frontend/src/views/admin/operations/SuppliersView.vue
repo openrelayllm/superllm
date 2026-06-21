@@ -358,6 +358,32 @@
             </span>
             <span>渠道状态</span>
           </button>
+          <a
+            v-if="rowActionsMenuSupplier?.third_party_recharge_url"
+            class="row-action-menu-item"
+            role="menuitem"
+            :href="rowActionsMenuSupplier.third_party_recharge_url"
+            target="_blank"
+            rel="noopener noreferrer"
+            @click="closeRowActionsMenu"
+          >
+            <span class="row-action-menu-icon bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
+              <Icon name="externalLink" size="sm" />
+            </span>
+            <span>第三方兑换</span>
+          </a>
+          <button
+            v-else
+            class="row-action-menu-item"
+            role="menuitem"
+            disabled
+            title="未配置第三方兑换入口，请编辑供应商补齐"
+          >
+            <span class="row-action-menu-icon bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500">
+              <Icon name="externalLink" size="sm" />
+            </span>
+            <span>第三方兑换</span>
+          </button>
           <div class="my-2 border-t border-gray-100 dark:border-gray-700"></div>
           <button class="row-action-menu-item text-red-600 dark:text-red-300" role="menuitem" @click="openRowDeleteDialog">
             <span class="row-action-menu-icon bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300">
@@ -443,6 +469,14 @@
           <label class="block">
             <span class="input-label">API Base URL</span>
             <input v-model.trim="form.api_base_url" class="input" placeholder="https://supplier.example.com/api/v1" />
+          </label>
+          <label class="block">
+            <span class="input-label">第三方兑换入口</span>
+            <input v-model.trim="form.third_party_recharge_url" class="input" placeholder="https://supplier.example.com/custom/..." />
+          </label>
+          <label class="block">
+            <span class="input-label">本地充值入口</span>
+            <input v-model.trim="form.local_recharge_url" class="input" placeholder="https://sub2apiplus.example.com/custom/..." />
           </label>
         </div>
 
@@ -1304,7 +1338,7 @@ let provisionJobTimer: ReturnType<typeof window.setTimeout> | undefined
 let channelStatusAutoRefreshTimer: ReturnType<typeof window.setInterval> | undefined
 
 const ROW_ACTIONS_MENU_WIDTH = 224
-const ROW_ACTIONS_MENU_HEIGHT = 248
+const ROW_ACTIONS_MENU_HEIGHT = 304
 const ROW_ACTIONS_MENU_MARGIN = 8
 
 const filters = reactive({
@@ -1342,6 +1376,8 @@ const form = reactive({
   health_status: 'normal' as SupplierHealthStatus,
   dashboard_url: '',
   api_base_url: '',
+  third_party_recharge_url: '',
+  local_recharge_url: '',
   contact: '',
   browser_login_username: '',
   browser_login_password: '',
@@ -2177,6 +2213,8 @@ function resetForm() {
   form.health_status = 'normal'
   form.dashboard_url = ''
   form.api_base_url = ''
+  form.third_party_recharge_url = ''
+  form.local_recharge_url = ''
   form.contact = ''
   form.browser_login_username = ''
   form.browser_login_password = ''
@@ -2195,6 +2233,8 @@ function fillForm(supplier: Supplier) {
   form.health_status = supplier.health_status
   form.dashboard_url = supplier.dashboard_url || ''
   form.api_base_url = supplier.api_base_url || ''
+  form.third_party_recharge_url = supplier.third_party_recharge_url || ''
+  form.local_recharge_url = supplier.local_recharge_url || ''
   form.contact = supplier.contact || ''
   form.browser_login_username = ''
   form.browser_login_password = ''
@@ -2231,6 +2271,8 @@ function buildPayload() {
     health_status: form.health_status,
     dashboard_url: form.dashboard_url || undefined,
     api_base_url: form.api_base_url || undefined,
+    third_party_recharge_url: form.third_party_recharge_url || undefined,
+    local_recharge_url: form.local_recharge_url || undefined,
     contact: form.contact || undefined,
     browser_login_username: form.browser_login_username || undefined,
     browser_login_password: form.browser_login_password || undefined,
@@ -2926,7 +2968,7 @@ onBeforeUnmount(cleanupTimers)
 }
 
 .row-action-menu-item {
-  @apply flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700;
+  @apply flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-200 dark:hover:bg-gray-700;
 }
 
 .row-action-menu-icon {

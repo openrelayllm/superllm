@@ -55,25 +55,27 @@ type SupplierCredentialStatus struct {
 }
 
 type Supplier struct {
-	ID                   int64                    `json:"id"`
-	Name                 string                   `json:"name"`
-	Kind                 SupplierKind             `json:"kind"`
-	Type                 SupplierType             `json:"type"`
-	RuntimeStatus        SupplierRuntimeStatus    `json:"runtime_status"`
-	HealthStatus         SupplierHealthStatus     `json:"health_status"`
-	DashboardURL         string                   `json:"dashboard_url,omitempty"`
-	APIBaseURL           string                   `json:"api_base_url,omitempty"`
-	Contact              string                   `json:"contact,omitempty"`
-	Notes                string                   `json:"notes,omitempty"`
-	BrowserLoginUsername string                   `json:"-"`
-	BrowserLoginPassword string                   `json:"-"`
-	BrowserLoginToken    string                   `json:"-"`
-	Credential           SupplierCredentialStatus `json:"credential"`
-	BalanceCents         int64                    `json:"balance_cents"`
-	BalanceCurrency      string                   `json:"balance_currency"`
-	BalanceUpdatedAt     *time.Time               `json:"balance_updated_at,omitempty"`
-	CreatedAt            time.Time                `json:"created_at"`
-	UpdatedAt            time.Time                `json:"updated_at"`
+	ID                    int64                    `json:"id"`
+	Name                  string                   `json:"name"`
+	Kind                  SupplierKind             `json:"kind"`
+	Type                  SupplierType             `json:"type"`
+	RuntimeStatus         SupplierRuntimeStatus    `json:"runtime_status"`
+	HealthStatus          SupplierHealthStatus     `json:"health_status"`
+	DashboardURL          string                   `json:"dashboard_url,omitempty"`
+	APIBaseURL            string                   `json:"api_base_url,omitempty"`
+	ThirdPartyRechargeURL string                   `json:"third_party_recharge_url,omitempty"`
+	LocalRechargeURL      string                   `json:"local_recharge_url,omitempty"`
+	Contact               string                   `json:"contact,omitempty"`
+	Notes                 string                   `json:"notes,omitempty"`
+	BrowserLoginUsername  string                   `json:"-"`
+	BrowserLoginPassword  string                   `json:"-"`
+	BrowserLoginToken     string                   `json:"-"`
+	Credential            SupplierCredentialStatus `json:"credential"`
+	BalanceCents          int64                    `json:"balance_cents"`
+	BalanceCurrency       string                   `json:"balance_currency"`
+	BalanceUpdatedAt      *time.Time               `json:"balance_updated_at,omitempty"`
+	CreatedAt             time.Time                `json:"created_at"`
+	UpdatedAt             time.Time                `json:"updated_at"`
 }
 
 type SupplierBrowserCredential struct {

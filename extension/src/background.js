@@ -189,13 +189,17 @@ async function captureSupplierSession(supplierID, autoCreate) {
   if (!supplier) {
     supplier = supplierFromCurrentSite(identification, autoCreate)
   }
+  const activeTabURL = identification.activeTab?.url || ''
+  const thirdPartyRechargeURL = inferThirdPartyRechargeURL(activeTabURL)
 
   const task = await client.createCaptureSessionTask(config.deviceID, supplier.id, {
-    source_url: identification.activeTab?.url || '',
+    source_url: activeTabURL,
     source_host: identification.activeTab?.host || '',
     source_origin: identification.activeTab?.origin || '',
-    dashboard_url: supplier.dashboard_url || identification.activeTab?.url || '',
+    dashboard_url: supplier.dashboard_url || activeTabURL,
     api_base_url: supplier.api_base_url || identification.activeTab?.origin || '',
+    third_party_recharge_url: thirdPartyRechargeURL,
+    local_recharge_url: supplier.local_recharge_url || '',
     auto_create_supplier: Boolean(autoCreate),
     page_context: {
       title: identification.activeTab?.title || ''
@@ -205,7 +209,7 @@ async function captureSupplierSession(supplierID, autoCreate) {
     ...supplier,
     id: task.supplier_id,
     supplier_id: task.supplier_id,
-    dashboard_url: supplier.dashboard_url || identification.activeTab?.url || '',
+    dashboard_url: supplier.dashboard_url || activeTabURL,
     api_base_url: supplier.api_base_url || identification.activeTab?.origin || ''
   }
   await client.heartbeat(task)
@@ -283,6 +287,7 @@ async function discoverSupplierFromCurrentSite(client, identification) {
     name: suggestedSupplierName(parsed, tab),
     dashboard_url: parsed.href,
     api_base_url: parsed.origin,
+    third_party_recharge_url: inferThirdPartyRechargeURL(parsed.href),
     source_host: parsed.host,
     source_url: parsed.href
   })
@@ -305,7 +310,9 @@ function supplierFromCurrentSite(identification, autoCreate) {
     supplier_id: 0,
     name: tab.host || '当前供应商',
     dashboard_url: tab.url || '',
-    api_base_url: tab.origin || ''
+    api_base_url: tab.origin || '',
+    third_party_recharge_url: inferThirdPartyRechargeURL(tab.url || ''),
+    local_recharge_url: ''
   }
 }
 
@@ -418,6 +425,8 @@ function supplierSummary(supplier, score) {
     type: supplier.type,
     dashboard_url: supplier.dashboard_url || '',
     api_base_url: supplier.api_base_url || '',
+    third_party_recharge_url: supplier.third_party_recharge_url || '',
+    local_recharge_url: supplier.local_recharge_url || '',
     credential: supplier.credential || {},
     score
   }
@@ -445,6 +454,14 @@ function safeURL(value) {
   } catch {
     return null
   }
+}
+
+function inferThirdPartyRechargeURL(value) {
+  const parsed = safeURL(value)
+  if (!parsed || !/^https?:$/.test(parsed.protocol)) return ''
+  const path = parsed.pathname.toLowerCase()
+  const markers = ['/custom/', '/recharge', '/payment', '/topup', '/redeem', '/card', '/pay']
+  return markers.some((marker) => path.includes(marker)) ? parsed.href : ''
 }
 
 function sameOriginOrURL(left, right) {

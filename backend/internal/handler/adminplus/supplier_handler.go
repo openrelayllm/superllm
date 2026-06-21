@@ -19,23 +19,25 @@ func NewSupplierHandler(service *suppliersapp.Service) *SupplierHandler {
 }
 
 type createSupplierRequest struct {
-	Name                 string `json:"name" binding:"required"`
-	Kind                 string `json:"kind" binding:"required"`
-	Type                 string `json:"type" binding:"required"`
-	RuntimeStatus        string `json:"runtime_status"`
-	HealthStatus         string `json:"health_status"`
-	DashboardURL         string `json:"dashboard_url"`
-	APIBaseURL           string `json:"api_base_url"`
-	Contact              string `json:"contact"`
-	Notes                string `json:"notes"`
-	PostgresReadDSN      string `json:"postgres_read_dsn"`
-	RedisReadDSN         string `json:"redis_read_dsn"`
-	BrowserLoginEnabled  bool   `json:"browser_login_enabled"`
-	BrowserLoginUsername string `json:"browser_login_username"`
-	BrowserLoginPassword string `json:"browser_login_password"`
-	BrowserLoginToken    string `json:"browser_login_token"`
-	BalanceCents         int64  `json:"balance_cents"`
-	BalanceCurrency      string `json:"balance_currency"`
+	Name                  string `json:"name" binding:"required"`
+	Kind                  string `json:"kind" binding:"required"`
+	Type                  string `json:"type" binding:"required"`
+	RuntimeStatus         string `json:"runtime_status"`
+	HealthStatus          string `json:"health_status"`
+	DashboardURL          string `json:"dashboard_url"`
+	APIBaseURL            string `json:"api_base_url"`
+	ThirdPartyRechargeURL string `json:"third_party_recharge_url"`
+	LocalRechargeURL      string `json:"local_recharge_url"`
+	Contact               string `json:"contact"`
+	Notes                 string `json:"notes"`
+	PostgresReadDSN       string `json:"postgres_read_dsn"`
+	RedisReadDSN          string `json:"redis_read_dsn"`
+	BrowserLoginEnabled   bool   `json:"browser_login_enabled"`
+	BrowserLoginUsername  string `json:"browser_login_username"`
+	BrowserLoginPassword  string `json:"browser_login_password"`
+	BrowserLoginToken     string `json:"browser_login_token"`
+	BalanceCents          int64  `json:"balance_cents"`
+	BalanceCurrency       string `json:"balance_currency"`
 }
 
 type createSupplierAccountRequest struct {
@@ -75,13 +77,15 @@ type updateSupplierStatusRequest struct {
 }
 
 type createSupplierFromSiteCandidateRequest struct {
-	Name         string         `json:"name"`
-	Type         string         `json:"type"`
-	DashboardURL string         `json:"dashboard_url" binding:"required"`
-	APIBaseURL   string         `json:"api_base_url"`
-	SourceHost   string         `json:"source_host"`
-	SourceURL    string         `json:"source_url"`
-	PageContext  map[string]any `json:"page_context"`
+	Name                  string         `json:"name"`
+	Type                  string         `json:"type"`
+	DashboardURL          string         `json:"dashboard_url" binding:"required"`
+	APIBaseURL            string         `json:"api_base_url"`
+	ThirdPartyRechargeURL string         `json:"third_party_recharge_url"`
+	LocalRechargeURL      string         `json:"local_recharge_url"`
+	SourceHost            string         `json:"source_host"`
+	SourceURL             string         `json:"source_url"`
+	PageContext           map[string]any `json:"page_context"`
 }
 
 type supplierSiteMatchRequest struct {
@@ -114,23 +118,25 @@ func (h *SupplierHandler) Create(c *gin.Context) {
 	}
 
 	supplier, err := h.service.Create(c.Request.Context(), suppliersapp.CreateSupplierInput{
-		Name:                 req.Name,
-		Kind:                 adminplusdomain.NormalizeSupplierKind(req.Kind),
-		Type:                 adminplusdomain.NormalizeSupplierType(req.Type),
-		RuntimeStatus:        adminplusdomain.NormalizeSupplierRuntimeStatus(req.RuntimeStatus),
-		HealthStatus:         adminplusdomain.NormalizeSupplierHealthStatus(req.HealthStatus),
-		DashboardURL:         req.DashboardURL,
-		APIBaseURL:           req.APIBaseURL,
-		Contact:              req.Contact,
-		Notes:                req.Notes,
-		PostgresReadDSN:      req.PostgresReadDSN,
-		RedisReadDSN:         req.RedisReadDSN,
-		BrowserLoginEnabled:  req.BrowserLoginEnabled,
-		BrowserLoginUsername: req.BrowserLoginUsername,
-		BrowserLoginPassword: req.BrowserLoginPassword,
-		BrowserLoginToken:    req.BrowserLoginToken,
-		BalanceCents:         req.BalanceCents,
-		BalanceCurrency:      req.BalanceCurrency,
+		Name:                  req.Name,
+		Kind:                  adminplusdomain.NormalizeSupplierKind(req.Kind),
+		Type:                  adminplusdomain.NormalizeSupplierType(req.Type),
+		RuntimeStatus:         adminplusdomain.NormalizeSupplierRuntimeStatus(req.RuntimeStatus),
+		HealthStatus:          adminplusdomain.NormalizeSupplierHealthStatus(req.HealthStatus),
+		DashboardURL:          req.DashboardURL,
+		APIBaseURL:            req.APIBaseURL,
+		ThirdPartyRechargeURL: req.ThirdPartyRechargeURL,
+		LocalRechargeURL:      req.LocalRechargeURL,
+		Contact:               req.Contact,
+		Notes:                 req.Notes,
+		PostgresReadDSN:       req.PostgresReadDSN,
+		RedisReadDSN:          req.RedisReadDSN,
+		BrowserLoginEnabled:   req.BrowserLoginEnabled,
+		BrowserLoginUsername:  req.BrowserLoginUsername,
+		BrowserLoginPassword:  req.BrowserLoginPassword,
+		BrowserLoginToken:     req.BrowserLoginToken,
+		BalanceCents:          req.BalanceCents,
+		BalanceCurrency:       req.BalanceCurrency,
 	})
 	if response.ErrorFrom(c, err) {
 		return
@@ -146,12 +152,14 @@ func (h *SupplierHandler) CreateFromSiteCandidate(c *gin.Context) {
 	}
 	title, _ := req.PageContext["title"].(string)
 	supplier, err := h.service.CreateFromSiteCandidate(c.Request.Context(), suppliersapp.CreateFromSiteCandidateInput{
-		Name:         req.Name,
-		DashboardURL: req.DashboardURL,
-		APIBaseURL:   req.APIBaseURL,
-		SourceHost:   req.SourceHost,
-		SourceURL:    req.SourceURL,
-		Title:        title,
+		Name:                  req.Name,
+		DashboardURL:          req.DashboardURL,
+		APIBaseURL:            req.APIBaseURL,
+		ThirdPartyRechargeURL: req.ThirdPartyRechargeURL,
+		LocalRechargeURL:      req.LocalRechargeURL,
+		SourceHost:            req.SourceHost,
+		SourceURL:             req.SourceURL,
+		Title:                 title,
 	})
 	if response.ErrorFrom(c, err) {
 		return
@@ -187,23 +195,25 @@ func (h *SupplierHandler) Update(c *gin.Context) {
 		return
 	}
 	supplier, err := h.service.Update(c.Request.Context(), id, suppliersapp.UpdateSupplierInput{
-		Name:                 req.Name,
-		Kind:                 adminplusdomain.NormalizeSupplierKind(req.Kind),
-		Type:                 adminplusdomain.NormalizeSupplierType(req.Type),
-		RuntimeStatus:        adminplusdomain.NormalizeSupplierRuntimeStatus(req.RuntimeStatus),
-		HealthStatus:         adminplusdomain.NormalizeSupplierHealthStatus(req.HealthStatus),
-		DashboardURL:         req.DashboardURL,
-		APIBaseURL:           req.APIBaseURL,
-		Contact:              req.Contact,
-		Notes:                req.Notes,
-		PostgresReadDSN:      req.PostgresReadDSN,
-		RedisReadDSN:         req.RedisReadDSN,
-		BrowserLoginEnabled:  req.BrowserLoginEnabled,
-		BrowserLoginUsername: req.BrowserLoginUsername,
-		BrowserLoginPassword: req.BrowserLoginPassword,
-		BrowserLoginToken:    req.BrowserLoginToken,
-		BalanceCents:         req.BalanceCents,
-		BalanceCurrency:      req.BalanceCurrency,
+		Name:                  req.Name,
+		Kind:                  adminplusdomain.NormalizeSupplierKind(req.Kind),
+		Type:                  adminplusdomain.NormalizeSupplierType(req.Type),
+		RuntimeStatus:         adminplusdomain.NormalizeSupplierRuntimeStatus(req.RuntimeStatus),
+		HealthStatus:          adminplusdomain.NormalizeSupplierHealthStatus(req.HealthStatus),
+		DashboardURL:          req.DashboardURL,
+		APIBaseURL:            req.APIBaseURL,
+		ThirdPartyRechargeURL: req.ThirdPartyRechargeURL,
+		LocalRechargeURL:      req.LocalRechargeURL,
+		Contact:               req.Contact,
+		Notes:                 req.Notes,
+		PostgresReadDSN:       req.PostgresReadDSN,
+		RedisReadDSN:          req.RedisReadDSN,
+		BrowserLoginEnabled:   req.BrowserLoginEnabled,
+		BrowserLoginUsername:  req.BrowserLoginUsername,
+		BrowserLoginPassword:  req.BrowserLoginPassword,
+		BrowserLoginToken:     req.BrowserLoginToken,
+		BalanceCents:          req.BalanceCents,
+		BalanceCurrency:       req.BalanceCurrency,
 	})
 	if response.ErrorFrom(c, err) {
 		return
