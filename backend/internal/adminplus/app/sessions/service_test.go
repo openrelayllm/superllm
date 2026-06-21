@@ -53,7 +53,7 @@ func TestServiceLoginStoresDirectLoginSession(t *testing.T) {
 	require.Equal(t, "https://relay.example.com", result.Session.Origin)
 	require.Equal(t, "https://relay.example.com/api/v1", result.Session.APIBaseURL)
 	require.Equal(t, capturedAt, result.Session.CapturedAt)
-	require.True(t, result.Session.SessionSummary["has_access_token"].(bool))
+	require.Equal(t, true, result.Session.SessionSummary["has_access_token"])
 	require.Equal(t, "direct_login", result.Session.SessionSummary["session_source"])
 	require.NotContains(t, result.Session.SessionBundleCiphertext, "direct-access-token")
 

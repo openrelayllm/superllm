@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Docker image tag, for example 0.7.1'
+        description: 'Docker image tag, for example 0.7.2'
         required: true
-        default: '0.7.1'
+        default: '0.7.2'
         type: string
 
 permissions:

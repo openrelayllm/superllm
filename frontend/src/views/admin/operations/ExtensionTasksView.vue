@@ -12,6 +12,6 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 const router = useRouter()
 
 onMounted(() => {
-  void router.replace('/admin/operations/scheduler')
+  void router.replace('/admin/collection/plugin-tasks')
 })
 </script>

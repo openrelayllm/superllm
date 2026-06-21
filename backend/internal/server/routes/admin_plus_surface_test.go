@@ -258,12 +258,6 @@ func registeredRouteSet(router *gin.Engine) map[string]struct{} {
 
 type routeSurfaceRateRepository struct{}
 
-type routeSurfaceSessionReader struct{}
-
-func (r *routeSurfaceSessionReader) DecryptedProbeInput(_ context.Context, supplierID int64) (ports.SessionProbeInput, error) {
-	return ports.SessionProbeInput{SupplierID: supplierID}, nil
-}
-
 type routeSurfaceSessionCipher struct{}
 
 func (routeSurfaceSessionCipher) Encrypt(plaintext string) (string, error)  { return plaintext, nil }
