@@ -34,7 +34,7 @@
 - Chrome 插件只负责作为浏览器兜底桥梁：识别供应商站点、采集已登录浏览器会话和第三方供应商页面上下文、上报给 Admin Plus。
 - Provider Adapter 负责供应商侧业务能力：分组、费率、余额、公告、账单、健康、并发和密钥创建。
 - Admin Plus 应用层负责编排：能力探测、创建本地 Sub2API 账号、绑定、幂等、补偿和审计。
-- 插件不做分组解析、不做费率/余额/账单采集、不创建第三方密钥；适配器暂不支持时，应标记能力缺失并新增适配器，不把业务动作塞回插件。
+- 插件不做分组解析、不做费率/余额/用量账单/充值订单/兑换记录采集，不创建第三方密钥；适配器暂不支持时，应标记能力缺失并新增适配器，不把业务动作塞回插件。
 - 插件不是必须链路；只有后端直登失败、需要人工验证码/2FA、供应商强绑定浏览器环境时才进入插件兜底。
 - 成本事实源必须从供应商父级收口：充值订单、兑换记录、供应商用量账单、本地收入和余额快照共同进入成本台账。
 - `admin_plus_supplier_bill_lines` 只表示供应商用量消耗明细，不再单独代表完整成本。
@@ -115,7 +115,7 @@ flowchart TD
   J --> K
   K --> L[Provider Adapter 会话探测]
   L --> M{会话是否可用}
-  M -- 是 --> N[进入分组/余额/费率/账单/Key 创建闭环]
+  M -- 是 --> N[进入分组/余额/费率/用量账单/成本/Key 创建闭环]
   M -- 否 --> O[标记 session_invalid 并提示重登或补适配器]
 ```
 
@@ -598,7 +598,7 @@ flowchart TD
   I --> J[与本地 Sub2API usage_logs 做请求级利润对账]
 ```
 
-当前 `Sub2APIProviderAdapter.ReadBilling(session, date_range)` 已落地，后端使用已保存并解密后的统一供应商会话优先读取供应商用户侧 `/api/v1/usage`，归一化后写入 `admin_plus_supplier_bill_lines`。该表保持 `current` 的用量消耗明细定位，但不能再作为财务成本唯一事实源。Chrome 插件不解析账单、不上传已解析账单业务结果；旧 `export_bills` 仅作为 compat/补录路径。
+当前 `Sub2APIProviderAdapter.ReadBilling(session, date_range)` 已落地，后端使用已保存并解密后的统一供应商会话优先读取供应商用户侧 `/api/v1/usage`，归一化后写入 `admin_plus_supplier_bill_lines`。该表保持 `current` 的用量消耗明细定位，但不能再作为财务成本唯一事实源。Chrome 插件不解析用量账单、不上传已解析用量账单业务结果；旧 `export_bills` 仅作为 compat/补录路径。
 
 ### 9.8 获取充值订单与兑换记录流程
 
@@ -1416,7 +1416,7 @@ stateDiagram-v2
 - 前端不展示第三方密钥明文，只展示 key id、指纹、last4 和创建状态。
 - 删除绑定、禁用本地账号、撤销第三方密钥必须拆成独立动作，避免误删可用资产。
 - Provider Adapter 不能成为任意 URL 代理。每个供应商必须先保存 `base_url`、`api_base_url` 和 host 白名单，后端只允许访问该供应商域名下的已知接口路径。
-- 余额、分组、费率、公告、健康和账单采集默认只允许只读请求；创建第三方密钥等写操作必须单独声明 capability、单独确认和单独审计。
+- 余额、分组、费率、公告、健康、用量账单、充值订单和兑换记录采集默认只允许只读请求；创建第三方密钥等写操作必须单独声明 capability、单独确认和单独审计。
 - 后端直登凭据、插件上报的 cookie、token、CSRF、页面上下文和供应商登录密码都按高敏凭据处理，必须服务端加密、设置过期时间、日志脱敏，不允许前端回显明文。
 - 供应商会话必须记录来源：`direct_login` / `browser_extension` / `manual_import`；插件兜底会话还必须记录来源设备、来源页面、任务 ID、采集时间、过期时间和最近探测结果。
 - Sub2API 同源供应商的普通下游会话只能调用用户侧 API。除非供应商明确授权 Admin API Key 或只读 DB/Redis，否则不得调用供应商 `/api/v1/admin/*`。
@@ -1428,12 +1428,16 @@ stateDiagram-v2
 
 - 分组归一化：名称、倍率、私有标记、provider family。
 - key 指纹和 last4 生成。
-- Provider Adapter 能力探测：`can_read_groups`、`can_read_balance`、`can_create_key`、`can_read_billing`、`can_export_bills`。
+- Provider Adapter 能力探测：`can_read_groups`、`can_read_balance`、`can_create_key`、`can_read_billing`、`can_read_recharge_orders`、`can_read_redeem_records`、`can_export_bills`。
 - Provider Adapter 后端直登：无验证码成功、密码错误、验证码/2FA 兜底、登录协议变化。
 - Provider Adapter 账单读取：`ReadBilling(session, date_range)` 只保存脱敏后的 raw payload，不能落库 cookie、access token、secret 或第三方 key 明文。
+- Provider Adapter 充值订单读取：`ReadRechargeOrders(session, date_range)` 只读取 `/api/v1/payment/orders/my`，正确归一化 `amount`、`pay_amount`、`fee_rate`、`status`、`paid_at`、`completed_at` 和退款字段。
+- Provider Adapter 兑换记录读取：`ReadRedeemRecords(session, date_range)` 只读取 `/api/v1/redeem/history`，正确归一化 `type`、`value`、`status`、`used_at`、`group_id`、`validity_days`，且不保存兑换码明文。
+- 成本台账生成：充值订单生成 `recharge_credit`，退款生成 `recharge_refund_debit`，balance 兑换生成 `redeem_credit`，供应商用量账单生成 `usage_debit`。
+- 成本快照汇总：累计充值额度使用已完成订单 `amount`，累计实付金额使用 `pay_amount`，资金差异按 `actual_supplier_balance - expected_ending_balance` 计算。
 - Sub2API 供应商余额归一化：从用户侧 profile 读取 `balance`，不得使用本地账号 quota 替代供应商余额。
 - Provider Adapter 创建密钥成功和失败分支。
-- 插件会话上报不得生成分组、密钥、费率、余额或账单业务结果。
+- 插件会话上报不得生成分组、密钥、费率、余额、用量账单、充值订单、兑换记录或成本台账业务结果。
 - provisioning 状态机。
 - 幂等键重复提交。
 - 本地 Sub2API Admin API 创建账号失败后的 `repair-binding` 修复。
@@ -1445,6 +1449,9 @@ stateDiagram-v2
 - 使用真实 PostgreSQL 写入供应商分组和第三方 key 元数据。
 - 使用 Provider Adapter 读取真实供应商分组。
 - 使用 Provider Adapter 基于真实 Sub2API 供应商会话读取用户侧余额。
+- 使用 Provider Adapter 基于真实 Sub2API 供应商会话读取 `/payment/orders/my` 充值订单。
+- 使用 Provider Adapter 基于真实 Sub2API 供应商会话读取 `/redeem/history` 兑换记录。
+- 执行 `costs/sync` 后验证充值订单、兑换记录、用量消耗和余额快照共同生成成本快照。
 - 使用 Provider Adapter 在测试供应商环境创建真实 key。
 - 使用本地 Sub2API Admin API 创建账号。
 - 验证 `admin_plus_supplier_accounts.local_sub2api_account_id` 指向真实本地账号。
@@ -1455,6 +1462,7 @@ stateDiagram-v2
 - 在后端直登不可用时，运营者在供应商网页完成登录，插件复用已登录态。
 - 上报真实供应商会话包，不允许 mock。
 - 插件上报内容只包含会话和页面上下文，不包含已解析业务数据或创建密钥结果。
+- 插件不上报已解析的充值订单、兑换记录或成本台账；这些数据必须由后端 Provider Adapter 使用统一会话读取。
 - 将 key 同步创建到本地 Sub2API。
 - 验证本地 Sub2API 账号可以发起一次探测请求。
 
@@ -1467,12 +1475,16 @@ stateDiagram-v2
 - 系统可以读取并展示该供应商真实分组列表。
 - 供应商分组弹窗能展示每个分组是否已绑定第三方 Key 和本地 Sub2API 账号。
 - 系统可以基于真实供应商 Sub2API 用户侧统一会话读取当前下游用户余额，并按余额决定 `monitor_only` / `candidate`。
+- 系统可以基于真实供应商 Sub2API 用户侧统一会话读取 `/api/v1/payment/orders/my`，并在供应商列表显示累计充值额度。
+- 系统可以基于真实供应商 Sub2API 用户侧统一会话读取 `/api/v1/redeem/history`，并在成本模块显示累计兑换额度。
+- 成本模块可以展示每个供应商的累计充值额度、累计实付金额、累计兑换额度、已消耗成本、当前余额、预期余额和资金差异。
+- 请求利润对账使用本地收入减供应商用量消耗；资金库存对账使用充值、兑换、退款、消耗和当前余额核对。
 - 运营者可以在某个未绑定分组行创建第三方密钥。
 - 系统通过 Provider Adapter 创建第三方密钥。
 - 插件不创建第三方密钥，不上报已解析的业务采集结果。
 - 系统可以把第三方密钥同步创建为本地 Sub2API 账号。
 - 系统可以自动创建 Admin Plus 账号绑定。
-- 绑定后费率、余额、健康、账单至少一种采集能落到该绑定子级。
+- 绑定后费率、余额、健康、用量账单至少一种采集能落到该绑定子级；充值订单、兑换记录和成本快照落到供应商父级。
 - 全链路失败不产生 mock 成功数据。
 - 所有写本地 Sub2API 的动作都走 Admin API，不直接写 Sub2API DB。
 
@@ -1481,9 +1493,14 @@ stateDiagram-v2
 1. 增加供应商分组表、第三方 key 元数据表和绑定字段。
 2. 实现 Provider Adapter 能力探测接口。
 3. 实现 Sub2API 供应商分组读取适配器。
-4. 插件支持真实供应商会话包上报。
-5. 实现 Sub2API 供应商密钥创建适配器。
-6. 实现本地 Sub2API Admin API 创建账号 client。
-7. 实现账号开通编排服务和幂等。
-8. 前端在供应商分组弹窗内增加 Key/账号开通入口和绑定状态列。
-9. 接入初次采集、飞书失败通知和操作审计。
+4. 增加供应商充值订单、兑换记录、成本台账和成本快照表。
+5. 实现 Sub2API 供应商充值订单读取适配器：`ReadRechargeOrders`。
+6. 实现 Sub2API 供应商兑换记录读取适配器：`ReadRedeemRecords`。
+7. 实现成本服务：`costs/sync`、台账生成、成本快照、供应商列表累计充值额度。
+8. 插件支持真实供应商会话包上报。
+9. 实现 Sub2API 供应商密钥创建适配器。
+10. 实现本地 Sub2API Admin API 创建账号 client。
+11. 实现账号开通编排服务和幂等。
+12. 前端在供应商分组弹窗内增加 Key/账号开通入口和绑定状态列。
+13. 前端增加成本模块，供应商列表展示累计充值额度。
+14. 接入初次采集、飞书失败通知和操作审计。
