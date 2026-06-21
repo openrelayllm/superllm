@@ -1918,7 +1918,14 @@ func parseSub2APIEntitlementTransaction(raw map[string]any) (ports.ProviderEntit
 	usedAt, hasUsedAt := firstTimeValue(raw, "used_at", "usedAt", "redeemed_at", "redeemedAt", "updated_at", "updatedAt")
 	createdAt, hasCreatedAt := firstTimeValue(raw, "created_at", "createdAt")
 	rawValue := float64FromAny(firstExisting(raw, "raw_value", "rawValue", "value", "amount", "balance", "quota"))
-	itemType := firstNonEmpty(stringFromAny(raw["type"]), stringFromAny(raw["redeem_type"]), stringFromAny(raw["redeemType"]), "balance")
+	itemType := strings.ToLower(strings.TrimSpace(firstNonEmpty(stringFromAny(raw["type"]), stringFromAny(raw["redeem_type"]), stringFromAny(raw["redeemType"]), "balance")))
+	valueCents := int64(0)
+	if itemType == "balance" {
+		valueCents = firstCostCentsValue(raw,
+			"value_cents", "valueCents", "amount_cents", "amountCents", "balance_cents", "balanceCents",
+			"value", "amount", "balance", "quota",
+		)
+	}
 	item := ports.ProviderEntitlementTransaction{
 		ExternalID:      externalID,
 		CodeFingerprint: codeFingerprint(code),
@@ -1927,14 +1934,11 @@ func parseSub2APIEntitlementTransaction(raw map[string]any) (ports.ProviderEntit
 		Type:            itemType,
 		Status:          strings.ToLower(firstNonEmpty(stringFromAny(raw["status"]), stringFromAny(raw["state"]), "used")),
 		Currency:        firstNonEmpty(stringFromAny(raw["currency"]), stringFromAny(raw["Currency"]), "USD"),
-		ValueCents: firstCostCentsValue(raw,
-			"value_cents", "valueCents", "amount_cents", "amountCents", "balance_cents", "balanceCents",
-			"value", "amount", "balance", "quota",
-		),
-		RawValue:     rawValue,
-		GroupID:      int64FromAny(firstExisting(raw, "group_id", "groupId")),
-		ValidityDays: int(int64FromAny(firstExisting(raw, "validity_days", "validityDays", "days"))),
-		RawPayload:   sanitizeUsageCostPayload(raw),
+		ValueCents:      valueCents,
+		RawValue:        rawValue,
+		GroupID:         int64FromAny(firstExisting(raw, "group_id", "groupId")),
+		ValidityDays:    int(int64FromAny(firstExisting(raw, "validity_days", "validityDays", "days"))),
+		RawPayload:      sanitizeUsageCostPayload(raw),
 	}
 	if hasUsedAt {
 		t := usedAt.UTC()

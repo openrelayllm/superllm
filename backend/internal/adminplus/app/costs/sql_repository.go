@@ -159,10 +159,17 @@ func (r *SQLRepository) UpsertLedgerEntry(ctx context.Context, entry *adminplusd
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (supplier_id, provider_type, entry_type, source_type, source_id)
-		DO NOTHING
+		DO UPDATE SET
+			source_external_id = EXCLUDED.source_external_id,
+			currency = EXCLUDED.currency,
+			amount_cents = EXCLUDED.amount_cents,
+			cash_amount_cents = EXCLUDED.cash_amount_cents,
+			occurred_at = EXCLUDED.occurred_at,
+			raw_payload = EXCLUDED.raw_payload
 		RETURNING id, supplier_id, provider_type, entry_type, source_type, source_id,
 			source_external_id, currency, amount_cents, cash_amount_cents,
-			occurred_at, raw_payload, created_at
+			occurred_at, raw_payload, created_at,
+			(xmax = 0) AS inserted
 	`,
 		entry.SupplierID,
 		entry.ProviderType,
@@ -176,11 +183,22 @@ func (r *SQLRepository) UpsertLedgerEntry(ctx context.Context, entry *adminplusd
 		entry.OccurredAt,
 		rawPayload,
 	)
-	stored, err := scanLedgerEntry(row)
-	if err == sql.ErrNoRows {
-		return nil, false, nil
+	return scanLedgerEntryWithInserted(row)
+}
+
+func (r *SQLRepository) DeleteLedgerEntryForSource(ctx context.Context, supplierID int64, providerType string, entryType string, sourceType string, sourceID int64) error {
+	if r == nil || r.db == nil {
+		return dbNotConfigured()
 	}
-	return stored, err == nil, err
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM admin_plus_supplier_cost_ledger_entries
+		WHERE supplier_id = $1
+			AND provider_type = $2
+			AND entry_type = $3
+			AND source_type = $4
+			AND source_id = $5
+	`, supplierID, normalizeProviderType(providerType), entryType, sourceType, sourceID)
+	return err
 }
 
 func (r *SQLRepository) RefreshSnapshot(ctx context.Context, supplierID int64, currency string, capturedAt time.Time) (*adminplusdomain.SupplierCostSnapshot, error) {
@@ -210,19 +228,37 @@ func (r *SQLRepository) RefreshSnapshot(ctx context.Context, supplierID int64, c
 			ORDER BY captured_at DESC, id DESC
 			LIMIT 1
 		),
-		totals AS (
+		raw_totals AS (
 			SELECT
 				ledger.funding_amount,
 				ledger.funding_cash,
 				ledger.entitlement_amount,
-				usage.usage_cost,
+				usage.usage_cost AS raw_usage_cost,
 				ledger.refund_amount,
 				ledger.adjustment_amount,
-				(ledger.funding_amount + ledger.entitlement_amount - usage.usage_cost - ledger.refund_amount + ledger.adjustment_amount) AS expected_balance,
+				(ledger.funding_amount + ledger.entitlement_amount - ledger.refund_amount + ledger.adjustment_amount) AS balance_before_usage,
 				balance.balance_cents AS actual_balance
 			FROM ledger
 			CROSS JOIN usage
 			LEFT JOIN balance ON TRUE
+		),
+		totals AS (
+			SELECT
+				funding_amount,
+				funding_cash,
+				entitlement_amount,
+				CASE
+					WHEN actual_balance IS NULL THEN raw_usage_cost
+					ELSE GREATEST(balance_before_usage - actual_balance, 0)
+				END AS usage_cost,
+				refund_amount,
+				adjustment_amount,
+				balance_before_usage - CASE
+					WHEN actual_balance IS NULL THEN raw_usage_cost
+					ELSE GREATEST(balance_before_usage - actual_balance, 0)
+				END AS expected_balance,
+				actual_balance
+			FROM raw_totals
 		)
 		INSERT INTO admin_plus_supplier_cost_snapshots (
 			supplier_id, currency, completed_funding_amount_cents, completed_funding_cash_cents,
@@ -466,18 +502,31 @@ func scanEntitlementTransactionInternal(s scanner, withInserted bool) (*adminplu
 }
 
 func scanLedgerEntry(s scanner) (*adminplusdomain.SupplierCostLedgerEntry, error) {
+	item, _, err := scanLedgerEntryInternal(s, false)
+	return item, err
+}
+
+func scanLedgerEntryWithInserted(s scanner) (*adminplusdomain.SupplierCostLedgerEntry, bool, error) {
+	return scanLedgerEntryInternal(s, true)
+}
+
+func scanLedgerEntryInternal(s scanner, withInserted bool) (*adminplusdomain.SupplierCostLedgerEntry, bool, error) {
 	var item adminplusdomain.SupplierCostLedgerEntry
 	var rawPayload []byte
-	err := s.Scan(
+	var inserted bool
+	dest := []any{
 		&item.ID, &item.SupplierID, &item.ProviderType, &item.EntryType, &item.SourceType,
 		&item.SourceID, &item.SourceExternalID, &item.Currency, &item.AmountCents,
 		&item.CashAmountCents, &item.OccurredAt, &rawPayload, &item.CreatedAt,
-	)
-	if err != nil {
-		return nil, err
+	}
+	if withInserted {
+		dest = append(dest, &inserted)
+	}
+	if err := s.Scan(dest...); err != nil {
+		return nil, false, err
 	}
 	item.RawPayload = unmarshalPayload(rawPayload)
-	return &item, nil
+	return &item, inserted, nil
 }
 
 func scanCostSnapshot(s scanner) (*adminplusdomain.SupplierCostSnapshot, error) {
@@ -498,7 +547,27 @@ func scanCostSnapshot(s scanner) (*adminplusdomain.SupplierCostSnapshot, error) 
 	if delta.Valid {
 		item.BalanceDeltaCents = &delta.Int64
 	}
+	normalizeCostSnapshotDerivedAmounts(&item)
 	return &item, nil
+}
+
+func normalizeCostSnapshotDerivedAmounts(item *adminplusdomain.SupplierCostSnapshot) {
+	if item == nil || item.ActualBalanceCents == nil {
+		return
+	}
+	balanceBeforeUsage := item.CompletedFundingAmountCents +
+		item.EntitlementAmountCents -
+		item.RefundAmountCents +
+		item.AdjustmentAmountCents
+	usageCost := balanceBeforeUsage - *item.ActualBalanceCents
+	if usageCost < 0 {
+		usageCost = 0
+	}
+	expectedBalance := balanceBeforeUsage - usageCost
+	balanceDelta := *item.ActualBalanceCents - expectedBalance
+	item.UsageCostCents = usageCost
+	item.ExpectedBalanceCents = expectedBalance
+	item.BalanceDeltaCents = &balanceDelta
 }
 
 func marshalRawPayload(payload map[string]any) ([]byte, error) {

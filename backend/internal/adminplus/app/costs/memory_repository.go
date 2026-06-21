@@ -99,7 +99,11 @@ func (r *MemoryRepository) UpsertLedgerEntry(_ context.Context, entry *adminplus
 			existing.EntryType == entry.EntryType &&
 			existing.SourceType == entry.SourceType &&
 			existing.SourceID == entry.SourceID {
-			return nil, false, nil
+			cp := cloneLedger(entry)
+			cp.ID = existing.ID
+			cp.CreatedAt = existing.CreatedAt
+			r.ledger[existing.ID] = cp
+			return cloneLedger(cp), false, nil
 		}
 	}
 	cp := cloneLedger(entry)
@@ -110,6 +114,22 @@ func (r *MemoryRepository) UpsertLedgerEntry(_ context.Context, entry *adminplus
 	}
 	r.ledger[cp.ID] = cp
 	return cloneLedger(cp), true, nil
+}
+
+func (r *MemoryRepository) DeleteLedgerEntryForSource(_ context.Context, supplierID int64, providerType string, entryType string, sourceType string, sourceID int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	providerType = normalizeProviderType(providerType)
+	for id, existing := range r.ledger {
+		if existing.SupplierID == supplierID &&
+			existing.ProviderType == providerType &&
+			existing.EntryType == entryType &&
+			existing.SourceType == sourceType &&
+			existing.SourceID == sourceID {
+			delete(r.ledger, id)
+		}
+	}
+	return nil
 }
 
 func (r *MemoryRepository) RefreshSnapshot(_ context.Context, supplierID int64, currency string, capturedAt time.Time) (*adminplusdomain.SupplierCostSnapshot, error) {

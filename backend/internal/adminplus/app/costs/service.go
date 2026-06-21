@@ -57,6 +57,7 @@ type Repository interface {
 	UpsertFundingTransaction(ctx context.Context, item *adminplusdomain.SupplierFundingTransaction) (*adminplusdomain.SupplierFundingTransaction, bool, error)
 	UpsertEntitlementTransaction(ctx context.Context, item *adminplusdomain.SupplierEntitlementTransaction) (*adminplusdomain.SupplierEntitlementTransaction, bool, error)
 	UpsertLedgerEntry(ctx context.Context, entry *adminplusdomain.SupplierCostLedgerEntry) (*adminplusdomain.SupplierCostLedgerEntry, bool, error)
+	DeleteLedgerEntryForSource(ctx context.Context, supplierID int64, providerType string, entryType string, sourceType string, sourceID int64) error
 	RefreshSnapshot(ctx context.Context, supplierID int64, currency string, capturedAt time.Time) (*adminplusdomain.SupplierCostSnapshot, error)
 	ListSnapshots(ctx context.Context, filter SummaryFilter) ([]*adminplusdomain.SupplierCostSnapshot, error)
 	ListFundingTransactions(ctx context.Context, filter TransactionFilter) ([]*adminplusdomain.SupplierFundingTransaction, error)
@@ -195,13 +196,23 @@ func (s *Service) Sync(ctx context.Context, in SyncInput) (*SyncResult, error) {
 					return nil, err
 				}
 				result.EntitlementTransactions++
-				if stored == nil || stored.SourceFamily == "payment_auto_redeem" {
+				if stored == nil {
 					continue
 				}
-				if created, ok, err := s.repo.UpsertLedgerEntry(ctx, ledgerFromEntitlement(stored)); err != nil {
-					return nil, err
-				} else if ok && created != nil {
-					ledgerEntries++
+				ledgerEntry := ledgerFromEntitlement(stored)
+				if stored.SourceFamily == "payment_auto_redeem" {
+					ledgerEntry = nil
+				}
+				if ledgerEntry == nil {
+					if err := s.repo.DeleteLedgerEntryForSource(ctx, stored.SupplierID, stored.ProviderType, "entitlement_credit", "entitlement_transaction", stored.ID); err != nil {
+						return nil, err
+					}
+				} else {
+					if created, ok, err := s.repo.UpsertLedgerEntry(ctx, ledgerEntry); err != nil {
+						return nil, err
+					} else if ok && created != nil {
+						ledgerEntries++
+					}
 				}
 				currencies[normalizeCurrency(stored.Currency)] = struct{}{}
 			}
@@ -339,6 +350,11 @@ func fundingFromProvider(supplierID int64, providerType string, item ports.Provi
 }
 
 func entitlementFromProvider(supplierID int64, providerType string, item ports.ProviderEntitlementTransaction, now time.Time) *adminplusdomain.SupplierEntitlementTransaction {
+	itemType := normalizeLower(item.Type, "balance")
+	valueCents := nonNegative(item.ValueCents)
+	if itemType != "balance" {
+		valueCents = 0
+	}
 	return &adminplusdomain.SupplierEntitlementTransaction{
 		SupplierID:        supplierID,
 		ProviderType:      normalizeProviderType(providerType),
@@ -346,10 +362,10 @@ func entitlementFromProvider(supplierID int64, providerType string, item ports.P
 		CodeFingerprint:   trimLimit(item.CodeFingerprint, 128),
 		CodeLast4:         trimLimit(item.CodeLast4, 16),
 		SourceFamily:      normalizeSourceFamily(item.SourceFamily),
-		Type:              normalizeLower(item.Type, "balance"),
+		Type:              itemType,
 		Status:            normalizeLower(item.Status, "used"),
 		Currency:          normalizeCurrency(item.Currency),
-		ValueCents:        nonNegative(item.ValueCents),
+		ValueCents:        valueCents,
 		RawValue:          item.RawValue,
 		GroupID:           item.GroupID,
 		ValidityDays:      item.ValidityDays,

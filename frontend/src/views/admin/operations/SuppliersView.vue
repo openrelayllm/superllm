@@ -213,11 +213,14 @@
             <div class="min-w-[190px] text-right">
               <template v-if="supplierCostSnapshot(row.id)">
                 <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                  充值 {{ formatMoney(supplierCostSnapshot(row.id)?.completed_funding_amount_cents || 0, supplierCostSnapshot(row.id)?.currency || row.balance_currency) }}
+                  充值总额 {{ formatMoney(supplierRechargeTotalCents(supplierCostSnapshot(row.id)), supplierCostSnapshot(row.id)?.currency || row.balance_currency) }}
                 </div>
                 <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-                  兑换 {{ formatMoney(supplierCostSnapshot(row.id)?.entitlement_amount_cents || 0, supplierCostSnapshot(row.id)?.currency || row.balance_currency) }}
-                  · 消耗 {{ formatMoney(supplierCostSnapshot(row.id)?.usage_cost_cents || 0, supplierCostSnapshot(row.id)?.currency || row.balance_currency) }}
+                  订单 {{ formatMoney(supplierCostSnapshot(row.id)?.completed_funding_amount_cents || 0, supplierCostSnapshot(row.id)?.currency || row.balance_currency) }}
+                  · 兑换 {{ formatMoney(supplierCostSnapshot(row.id)?.entitlement_amount_cents || 0, supplierCostSnapshot(row.id)?.currency || row.balance_currency) }}
+                </div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                  消耗 {{ formatMoney(supplierDisplayUsageCents(supplierCostSnapshot(row.id)), supplierCostSnapshot(row.id)?.currency || row.balance_currency) }}
                 </div>
                 <div class="mt-1 text-xs" :class="costDeltaClass(row.id)">
                   差异 {{ costDeltaLabel(row.id) }}
@@ -1272,6 +1275,11 @@ import {
   type SupplierRuntimeStatus,
   type SupplierType
 } from '@/api/admin/adminPlus'
+import {
+  supplierBalanceDeltaCents,
+  supplierDisplayUsageCents,
+  supplierRechargeTotalCents
+} from './supplierCostPresentation'
 
 const appStore = useAppStore()
 const route = useRoute()
@@ -1757,13 +1765,14 @@ function supplierCostSnapshot(supplierID: number): SupplierCostSnapshot | undefi
 
 function costDeltaLabel(supplierID: number): string {
   const snapshot = supplierCostSnapshot(supplierID)
-  if (!snapshot || snapshot.balance_delta_cents === null || snapshot.balance_delta_cents === undefined) return '-'
-  return formatMoney(snapshot.balance_delta_cents, snapshot.currency)
+  const delta = supplierBalanceDeltaCents(snapshot)
+  if (delta === null) return '-'
+  return formatMoney(delta, snapshot?.currency || 'USD')
 }
 
 function costDeltaClass(supplierID: number): string {
-  const delta = supplierCostSnapshot(supplierID)?.balance_delta_cents
-  if (delta === null || delta === undefined || delta === 0) return 'text-emerald-600 dark:text-emerald-400'
+  const delta = supplierBalanceDeltaCents(supplierCostSnapshot(supplierID))
+  if (delta === null || delta === 0) return 'text-emerald-600 dark:text-emerald-400'
   return 'text-rose-600 dark:text-rose-400'
 }
 

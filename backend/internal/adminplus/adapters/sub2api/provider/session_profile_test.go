@@ -1005,6 +1005,14 @@ func TestSessionProfileClientReadEntitlementTransactions(t *testing.T) {
 						"redeem_code": "MANUAL-CODE-9999",
 						"amount_cents": 2500,
 						"created_at": "2026-06-20T12:00:00Z"
+					},
+					{
+						"id": 12,
+						"redeem_code": "CONC-CODE-0002",
+						"type": "concurrency",
+						"status": "used",
+						"value": 70,
+						"used_at": "2026-06-21T21:55:32Z"
 					}
 				]
 			}`))
@@ -1024,7 +1032,7 @@ func TestSessionProfileClientReadEntitlementTransactions(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "sub2api", result.ProviderType)
-	require.Len(t, result.Items, 2)
+	require.Len(t, result.Items, 3)
 	auto := result.Items[0]
 	require.Equal(t, "10", auto.ExternalID)
 	require.Equal(t, "payment_auto_redeem", auto.SourceFamily)
@@ -1041,6 +1049,15 @@ func TestSessionProfileClientReadEntitlementTransactions(t *testing.T) {
 	require.Equal(t, "9999", manual.CodeLast4)
 	require.Equal(t, int64(2500), manual.ValueCents)
 	require.NotEmpty(t, manual.CodeFingerprint)
+
+	concurrency := result.Items[2]
+	require.Equal(t, "12", concurrency.ExternalID)
+	require.Equal(t, "manual_redeem", concurrency.SourceFamily)
+	require.Equal(t, "concurrency", concurrency.Type)
+	require.Equal(t, "0002", concurrency.CodeLast4)
+	require.Equal(t, int64(0), concurrency.ValueCents)
+	require.Equal(t, float64(70), concurrency.RawValue)
+	require.NotEmpty(t, concurrency.CodeFingerprint)
 }
 
 func findRateEntry(t *testing.T, entries []ports.ProviderRateEntry, priceItem string) ports.ProviderRateEntry {

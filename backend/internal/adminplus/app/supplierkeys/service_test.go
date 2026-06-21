@@ -83,6 +83,8 @@ func TestServiceProvisionCreatesProviderKeyLocalAccountAndBinding(t *testing.T) 
 	require.Equal(t, service.AccountTypeAPIKey, local.input.Type)
 	require.Equal(t, "sk-provider-secret", local.input.Credentials["api_key"])
 	require.Equal(t, "https://relay.example.com/v1", local.input.Credentials["base_url"])
+	require.Equal(t, true, local.input.Credentials["pool_mode"])
+	require.Empty(t, local.input.GroupIDs)
 	require.True(t, local.input.SkipDefaultGroupBind)
 	require.True(t, local.input.SkipMixedChannelCheck)
 	require.Equal(t, []ports.CreateProviderKeyInput{{
@@ -200,11 +202,12 @@ func TestServiceEnsureAllFailsBeforeProviderKeyWhenSub2APIGatewayUnavailable(t *
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, 1, result.Total)
+	require.Equal(t, 0, result.Created)
 	require.Equal(t, 1, result.Failed)
 	require.Len(t, result.Items, 1)
 	require.Equal(t, "failed", result.Items[0].Action)
-	require.Equal(t, "LOCAL_SUB2API_GROUP_LIST_FAILED", result.Items[0].ErrorCode)
-	require.Contains(t, result.Items[0].ErrorMessage, "failed to list local Sub2API groups")
+	require.Equal(t, "LOCAL_SUB2API_ACCOUNT_LOOKUP_FAILED", result.Items[0].ErrorCode)
+	require.Contains(t, result.Items[0].ErrorMessage, "failed to lookup local Sub2API account")
 	require.Contains(t, result.Items[0].ErrorMessage, "SUB2API_GATEWAY_CONFIG_REQUIRED")
 	require.Empty(t, keyAdapter.calls)
 	keys, listErr := repo.List(context.Background(), ListFilter{SupplierID: 7})
@@ -223,7 +226,7 @@ func TestLocalGatewayErrorDetailRedactsSensitiveCause(t *testing.T) {
 	require.NotContains(t, err.Error(), "invalid api_key value")
 }
 
-func TestServiceEnsureAllBindsExistingKeyAccountToLocalGroup(t *testing.T) {
+func TestServiceEnsureAllDoesNotCreateOrBindLocalGroupForExistingKey(t *testing.T) {
 	repo := NewMemoryRepository()
 	repo.PutSupplier(&adminplusdomain.Supplier{
 		ID:            7,
@@ -296,12 +299,10 @@ func TestServiceEnsureAllBindsExistingKeyAccountToLocalGroup(t *testing.T) {
 	require.Equal(t, 1, result.Total)
 	require.Equal(t, 0, result.Created)
 	require.Equal(t, 1, result.Skipped)
-	require.Equal(t, 1, result.LocalGroupsCreated)
-	require.Equal(t, 1, result.LocalAccountsBound)
+	require.Equal(t, 0, result.LocalGroupsCreated)
+	require.Equal(t, 0, result.LocalAccountsBound)
 	require.Empty(t, keyAdapter.calls)
-	require.Len(t, local.groups, 1)
-	require.Equal(t, "AP7-G88-Low Cost", local.groups[0].Name)
-	require.Equal(t, []int64{local.groups[0].ID}, local.accounts[2002].GroupIDs)
+	require.Empty(t, local.accounts[2002].GroupIDs)
 }
 
 func TestServiceRepairBindingBindsFailedKeyToExistingLocalAccount(t *testing.T) {
@@ -378,6 +379,7 @@ func TestServiceRepairBindingBindsFailedKeyToExistingLocalAccount(t *testing.T) 
 	require.Empty(t, result.Key.ErrorCode)
 	require.Empty(t, keyAdapter.calls)
 	require.Equal(t, []int64{2002}, local.getCalls)
+	require.Empty(t, local.accounts[2002].GroupIDs)
 }
 
 type stubSessionReader struct {
@@ -401,7 +403,6 @@ func (s *stubKeyAdapter) CreateKey(_ context.Context, _ ports.SessionProbeInput,
 type stubLocalAccountCreator struct {
 	input    service.CreateAccountInput
 	accounts map[int64]*service.Account
-	groups   []service.Group
 	getCalls []int64
 }
 
@@ -465,22 +466,4 @@ func (s *stubLocalAccountCreator) UpdateAccount(_ context.Context, id int64, inp
 	}
 	cp := *account
 	return &cp, nil
-}
-
-func (s *stubLocalAccountCreator) CreateGroup(_ context.Context, input *service.CreateGroupInput) (*service.Group, error) {
-	group := service.Group{
-		ID:             int64(2001 + len(s.groups)),
-		Name:           input.Name,
-		Platform:       input.Platform,
-		RateMultiplier: input.RateMultiplier,
-		Status:         service.StatusActive,
-	}
-	s.groups = append(s.groups, group)
-	return &group, nil
-}
-
-func (s *stubLocalAccountCreator) GetAllGroupsIncludingInactive(_ context.Context) ([]service.Group, error) {
-	out := make([]service.Group, len(s.groups))
-	copy(out, s.groups)
-	return out, nil
 }

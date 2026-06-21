@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	"github.com/stretchr/testify/require"
 )
@@ -74,6 +75,18 @@ func TestServiceSyncRecordsFundingEntitlementsAndIdempotentLedger(t *testing.T) 
 				CodeLast4:    "M001",
 				RawPayload:   map[string]any{"code_last4": "M001"},
 			},
+			{
+				ExternalID:   "redeem-concurrency-1",
+				SourceFamily: "manual_redeem",
+				Type:         "concurrency",
+				Status:       "used",
+				Currency:     "usd",
+				ValueCents:   7000,
+				RawValue:     70,
+				UsedAt:       &manualRedeemedAt,
+				CodeLast4:    "C001",
+				RawPayload:   map[string]any{"code_last4": "C001"},
+			},
 		},
 	}}
 	svc := NewServiceWithDependencies(repo, session, funding, entitlements, nil, nil)
@@ -88,7 +101,7 @@ func TestServiceSyncRecordsFundingEntitlementsAndIdempotentLedger(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, int64(7), session.supplierID)
 	require.Equal(t, 1, result.FundingTransactions)
-	require.Equal(t, 2, result.EntitlementTransactions)
+	require.Equal(t, 3, result.EntitlementTransactions)
 	require.Equal(t, 2, result.LedgerEntries)
 	require.NotNil(t, result.Snapshot)
 	require.Equal(t, int64(10000), result.Snapshot.CompletedFundingAmountCents)
@@ -108,6 +121,14 @@ func TestServiceSyncRecordsFundingEntitlementsAndIdempotentLedger(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, ledger, 2)
 	require.ElementsMatch(t, []string{"funding_credit", "entitlement_credit"}, []string{ledger[0].EntryType, ledger[1].EntryType})
+
+	entitlementItems, err := svc.ListEntitlementTransactions(context.Background(), TransactionFilter{SupplierID: 7, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, entitlementItems, 3)
+	concurrency := findEntitlementByExternalID(t, entitlementItems, "redeem-concurrency-1")
+	require.Equal(t, "concurrency", concurrency.Type)
+	require.Equal(t, int64(0), concurrency.ValueCents)
+	require.Equal(t, float64(70), concurrency.RawValue)
 }
 
 func TestServiceSyncTurnsRefundedFundingIntoDebit(t *testing.T) {
@@ -148,6 +169,68 @@ func TestServiceSyncTurnsRefundedFundingIntoDebit(t *testing.T) {
 	require.Equal(t, int64(-5000), result.Snapshot.ExpectedBalanceCents)
 }
 
+func TestServiceSyncReconcilesEntitlementTypeCorrection(t *testing.T) {
+	repo := NewMemoryRepository()
+	now := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	usedAt := now.Add(-time.Hour)
+	session := &stubCostSessionReader{}
+	entitlements := &stubCostEntitlementReader{result: &ports.ReadEntitlementTransactionsResult{
+		SupplierID:   7,
+		ProviderType: "sub2api",
+		Items: []ports.ProviderEntitlementTransaction{
+			{
+				ExternalID:   "redeem-1",
+				SourceFamily: "manual_redeem",
+				Type:         "balance",
+				Status:       "used",
+				Currency:     "usd",
+				ValueCents:   7000,
+				RawValue:     70,
+				UsedAt:       &usedAt,
+			},
+		},
+	}}
+	svc := NewServiceWithDependencies(repo, session, nil, entitlements, nil, nil)
+	svc.now = func() time.Time { return now }
+
+	first, err := svc.Sync(context.Background(), SyncInput{
+		SupplierID:                     7,
+		IncludeEntitlementTransactions: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, first.LedgerEntries)
+	require.NotNil(t, first.Snapshot)
+	require.Equal(t, int64(7000), first.Snapshot.EntitlementAmountCents)
+	require.Equal(t, int64(7000), first.Snapshot.ExpectedBalanceCents)
+
+	entitlements.result.Items[0].Type = "concurrency"
+	entitlements.result.Items[0].ValueCents = 7000
+	entitlements.result.Items[0].RawValue = 70
+
+	second, err := svc.Sync(context.Background(), SyncInput{
+		SupplierID:                     7,
+		IncludeEntitlementTransactions: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 0, second.LedgerEntries)
+	require.NotNil(t, second.Snapshot)
+	require.Equal(t, int64(0), second.Snapshot.EntitlementAmountCents)
+	require.Equal(t, int64(0), second.Snapshot.ExpectedBalanceCents)
+
+	ledger, err := svc.ListLedgerEntries(context.Background(), LedgerFilter{SupplierID: 7, Limit: 10})
+	require.NoError(t, err)
+	require.Empty(t, ledger)
+
+	items, err := svc.ListEntitlementTransactions(context.Background(), TransactionFilter{SupplierID: 7, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, "concurrency", items[0].Type)
+	require.Equal(t, int64(0), items[0].ValueCents)
+	require.Equal(t, float64(70), items[0].RawValue)
+}
+
 type stubCostSessionReader struct {
 	input      ports.SessionProbeInput
 	supplierID int64
@@ -179,6 +262,17 @@ type stubCostEntitlementReader struct {
 func (r *stubCostEntitlementReader) ReadEntitlementTransactions(_ context.Context, _ ports.SessionProbeInput, request ports.ReadEntitlementTransactionsInput) (*ports.ReadEntitlementTransactionsResult, error) {
 	r.request = request
 	return r.result, nil
+}
+
+func findEntitlementByExternalID(t *testing.T, items []*adminplusdomain.SupplierEntitlementTransaction, externalID string) *adminplusdomain.SupplierEntitlementTransaction {
+	t.Helper()
+	for _, item := range items {
+		if item.ExternalID == externalID {
+			return item
+		}
+	}
+	require.Failf(t, "entitlement transaction not found", "external_id=%s", externalID)
+	return nil
 }
 
 var _ Repository = (*MemoryRepository)(nil)

@@ -162,7 +162,7 @@ flowchart TD
 
 ### P3：分组弹窗内异步开通 Key 和本地落地
 
-目标：从供应商出发提交开通任务，由 Worker 完成第三方 Key 创建、真实 Sub2API group/account ensure 和 Admin Plus 绑定投影。P3 不再把跨供应商和本地网关的长链路放在 HTTP 请求线程里。
+目标：从供应商出发提交开通任务，由 Worker 完成第三方 Key 创建、真实 Sub2API account ensure 和 Admin Plus 绑定投影。P3 不再把跨供应商和本地网关的长链路放在 HTTP 请求线程里。
 
 流程：
 
@@ -183,7 +183,7 @@ flowchart TD
   E -- 是 --> F[Adapter 创建第三方 Key]
   F --> G{是否拿到密钥明文}
   G -- 否 --> G1[标记 manual_secret_required]
-  G -- 是 --> H[Worker 调用真实 Sub2API Admin API ensure group/account]
+  G -- 是 --> H[Worker 调用真实 Sub2API Admin API ensure account]
   H --> I[创建 Admin Plus 绑定投影]
   I --> J[发布初次余额/费率/健康采集事件]
 ```
@@ -192,7 +192,7 @@ flowchart TD
 
 - 本地 Sub2API 写入只走 Admin API。
 - 第三方 Key 明文默认只在内存中流转；失败暂存必须加密和短 TTL。
-- API 返回 `job_id` 时只提示任务已提交；只有 job 成功且真实 Sub2API 可见 group/account 后，才提示开通完成。
+- API 返回 `job_id` 时只提示任务已提交；只有 job 成功且真实 Sub2API 可见 account 后，才提示开通完成。
 - 绑定后能在供应商分组弹窗看到第三方 Key、本地账号 ID、任务状态、真实 Sub2API 验证状态和失败原因。
 - 账号/Key 独立页只作为修复、审计和历史绑定入口，不作为开通主路径。
 
@@ -242,7 +242,7 @@ flowchart TD
 | 单元测试 | Adapter 归一化、余额口径、费率对比、状态机、敏感字段脱敏 |
 | 集成测试 | 真实 handler、service、SQL repository、只读 DB/Redis adapter |
 | 插件联调 | 真实站点识别、真实会话包上报、后端会话探测 |
-| E2E | 创建供应商、上报会话、读取余额、提交分组同步 job、提交按分组开通 job、真实 Sub2API 可见 group/account、生成告警 |
+| E2E | 创建供应商、上报会话、读取余额、提交分组同步 job、提交按分组开通 job、真实 Sub2API 可见 account、生成告警 |
 | 安全测试 | SSRF、越权 admin 路径、会话明文泄漏、设备 token 吊销 |
 
 清理项：
@@ -317,7 +317,7 @@ P3 之后：
 - [x] 将 `keys/provision` 改为提交 `provision_group_key` job。
 - [x] 将 `keys/ensure-all` 改为提交 `provision_all_group_keys` job。
 - [x] 将本地 Sub2API 落地语义收口到 `Sub2APIGateway` 边界，由 Worker 侧编排调用。
-- [x] 新增可配置 `Sub2APIHTTPGateway`。配置 `ADMIN_PLUS_SUB2API_ADMIN_BASE_URL` 和 `ADMIN_PLUS_SUB2API_ADMIN_API_KEY` 后，通过真实 Sub2API Admin API ensure group/account；未配置或配置非法时默认 fail-fast，只有显式设置 `ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY=true` 才允许本地开发回退同进程 `AdminService`。
+- [x] 新增可配置 `Sub2APIHTTPGateway`。配置 `ADMIN_PLUS_SUB2API_ADMIN_BASE_URL` 和 `ADMIN_PLUS_SUB2API_ADMIN_API_KEY` 后，通过真实 Sub2API Admin API ensure account；未配置或配置非法时默认 fail-fast，只有显式设置 `ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY=true` 才允许本地开发回退同进程 `AdminService`。
 - [x] 将 `provision_all_group_keys` 从单 step `EnsureAll` 拆成每分组 `ensure_third_party_key` step，支持部分成功和分组级重试。
 - [x] 供应商分组弹窗重构为步骤式任务面板，任务状态在弹窗内轮询展示。
 
@@ -333,7 +333,7 @@ P4/P5 最后收口：
 - `GET /api/v1/admin-plus/suppliers/:id/session`：查询供应商会话脱敏状态，只返回摘要和是否已加密保存，不回显 token/cookie。
 - `POST /api/v1/admin-plus/suppliers/:id/session/probe`：基于已保存统一会话访问同源 Sub2API 供应商用户侧 `/api/v1/user/profile`，读取当前下游用户余额并写入余额快照。
 - `POST /api/v1/admin-plus/suppliers/:id/rates/sync`：基于已保存统一会话访问同源 Sub2API 供应商用户侧费率/渠道接口，归一化后写入 `admin_plus_rate_snapshots` 和变更事件。
-- `POST /api/v1/admin-plus/suppliers/:id/keys/provision`：管理员确认后提交 `provision_group_key` job，返回 `202 Accepted + job_id`；Provision Worker 基于已保存会话创建第三方 Key，再通过 `Sub2APIGateway` ensure 本地 Sub2API group/account，并写入 `admin_plus_supplier_keys` 和 `admin_plus_supplier_accounts` 绑定投影。生产配置 `Sub2APIHTTPGateway` 后走真实 Sub2API Admin API；未配置或配置非法时任务显式失败，不再回退同进程 `AdminService` 生成假绑定。仅本地开发可显式启用 `ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY=true`。
+- `POST /api/v1/admin-plus/suppliers/:id/keys/provision`：管理员确认后提交 `provision_group_key` job，返回 `202 Accepted + job_id`；Provision Worker 基于已保存会话创建第三方 Key，再通过 `Sub2APIGateway` ensure 本地 Sub2API account，并写入 `admin_plus_supplier_keys` 和 `admin_plus_supplier_accounts` 绑定投影。生产配置 `Sub2APIHTTPGateway` 后走真实 Sub2API Admin API；未配置或配置非法时任务显式失败，不再回退同进程 `AdminService` 生成假绑定。仅本地开发可显式启用 `ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY=true`。
 - `POST /api/v1/admin-plus/suppliers/:id/keys/provision` 已接入业务幂等：HTTP `Idempotency-Key` 写入 job hash；同一供应商分组的未终态 step 会复用已有 job；同一供应商分组还通过数据库唯一索引限制只能存在一个 `provisioning` / `bound` / `manual_secret_required` Key。
 - `POST /api/v1/admin-plus/suppliers/:id/groups/sync`：提交 `sync_groups` job，返回 `202 Accepted + job_id`；Provision Worker 执行分组同步并写入投影。
 - `POST /api/v1/admin-plus/suppliers/:id/keys/ensure-all`：提交 `provision_all_group_keys` job，返回 `202 Accepted + job_id`；提交时按 active 供应商分组展开 `ensure_third_party_key` step，Worker 分组级执行和重试。

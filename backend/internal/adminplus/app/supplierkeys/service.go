@@ -133,8 +133,6 @@ type Sub2APIGateway interface {
 	CreateAccount(ctx context.Context, input *service.CreateAccountInput) (*service.Account, error)
 	GetAccount(ctx context.Context, id int64) (*service.Account, error)
 	UpdateAccount(ctx context.Context, id int64, input *service.UpdateAccountInput) (*service.Account, error)
-	CreateGroup(ctx context.Context, input *service.CreateGroupInput) (*service.Group, error)
-	GetAllGroupsIncludingInactive(ctx context.Context) ([]service.Group, error)
 }
 
 type LocalAccountService = Sub2APIGateway
@@ -239,11 +237,9 @@ func (s *Service) Provision(ctx context.Context, in ProvisionKeyInput) (*Provisi
 	if existing != nil {
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_GROUP_KEY_ALREADY_BOUND", "supplier group already has a bound or provisioning key")
 	}
-	localGroup, _, err := s.ensureLocalGroup(ctx, supplier, group)
-	if err != nil {
+	if err := s.ensureLocalAccountGatewayReady(ctx); err != nil {
 		return nil, err
 	}
-	normalized.LocalAccountGroupIDs = mergeInt64IDs(normalized.LocalAccountGroupIDs, localGroup.ID)
 	input, err := s.session.DecryptedProbeInput(ctx, normalized.SupplierID)
 	if err != nil {
 		return nil, err
@@ -442,15 +438,8 @@ func (s *Service) ensureGroup(ctx context.Context, normalized EnsureAllInput, su
 	if err != nil {
 		return fail(err)
 	}
-	localGroup, localGroupCreated, err := s.ensureLocalGroup(ctx, supplier, group)
-	if err != nil {
-		return fail(err)
-	}
-	item.LocalSub2APIGroupID = localGroup.ID
-	item.LocalSub2APIGroupName = localGroup.Name
-	item.LocalGroupCreated = localGroupCreated
 	if existing != nil {
-		localAccountInput := localAccountInputForKey(normalized, supplier, group, existing, []int64{localGroup.ID})
+		localAccountInput := localAccountInputForKey(normalized, supplier, group, existing, nil)
 		ensuredAccount, accountCreated, bound, updated, err := s.ensureLocalAccountForKey(ctx, localAccountInput)
 		if err != nil {
 			item.Key = existing
@@ -490,7 +479,6 @@ func (s *Service) ensureGroup(ctx context.Context, normalized EnsureAllInput, su
 		LocalAccountConcurrency:    normalized.LocalAccountConcurrency,
 		LocalAccountPriority:       normalized.LocalAccountPriority,
 		LocalAccountRateMultiplier: &rate,
-		LocalAccountGroupIDs:       []int64{localGroup.ID},
 		RuntimeStatus:              normalized.RuntimeStatus,
 		HealthStatus:               normalized.HealthStatus,
 		BalanceThresholdCents:      normalized.BalanceThresholdCents,
@@ -504,7 +492,6 @@ func (s *Service) ensureGroup(ctx context.Context, normalized EnsureAllInput, su
 	item.Action = "created"
 	item.Key = created.Key
 	item.Binding = created.Binding
-	item.LocalAccountGroupBound = true
 	return item, nil
 }
 
@@ -559,15 +546,7 @@ func (s *Service) RepairBinding(ctx context.Context, in RepairBindingInput) (*Pr
 	if err != nil {
 		return nil, err
 	}
-	supplier, err := s.repo.GetSupplier(ctx, normalized.SupplierID)
-	if err != nil {
-		return nil, err
-	}
-	localGroup, _, err := s.ensureLocalGroup(ctx, supplier, group)
-	if err != nil {
-		return nil, err
-	}
-	if _, _, err := s.ensureLocalAccountStateForAccount(ctx, localAccount, localGroup.ID, "", key, group); err != nil {
+	if _, _, err := s.ensureLocalAccountStateForGroups(ctx, localAccount, nil, "", key, group); err != nil {
 		return nil, err
 	}
 	now := s.now().UTC()
@@ -773,78 +752,31 @@ func validLocalPlatform(platform string) bool {
 	}
 }
 
-func (s *Service) ensureLocalGroup(ctx context.Context, supplier *adminplusdomain.Supplier, group *adminplusdomain.SupplierGroup) (*service.Group, bool, error) {
-	if s == nil || s.sub2apiGateway == nil {
-		return nil, false, internalError("local Sub2API account service is not configured")
-	}
-	if group == nil {
-		return nil, false, badRequest("SUPPLIER_GROUP_ID_INVALID", "invalid supplier group id")
-	}
-	name := defaultLocalGroupName(supplier, group)
-	groups, err := s.sub2apiGateway.GetAllGroupsIncludingInactive(ctx)
-	if err != nil {
-		return nil, false, localGatewayError("LOCAL_SUB2API_GROUP_LIST_FAILED", "failed to list local Sub2API groups", err)
-	}
-	for i := range groups {
-		if strings.EqualFold(strings.TrimSpace(groups[i].Name), name) {
-			cp := groups[i]
-			return &cp, false, nil
-		}
-	}
-
-	rate := group.EffectiveRateMultiplier
-	if rate <= 0 {
-		rate = group.RateMultiplier
-	}
-	if rate <= 0 {
-		rate = 1
-	}
-	rpm := 0
-	if group.RPMLimit != nil && *group.RPMLimit > 0 {
-		rpm = int(*group.RPMLimit)
-	}
-	description := defaultLocalGroupDescription(supplier, group)
-	created, err := s.sub2apiGateway.CreateGroup(ctx, &service.CreateGroupInput{
-		Name:                 name,
-		Description:          description,
-		Platform:             normalizeLocalPlatform(group.ProviderFamily),
-		RateMultiplier:       rate,
-		IsExclusive:          group.IsPrivate,
-		SubscriptionType:     service.SubscriptionTypeStandard,
-		DailyLimitUSD:        group.DailyLimitUSD,
-		WeeklyLimitUSD:       group.WeeklyLimitUSD,
-		MonthlyLimitUSD:      group.MonthlyLimitUSD,
-		AllowImageGeneration: group.AllowImageGeneration,
-		RPMLimit:             rpm,
-	})
-	if err == nil {
-		return created, true, nil
-	}
-	if strings.Contains(strings.ToUpper(err.Error()), "GROUP_EXISTS") || strings.Contains(strings.ToLower(err.Error()), "group name already exists") {
-		groups, listErr := s.sub2apiGateway.GetAllGroupsIncludingInactive(ctx)
-		if listErr != nil {
-			return nil, false, localGatewayError("LOCAL_SUB2API_GROUP_LIST_FAILED", "failed to list local Sub2API groups", listErr)
-		}
-		for i := range groups {
-			if strings.EqualFold(strings.TrimSpace(groups[i].Name), name) {
-				cp := groups[i]
-				return &cp, false, nil
-			}
-		}
-	}
-	return nil, false, localGatewayError("LOCAL_SUB2API_GROUP_CREATE_FAILED", "failed to create local Sub2API group", err)
-}
-
 func (s *Service) ensureLocalAccountStateForAccount(ctx context.Context, localAccount *service.Account, localGroupID int64, baseURL string, key *adminplusdomain.SupplierKey, group *adminplusdomain.SupplierGroup) (bool, *service.Account, error) {
 	return s.ensureLocalAccountStateForGroups(ctx, localAccount, []int64{localGroupID}, baseURL, key, group)
 }
 
+func (s *Service) ensureLocalAccountGatewayReady(ctx context.Context) error {
+	finder, ok := s.sub2apiGateway.(Sub2APIAccountFinder)
+	if !ok {
+		return nil
+	}
+	_, err := finder.FindAccount(ctx, Sub2APIAccountLookupInput{
+		LocalAccountName:     "__admin_plus_gateway_preflight__",
+		LocalAccountPlatform: service.PlatformOpenAI,
+	})
+	if err != nil && !isLocalAccountNotFound(err) {
+		return localGatewayError("LOCAL_SUB2API_ACCOUNT_LOOKUP_FAILED", "failed to lookup local Sub2API account", err)
+	}
+	return nil
+}
+
 func (s *Service) ensureLocalAccountStateForGroups(ctx context.Context, localAccount *service.Account, localGroupIDs []int64, baseURL string, key *adminplusdomain.SupplierKey, group *adminplusdomain.SupplierGroup) (bool, *service.Account, error) {
-	if localAccount == nil || localAccount.ID <= 0 || len(localGroupIDs) == 0 {
+	if localAccount == nil || localAccount.ID <= 0 {
 		return false, localAccount, nil
 	}
 	groupIDs := mergeInt64IDs(localAccount.GroupIDs, localGroupIDs...)
-	groupChanged := len(groupIDs) != len(localAccount.GroupIDs)
+	groupChanged := len(localGroupIDs) > 0 && len(groupIDs) != len(localAccount.GroupIDs)
 	credentialsPatch := missingLocalAccountCredentialDefaults(localAccount, baseURL)
 	extraPatch := missingLocalAccountExtraDefaults(localAccount, key, group)
 	if !groupChanged && len(credentialsPatch) == 0 && len(extraPatch) == 0 {
@@ -910,9 +842,6 @@ func (s *Service) ensureLocalAccountForKey(ctx context.Context, in localAccountE
 		name = defaultLocalAccountName(in.Supplier, in.Group)
 	}
 	groupIDs := mergeInt64IDs(nil, in.GroupIDs...)
-	if len(groupIDs) == 0 {
-		return nil, false, false, in.Key, badRequest("LOCAL_GROUP_ID_INVALID", "local Sub2API group is required")
-	}
 
 	account, err := s.findLocalAccountForKey(ctx, in, name, platform)
 	if err != nil {
@@ -1097,7 +1026,9 @@ func mergeInt64IDs(existing []int64, ids ...int64) []int64 {
 }
 
 func defaultLocalAccountCredentials(platform string, baseURL string, secret string) map[string]any {
-	credentials := map[string]any{}
+	credentials := map[string]any{
+		"pool_mode": true,
+	}
 	if strings.TrimSpace(secret) != "" {
 		credentials["api_key"] = strings.TrimSpace(secret)
 	}
@@ -1352,39 +1283,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func defaultLocalGroupName(supplier *adminplusdomain.Supplier, group *adminplusdomain.SupplierGroup) string {
-	supplierID := int64(0)
-	if supplier != nil {
-		supplierID = supplier.ID
-	}
-	externalID := strings.TrimSpace(group.ExternalGroupID)
-	if externalID == "" {
-		externalID = "local-" + time.Now().UTC().Format("20060102150405")
-	}
-	name := strings.TrimSpace(group.Name)
-	if name == "" {
-		name = "unnamed"
-	}
-	return trimRunes("AP"+strconv.FormatInt(supplierID, 10)+"-G"+externalID+"-"+name, 100)
-}
-
-func defaultLocalGroupDescription(supplier *adminplusdomain.Supplier, group *adminplusdomain.SupplierGroup) string {
-	parts := []string{"Admin Plus supplier group"}
-	if supplier != nil {
-		parts = append(parts, "supplier_id="+strconv.FormatInt(supplier.ID, 10))
-		if strings.TrimSpace(supplier.Name) != "" {
-			parts = append(parts, "supplier="+strings.TrimSpace(supplier.Name))
-		}
-	}
-	if group != nil {
-		parts = append(parts, "supplier_group_id="+strconv.FormatInt(group.ID, 10))
-		if strings.TrimSpace(group.ExternalGroupID) != "" {
-			parts = append(parts, "external_group_id="+strings.TrimSpace(group.ExternalGroupID))
-		}
-	}
-	return trimLimit(strings.Join(parts, "; "), 1000)
 }
 
 func defaultProvisionName(group *adminplusdomain.SupplierGroup) string {

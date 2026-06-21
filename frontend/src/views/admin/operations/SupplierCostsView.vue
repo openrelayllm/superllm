@@ -5,7 +5,7 @@
         <div>
           <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">成本对账</h1>
           <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-            从供应商充值订单、兑换记录、usage 消耗和余额快照生成上游成本台账。
+            从供应商充值订单、兑换充值、用量消耗和余额快照生成上游成本台账。
           </p>
         </div>
         <div class="flex flex-wrap gap-2">
@@ -44,29 +44,31 @@
 
       <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">累计充值额度</p>
+          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">充值总额</p>
+          <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(supplierRechargeTotalCents(currentSnapshot), currentCurrency) }}</p>
+        </div>
+        <div class="card p-4">
+          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">充值订单</p>
           <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(currentSnapshot?.completed_funding_amount_cents || 0, currentCurrency) }}</p>
         </div>
         <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">实际支付</p>
-          <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(currentSnapshot?.completed_funding_cash_cents || 0, currentCurrency) }}</p>
-        </div>
-        <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">兑换权益</p>
+          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">兑换充值</p>
           <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(currentSnapshot?.entitlement_amount_cents || 0, currentCurrency) }}</p>
         </div>
         <div class="card p-4">
           <p class="text-xs font-medium text-gray-500 dark:text-dark-400">用量消耗</p>
-          <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(currentSnapshot?.usage_cost_cents || 0, currentCurrency) }}</p>
+          <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(supplierDisplayUsageCents(currentSnapshot), currentCurrency) }}</p>
         </div>
         <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">理论余额</p>
-          <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(currentSnapshot?.expected_balance_cents || 0, currentCurrency) }}</p>
+          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">实际余额</p>
+          <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">
+            {{ currentSnapshot?.actual_balance_cents === undefined || currentSnapshot?.actual_balance_cents === null ? '-' : formatMoney(currentSnapshot.actual_balance_cents, currentCurrency) }}
+          </p>
         </div>
         <div class="card p-4">
           <p class="text-xs font-medium text-gray-500 dark:text-dark-400">余额差异</p>
           <p class="mt-2 text-2xl font-semibold" :class="balanceDeltaClass">
-            {{ currentSnapshot?.balance_delta_cents === undefined || currentSnapshot?.balance_delta_cents === null ? '-' : formatMoney(currentSnapshot.balance_delta_cents, currentCurrency) }}
+            {{ currentBalanceDelta === null ? '-' : formatMoney(currentBalanceDelta, currentCurrency) }}
           </p>
         </div>
       </section>
@@ -89,14 +91,15 @@
         </div>
 
         <div v-if="activeTab === 'summary'" class="overflow-x-auto">
-          <table class="w-full min-w-[1040px] divide-y divide-gray-200 dark:divide-dark-700">
+          <table class="w-full min-w-[1180px] divide-y divide-gray-200 dark:divide-dark-700">
             <thead class="bg-gray-50 dark:bg-dark-800">
               <tr>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">供应商</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">币种</th>
-                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">充值额度</th>
-                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">兑换权益</th>
-                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">消耗</th>
+                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">充值总额</th>
+                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">充值订单</th>
+                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">兑换充值</th>
+                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">用量消耗</th>
                 <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">实际余额</th>
                 <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">差异</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">采集时间</th>
@@ -104,7 +107,7 @@
             </thead>
             <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
               <tr v-if="snapshots.length === 0">
-                <td colspan="8" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无成本快照</td>
+                <td colspan="9" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无成本快照</td>
               </tr>
               <tr
                 v-for="snapshot in snapshots"
@@ -114,12 +117,13 @@
               >
                 <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{{ supplierName(snapshot.supplier_id) }}</td>
                 <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{{ snapshot.currency }}</td>
+                <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMoney(supplierRechargeTotalCents(snapshot), snapshot.currency) }}</td>
                 <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMoney(snapshot.completed_funding_amount_cents, snapshot.currency) }}</td>
                 <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMoney(snapshot.entitlement_amount_cents, snapshot.currency) }}</td>
-                <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMoney(snapshot.usage_cost_cents, snapshot.currency) }}</td>
+                <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMoney(supplierDisplayUsageCents(snapshot), snapshot.currency) }}</td>
                 <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ snapshot.actual_balance_cents === undefined || snapshot.actual_balance_cents === null ? '-' : formatMoney(snapshot.actual_balance_cents, snapshot.currency) }}</td>
-                <td class="px-4 py-4 text-right text-sm" :class="deltaClass(snapshot.balance_delta_cents)">
-                  {{ snapshot.balance_delta_cents === undefined || snapshot.balance_delta_cents === null ? '-' : formatMoney(snapshot.balance_delta_cents, snapshot.currency) }}
+                <td class="px-4 py-4 text-right text-sm" :class="deltaClass(supplierBalanceDeltaCents(snapshot))">
+                  {{ supplierBalanceDeltaCents(snapshot) === null ? '-' : formatMoney(supplierBalanceDeltaCents(snapshot) || 0, snapshot.currency) }}
                 </td>
                 <td class="px-4 py-4 text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(snapshot.captured_at) }}</td>
               </tr>
@@ -165,7 +169,7 @@
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">记录</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">来源</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">状态</th>
-                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">权益额度</th>
+                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">权益内容</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">使用时间</th>
               </tr>
             </thead>
@@ -178,9 +182,14 @@
                   <div class="font-mono text-xs">{{ item.external_id }}</div>
                   <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">尾号 {{ item.code_last4 || '-' }}</div>
                 </td>
-                <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{{ sourceFamilyLabel(item.source_family) }}</td>
+                <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">
+                  <div>{{ sourceFamilyLabel(item.source_family) }}</div>
+                  <div class="mt-2">
+                    <span class="badge" :class="entitlementBadgeClass(item.type)">{{ entitlementTypeLabel(item.type) }}</span>
+                  </div>
+                </td>
                 <td class="px-4 py-4"><span class="badge badge-gray">{{ item.status }}</span></td>
-                <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMoney(item.value_cents, item.currency) }}</td>
+                <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ entitlementValueLabel(item) }}</td>
                 <td class="px-4 py-4 text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(item.used_at || item.created_at_external) }}</td>
               </tr>
             </tbody>
@@ -243,6 +252,11 @@ import {
   type SupplierProvisionJob,
   type SupplierProvisionStatus
 } from '@/api/admin/adminPlus'
+import {
+  supplierBalanceDeltaCents,
+  supplierDisplayUsageCents,
+  supplierRechargeTotalCents
+} from './supplierCostPresentation'
 
 type CostTab = 'summary' | 'funding' | 'entitlements' | 'ledger'
 
@@ -276,7 +290,8 @@ const currentSnapshot = computed(() => {
   return snapshots.value.find((item) => item.supplier_id === selectedSupplierId.value) || snapshots.value[0] || null
 })
 const currentCurrency = computed(() => currentSnapshot.value?.currency || 'USD')
-const balanceDeltaClass = computed(() => deltaClass(currentSnapshot.value?.balance_delta_cents))
+const currentBalanceDelta = computed(() => supplierBalanceDeltaCents(currentSnapshot.value))
+const balanceDeltaClass = computed(() => deltaClass(currentBalanceDelta.value))
 const syncStatusLabel = computed(() => {
   if (activeSyncJob.value) return syncJobCaption(activeSyncJob.value)
   if (syncing.value) return '成本同步任务已提交'
@@ -291,6 +306,10 @@ function formatMoney(cents: number, currency: string): string {
     currency: currency || 'USD',
     minimumFractionDigits: 2
   }).format((cents || 0) / 100)
+}
+
+function formatNumber(value?: number | null): string {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value || 0)
 }
 
 function formatDateTime(value?: string | null): string {
@@ -322,6 +341,29 @@ function sourceFamilyLabel(value: string): string {
     payment_auto_redeem: '充值自动兑换',
     manual_redeem: '手工兑换'
   }[value] || value || '-'
+}
+
+function entitlementTypeLabel(value: string): string {
+  return {
+    balance: '余额',
+    concurrency: '并发',
+    subscription: '订阅'
+  }[value] || value || '-'
+}
+
+function entitlementBadgeClass(value: string): string {
+  if (value === 'balance') return 'badge-success'
+  if (value === 'concurrency') return 'badge-warning'
+  if (value === 'subscription') return 'badge-gray'
+  return 'badge-gray'
+}
+
+function entitlementValueLabel(item: SupplierEntitlementTransaction): string {
+  if (item.type === 'balance') return formatMoney(item.value_cents, item.currency)
+  if (item.type === 'concurrency') return `+${formatNumber(item.raw_value)} 请求`
+  if (item.type === 'subscription') return item.validity_days ? `${formatNumber(item.validity_days)} 天` : '订阅权益'
+  if (item.raw_value !== undefined && item.raw_value !== null) return String(item.raw_value)
+  return '-'
 }
 
 function ledgerTypeLabel(value: string): string {

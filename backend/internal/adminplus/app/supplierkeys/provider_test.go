@@ -22,7 +22,7 @@ func TestUseSub2APIGatewayDefaultsToFailingGatewayWhenRemoteConfigMissing(t *tes
 	gateway := UseSub2APIGateway(&noopAdminGateway{}, nil)
 
 	require.IsType(t, &FailingSub2APIGateway{}, gateway)
-	_, err := gateway.GetAllGroupsIncludingInactive(context.Background())
+	_, err := gateway.GetAccount(context.Background(), 1)
 	require.Equal(t, "SUB2API_GATEWAY_CONFIG_REQUIRED", infraerrors.Reason(err))
 }
 
@@ -45,7 +45,7 @@ func TestUseSub2APIGatewayReturnsFailingGatewayForInvalidRemoteConfig(t *testing
 	gateway := UseSub2APIGateway(&noopAdminGateway{}, nil)
 
 	require.IsType(t, &FailingSub2APIGateway{}, gateway)
-	_, err := gateway.GetAllGroupsIncludingInactive(context.Background())
+	_, err := gateway.GetAccount(context.Background(), 1)
 	require.Equal(t, "SUB2API_GATEWAY_BASE_URL_INVALID", infraerrors.Reason(err))
 }
 
