@@ -5,18 +5,19 @@ import (
 	actionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
 	announcementsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/announcements"
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
-	billingapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/billing"
+	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	notificationsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
+	provisionjobsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/provisionjobs"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
-	reconciliationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/reconciliation"
 	schedulerapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
 	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	suppliergroupsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
 	supplierkeysapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/supplierkeys"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
+	usagecostsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
 	"github.com/google/wire"
 )
 
@@ -24,10 +25,12 @@ var ProviderSet = wire.NewSet(
 	sub2apiprovider.ProviderSet,
 	actionsapp.ProviderSet,
 	balancesapp.ProviderSet,
-	billingapp.ProviderSet,
+	usagecostsapp.ProviderSet,
+	costsapp.ProviderSet,
 	extensionapp.ProviderSet,
 	wire.Bind(new(extensionapp.BrowserCredentialProvider), new(*suppliersapp.Service)),
 	wire.Bind(new(sessionsapp.SupplierLookup), new(*suppliersapp.Service)),
+	wire.Bind(new(costsapp.SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(ratesapp.SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(suppliergroupsapp.SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(supplierkeysapp.SessionReader), new(*sessionsapp.Service)),
@@ -35,7 +38,7 @@ var ProviderSet = wire.NewSet(
 	notificationsapp.ProviderSet,
 	announcementsapp.ProviderSet,
 	ratesapp.ProviderSet,
-	reconciliationapp.ProviderSet,
+	provisionjobsapp.ProviderSet,
 	schedulerapp.ProviderSet,
 	sessionsapp.ProviderSet,
 	sub2apiapp.ProviderSet,

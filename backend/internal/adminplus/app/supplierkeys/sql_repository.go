@@ -70,6 +70,38 @@ func (r *SQLRepository) GetKey(ctx context.Context, supplierID int64, keyID int6
 	return scanSupplierKey(row)
 }
 
+func (r *SQLRepository) ListGroups(ctx context.Context, supplierID int64) ([]*adminplusdomain.SupplierGroup, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, supplier_id, external_group_id, name, description, provider_family,
+			rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
+			rpm_limit, daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
+			allow_image_generation, is_private, status, raw_payload,
+			last_seen_at, created_at, updated_at
+		FROM admin_plus_supplier_groups
+		WHERE supplier_id = $1 AND status = 'active'
+		ORDER BY created_at DESC, id DESC
+	`, supplierID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	items := make([]*adminplusdomain.SupplierGroup, 0)
+	for rows.Next() {
+		item, err := scanSupplierGroup(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *SQLRepository) FindActiveByGroup(ctx context.Context, supplierID int64, groupID int64) (*adminplusdomain.SupplierKey, error) {
 	if r == nil || r.db == nil {
 		return nil, dbNotConfigured()
@@ -242,6 +274,81 @@ func (r *SQLRepository) CreateBinding(ctx context.Context, account *adminplusdom
 		return nil, translateBindingCreateError(err)
 	}
 	return item, nil
+}
+
+func (r *SQLRepository) UpsertBinding(ctx context.Context, account *adminplusdomain.SupplierAccount) (*adminplusdomain.SupplierAccount, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	if account == nil {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_ACCOUNT_INVALID", "supplier account binding is required")
+	}
+	row := r.db.QueryRowContext(ctx, `
+		INSERT INTO admin_plus_supplier_accounts (
+			supplier_id, supplier_key_id, local_sub2api_account_id,
+			local_account_name, local_account_platform, local_account_type,
+			supplier_account_identifier, supplier_account_label, organization_id, project_id, rate_profile,
+			configured_concurrency, observed_max_concurrency,
+			balance_threshold_cents, balance_cents, balance_currency, has_usable_balance,
+			runtime_status, health_status, created_at, updated_at
+		)
+		VALUES (
+			$1, $2, $3, $4, $5,
+			$6, $7, $8, $9, $10,
+			$11, $12, $13,
+			$14, $15, $16, $17,
+			$18, $19, $20, $21
+		)
+		ON CONFLICT (supplier_id, supplier_key_id)
+		WHERE supplier_key_id > 0
+		DO UPDATE SET
+			local_sub2api_account_id = EXCLUDED.local_sub2api_account_id,
+			local_account_name = EXCLUDED.local_account_name,
+			local_account_platform = EXCLUDED.local_account_platform,
+			local_account_type = EXCLUDED.local_account_type,
+			supplier_account_identifier = EXCLUDED.supplier_account_identifier,
+			supplier_account_label = EXCLUDED.supplier_account_label,
+			organization_id = EXCLUDED.organization_id,
+			project_id = EXCLUDED.project_id,
+			rate_profile = EXCLUDED.rate_profile,
+			configured_concurrency = EXCLUDED.configured_concurrency,
+			observed_max_concurrency = EXCLUDED.observed_max_concurrency,
+			balance_threshold_cents = EXCLUDED.balance_threshold_cents,
+			balance_cents = EXCLUDED.balance_cents,
+			balance_currency = EXCLUDED.balance_currency,
+			has_usable_balance = EXCLUDED.has_usable_balance,
+			runtime_status = EXCLUDED.runtime_status,
+			health_status = EXCLUDED.health_status,
+			updated_at = EXCLUDED.updated_at
+		RETURNING id
+	`,
+		account.SupplierID,
+		account.SupplierKeyID,
+		account.LocalSub2APIAccountID,
+		account.LocalAccountName,
+		account.LocalAccountPlatform,
+		account.LocalAccountType,
+		account.SupplierAccountIdentifier,
+		account.SupplierAccountLabel,
+		account.OrganizationID,
+		account.ProjectID,
+		account.RateProfile,
+		account.ConfiguredConcurrency,
+		account.ObservedMaxConcurrency,
+		account.BalanceThresholdCents,
+		account.BalanceCents,
+		account.BalanceCurrency,
+		account.HasUsableBalance,
+		string(account.RuntimeStatus),
+		string(account.HealthStatus),
+		account.CreatedAt,
+		account.UpdatedAt,
+	)
+	var bindingID int64
+	if err := row.Scan(&bindingID); err != nil {
+		return nil, translateBindingCreateError(err)
+	}
+	return r.getBinding(ctx, account.SupplierID, bindingID)
 }
 
 func (r *SQLRepository) getBinding(ctx context.Context, supplierID int64, bindingID int64) (*adminplusdomain.SupplierAccount, error) {

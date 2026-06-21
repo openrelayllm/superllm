@@ -26,7 +26,7 @@ func TestServiceClaimTaskUsesPriorityAndCreatesLease(t *testing.T) {
 	require.NoError(t, err)
 	_, err = svc.CreateTask(context.Background(), CreateTaskInput{
 		SupplierID: 2,
-		Type:       adminplusdomain.ExtensionTaskTypeExportBills,
+		Type:       adminplusdomain.ExtensionTaskTypeFetchUsageCosts,
 		Priority:   10,
 	})
 	require.NoError(t, err)

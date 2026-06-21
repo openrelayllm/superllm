@@ -133,10 +133,10 @@ func (r *MemoryRepository) ListTasks(_ context.Context, filter TaskFilter) ([]*a
 		items = append(items, cloneMemoryExtensionTask(task))
 	}
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].Priority == items[j].Priority {
-			return items[i].CreatedAt.Before(items[j].CreatedAt)
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].ID > items[j].ID
 		}
-		return items[i].Priority > items[j].Priority
+		return items[i].CreatedAt.After(items[j].CreatedAt)
 	})
 	if filter.Limit > 0 && len(items) > filter.Limit {
 		items = items[:filter.Limit]

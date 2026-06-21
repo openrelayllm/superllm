@@ -31,12 +31,18 @@ func RegisterAdminPlusRoutes(
 			suppliers.GET("/:id/groups", h.AdminPlus.SupplierGroup.List)
 			suppliers.POST("/:id/groups/sync", h.AdminPlus.SupplierGroup.Sync)
 			suppliers.GET("/:id/keys", h.AdminPlus.SupplierKey.List)
+			suppliers.POST("/:id/keys/ensure-all", h.AdminPlus.SupplierKey.EnsureAll)
 			suppliers.POST("/:id/keys/provision", h.AdminPlus.SupplierKey.Provision)
 			suppliers.POST("/:id/keys/:keyID/repair-binding", h.AdminPlus.SupplierKey.RepairBinding)
 			suppliers.POST("/:id/rates/sync", h.AdminPlus.Rate.SyncSupplierRates)
 			suppliers.GET("/:id/balance/current", h.AdminPlus.Balance.GetSupplierCurrent)
 			suppliers.POST("/:id/announcements/sync", h.AdminPlus.Announcement.SyncSupplierAnnouncements)
-			suppliers.POST("/:id/billing/sync", h.AdminPlus.Billing.SyncSupplierBilling)
+			suppliers.POST("/:id/usage-costs/sync", h.AdminPlus.UsageCost.SyncSupplierUsageCosts)
+			suppliers.POST("/:id/costs/sync", h.AdminPlus.Cost.SyncSupplierCosts)
+			suppliers.GET("/:id/costs/summary", h.AdminPlus.Cost.GetSupplierSummary)
+			suppliers.GET("/:id/funding-transactions", h.AdminPlus.Cost.ListFundingTransactions)
+			suppliers.GET("/:id/entitlement-transactions", h.AdminPlus.Cost.ListEntitlementTransactions)
+			suppliers.GET("/:id/cost-ledger", h.AdminPlus.Cost.ListLedgerEntries)
 			suppliers.GET("/:id/session", h.AdminPlus.Session.Get)
 			suppliers.POST("/:id/session/login", h.AdminPlus.Session.Login)
 			suppliers.POST("/:id/session/probe", h.AdminPlus.Session.Probe)
@@ -50,6 +56,12 @@ func RegisterAdminPlusRoutes(
 			sub2api.GET("/usage-lines", h.AdminPlus.Sub2API.ListLocalUsageLines)
 			sub2api.GET("/usage-summary", h.AdminPlus.Sub2API.ListLocalUsageSummaries)
 			sub2api.GET("/account-usage-summary", h.AdminPlus.Sub2API.ListLocalAccountUsageSummaries)
+		}
+
+		provisionJobs := adminPlus.Group("/supplier-provision-jobs")
+		{
+			provisionJobs.GET("", h.AdminPlus.ProvisionJob.List)
+			provisionJobs.GET("/:jobID", h.AdminPlus.ProvisionJob.Get)
 		}
 
 		rates := adminPlus.Group("/rates")
@@ -89,10 +101,15 @@ func RegisterAdminPlusRoutes(
 			notifications.GET("/deliveries", h.AdminPlus.Notification.ListDeliveries)
 		}
 
-		billing := adminPlus.Group("/billing")
+		usageCosts := adminPlus.Group("/usage-costs")
 		{
-			billing.POST("/lines/import", h.AdminPlus.Billing.ImportBillLines)
-			billing.GET("/lines", h.AdminPlus.Billing.ListBillLines)
+			usageCosts.POST("/lines/import", h.AdminPlus.UsageCost.ImportUsageCostLines)
+			usageCosts.GET("/lines", h.AdminPlus.UsageCost.ListUsageCostLines)
+		}
+
+		costs := adminPlus.Group("/costs")
+		{
+			costs.GET("/suppliers", h.AdminPlus.Cost.ListSupplierSummaries)
 		}
 
 		extension := adminPlus.Group("/extension")
@@ -113,11 +130,6 @@ func RegisterAdminPlusRoutes(
 		{
 			scheduler.GET("/status", h.AdminPlus.Scheduler.Status)
 			scheduler.POST("/run", h.AdminPlus.Scheduler.Run)
-		}
-
-		reconciliation := adminPlus.Group("/reconciliation")
-		{
-			reconciliation.POST("/run", h.AdminPlus.Reconciliation.Run)
 		}
 
 		actions := adminPlus.Group("/actions")

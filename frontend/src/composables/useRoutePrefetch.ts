@@ -21,9 +21,8 @@ type ComponentImportFn = () => Promise<unknown>
  */
 const PREFETCH_ADJACENCY: Record<string, string[]> = {
   // Admin Plus current routes only. 用户端、支付、旧后台页面属于 dead 路径。
-  '/admin/dashboard': ['/admin/ops', '/admin/settings'],
-  '/admin/ops': ['/admin/dashboard', '/admin/settings'],
-  '/admin/settings': ['/admin/dashboard', '/admin/ops']
+  '/admin/dashboard': ['/admin/settings'],
+  '/admin/settings': ['/admin/dashboard']
 }
 
 /**

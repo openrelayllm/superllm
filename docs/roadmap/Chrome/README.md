@@ -1042,7 +1042,7 @@ POST /api/v1/admin-plus/suppliers/:id/session/revoke
 GET  /api/v1/admin-plus/suppliers/:id/capabilities
 ```
 
-插件侧旧任务类型中的 `fetch_rates`、`fetch_balance`、`fetch_announcements`、`fetch_health`、`export_bills` 只保留为兼容语义。当前会话主路径是后端直登优先，插件仅在直登不可用时上报供应商浏览器会话；后端 Provider Adapter / app service 再读取余额、分组、费率、公告、健康和账单等业务数据。插件不得解析或上报业务结果作为主事实源。调度中心显式选择 `fetch_groups`、`fetch_rates`、`fetch_balance`、`fetch_announcements`、`fetch_health`、`export_bills` 时已经直接执行后端同步，不创建插件业务采集任务。
+插件侧旧任务类型中的 `fetch_rates`、`fetch_balance`、`fetch_announcements`、`fetch_health`、`fetch_usage_costs` 只保留为兼容语义。当前会话主路径是后端直登优先，插件仅在直登不可用时上报供应商浏览器会话；后端 Provider Adapter / app service 再读取余额、分组、费率、公告、健康和用量消耗等业务数据。插件不得解析或上报业务结果作为主事实源。调度中心显式选择 `fetch_groups`、`fetch_rates`、`fetch_balance`、`fetch_announcements`、`fetch_health`、`fetch_usage_costs` 时已经直接执行后端同步，不创建插件业务采集任务。
 
 说明：
 

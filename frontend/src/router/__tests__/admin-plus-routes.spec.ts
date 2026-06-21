@@ -15,7 +15,7 @@ function collectRoutePaths(routes: RouteRecordRaw[]): string[] {
 }
 
 describe('adminPlusRoutes', () => {
-  it('只暴露 Admin Plus MVP0 当前路由', () => {
+  it('只暴露 Admin Plus MVP0 当前路由和兼容重定向', () => {
     expect(collectRoutePaths(adminPlusRoutes)).toEqual([
       '/setup',
       '/login',
@@ -33,9 +33,9 @@ describe('adminPlusRoutes', () => {
       '/admin/monitoring/health',
       '/admin/monitoring/account-runtime',
       '/admin/monitoring/announcements',
-      '/admin/finance/billing',
+      '/admin/finance/costs',
+      '/admin/finance/usage-costs',
       '/admin/finance/local-usage',
-      '/admin/finance/reconciliation',
       '/admin/automation/actions',
       '/admin/automation/notifications',
       '/admin/automation/audits',
@@ -80,6 +80,8 @@ describe('adminPlusRoutes', () => {
       '/admin/subscriptions',
       '/admin/redeem',
       '/admin/backup',
+      '/admin/finance/billing',
+      '/admin/finance/reconciliation',
       '/admin/operations/promotions'
     ]
 
@@ -91,51 +93,52 @@ describe('adminPlusRoutes', () => {
   it('后台业务页面必须要求管理员身份', () => {
     const adminRoutes = adminPlusRoutes.filter((route) =>
       [
-      '/admin/dashboard',
-      '/admin/ops',
+        '/admin/dashboard',
         '/admin/suppliers',
         '/admin/supplier-bindings',
         '/admin/collection/scheduler',
-        '/admin/collection/plugin-tasks',
         '/admin/collection/sessions',
-        '/admin/monitoring/rates',
-        '/admin/monitoring/balances',
-        '/admin/monitoring/health',
-        '/admin/monitoring/account-runtime',
         '/admin/monitoring/announcements',
-        '/admin/finance/billing',
+        '/admin/finance/costs',
+        '/admin/finance/usage-costs',
         '/admin/finance/local-usage',
-        '/admin/finance/reconciliation',
-        '/admin/automation/actions',
-        '/admin/automation/notifications',
-        '/admin/automation/audits',
         '/admin/settings'
       ].includes(route.path)
     )
 
-    expect(adminRoutes).toHaveLength(19)
+    expect(adminRoutes).toHaveLength(10)
     for (const route of adminRoutes) {
       expect(route.meta?.requiresAuth).toBe(true)
       expect(route.meta?.requiresAdmin).toBe(true)
+      expect(route.component).toBeDefined()
     }
   })
 
-  it('旧 operations 入口只作为兼容重定向', () => {
+  it('旧入口和降级页面只作为兼容重定向', () => {
     const redirects = new Map(
       [
         ['/admin/operations', '/admin/suppliers'],
         ['/admin/operations/suppliers', '/admin/suppliers'],
         ['/admin/operations/supplier-accounts', '/admin/supplier-bindings'],
-        ['/admin/operations/account-runtime', '/admin/monitoring/account-runtime'],
-        ['/admin/operations/rates', '/admin/monitoring/rates'],
-        ['/admin/operations/balances', '/admin/monitoring/balances'],
-        ['/admin/operations/health', '/admin/monitoring/health'],
+        ['/admin/ops', '/admin/suppliers'],
+        ['/admin/monitoring/rates', '/admin/suppliers'],
+        ['/admin/monitoring/health', '/admin/suppliers'],
+        ['/admin/monitoring/account-runtime', '/admin/suppliers'],
+        ['/admin/operations/account-runtime', '/admin/suppliers'],
+        ['/admin/operations/rates', '/admin/suppliers'],
+        ['/admin/monitoring/balances', '/admin/suppliers'],
+        ['/admin/operations/balances', '/admin/suppliers'],
+        ['/admin/operations/health', '/admin/suppliers'],
         ['/admin/operations/announcements', '/admin/monitoring/announcements'],
         ['/admin/operations/scheduler', '/admin/collection/scheduler'],
-        ['/admin/operations/extension-tasks', '/admin/collection/plugin-tasks'],
-        ['/admin/operations/billing', '/admin/finance/reconciliation'],
-        ['/admin/operations/actions', '/admin/automation/actions'],
-        ['/admin/operations/notifications', '/admin/automation/notifications']
+        ['/admin/collection/plugin-tasks', '/admin/collection/sessions'],
+        ['/admin/operations/extension-tasks', '/admin/collection/sessions'],
+        ['/admin/operations/billing', '/admin/finance/costs'],
+        ['/admin/automation/actions', '/admin/suppliers'],
+        ['/admin/automation/notifications', '/admin/suppliers'],
+        ['/admin/automation/audits', '/admin/suppliers'],
+        ['/admin/operations/actions', '/admin/suppliers'],
+        ['/admin/operations/notifications', '/admin/suppliers']
       ]
     )
 

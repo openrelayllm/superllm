@@ -264,7 +264,7 @@ const columns: Column[] = [
 
 const filteredBindings = computed(() => {
   const q = filters.q.toLowerCase()
-  return bindings.value.filter((item) => {
+  const items = bindings.value.filter((item) => {
     if (filters.runtime_status && item.runtime_status !== filters.runtime_status) return false
     if (filters.health_status && item.health_status !== filters.health_status) return false
     if (q) {
@@ -288,12 +288,26 @@ const filteredBindings = computed(() => {
     }
     return true
   })
+  return sortBindingsDesc(items)
 })
 
 const pagedBindings = computed(() => {
   const start = (pagination.page - 1) * pagination.page_size
   return filteredBindings.value.slice(start, start + pagination.page_size)
 })
+
+function sortBindingsDesc(items: SupplierAccount[]): SupplierAccount[] {
+  return [...items].sort((a, b) => {
+    const createdA = Date.parse(a.created_at || '')
+    const createdB = Date.parse(b.created_at || '')
+    if (!Number.isNaN(createdA) || !Number.isNaN(createdB)) {
+      const normalizedA = Number.isNaN(createdA) ? 0 : createdA
+      const normalizedB = Number.isNaN(createdB) ? 0 : createdB
+      if (normalizedA !== normalizedB) return normalizedB - normalizedA
+    }
+    return b.id - a.id
+  })
+}
 
 function formatMoneyCompact(cents: number, currency: string): string {
   return new Intl.NumberFormat(undefined, {

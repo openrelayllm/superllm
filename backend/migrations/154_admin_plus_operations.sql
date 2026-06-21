@@ -138,11 +138,11 @@ CREATE INDEX IF NOT EXISTS idx_admin_plus_health_events_supplier_status
 CREATE INDEX IF NOT EXISTS idx_admin_plus_health_events_sample
     ON admin_plus_health_events(sample_id);
 
-CREATE TABLE IF NOT EXISTS admin_plus_supplier_bill_lines (
+CREATE TABLE IF NOT EXISTS admin_plus_supplier_usage_cost_lines (
     id BIGSERIAL PRIMARY KEY,
     supplier_id BIGINT NOT NULL REFERENCES admin_plus_suppliers(id) ON DELETE CASCADE,
     source TEXT NOT NULL DEFAULT 'manual',
-    external_bill_id TEXT NOT NULL DEFAULT '',
+    external_usage_cost_id TEXT NOT NULL DEFAULT '',
     external_request_id TEXT NOT NULL DEFAULT '',
     model TEXT NOT NULL,
     currency TEXT NOT NULL DEFAULT 'USD',
@@ -153,14 +153,14 @@ CREATE TABLE IF NOT EXISTS admin_plus_supplier_bill_lines (
     ended_at TIMESTAMPTZ NULL,
     raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT admin_plus_supplier_bill_lines_amount_check CHECK (cost_cents >= 0 AND input_tokens >= 0 AND output_tokens >= 0)
+    CONSTRAINT admin_plus_supplier_usage_cost_lines_amount_check CHECK (cost_cents >= 0 AND input_tokens >= 0 AND output_tokens >= 0)
 );
 
-CREATE INDEX IF NOT EXISTS idx_admin_plus_supplier_bill_lines_supplier_started
-    ON admin_plus_supplier_bill_lines(supplier_id, started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_plus_supplier_usage_cost_lines_supplier_started
+    ON admin_plus_supplier_usage_cost_lines(supplier_id, started_at DESC, id DESC);
 
-CREATE INDEX IF NOT EXISTS idx_admin_plus_supplier_bill_lines_external_request
-    ON admin_plus_supplier_bill_lines(external_request_id)
+CREATE INDEX IF NOT EXISTS idx_admin_plus_supplier_usage_cost_lines_external_request
+    ON admin_plus_supplier_usage_cost_lines(external_request_id)
     WHERE external_request_id <> '';
 
 CREATE TABLE IF NOT EXISTS admin_plus_extension_tasks (
@@ -183,7 +183,7 @@ CREATE TABLE IF NOT EXISTS admin_plus_extension_tasks (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     finished_at TIMESTAMPTZ NULL,
-    CONSTRAINT admin_plus_extension_tasks_type_check CHECK (type IN ('fetch_rates', 'fetch_groups', 'fetch_balance', 'fetch_announcements', 'export_bills', 'fetch_health', 'capture_supplier_session')),
+    CONSTRAINT admin_plus_extension_tasks_type_check CHECK (type IN ('fetch_rates', 'fetch_groups', 'fetch_balance', 'fetch_announcements', 'fetch_usage_costs', 'fetch_health', 'capture_supplier_session')),
     CONSTRAINT admin_plus_extension_tasks_status_check CHECK (status IN ('pending', 'claimed', 'running', 'succeeded', 'failed', 'cancelled')),
     CONSTRAINT admin_plus_extension_tasks_attempts_check CHECK (attempts >= 0 AND max_attempts > 0)
 );

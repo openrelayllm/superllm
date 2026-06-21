@@ -165,7 +165,7 @@ func (r *SQLRepository) List(ctx context.Context, filter ListFilter) ([]*adminpl
 			last_seen_at, created_at, updated_at
 		FROM admin_plus_supplier_groups
 		WHERE ` + strings.Join(where, " AND ") + `
-		ORDER BY status ASC, effective_rate_multiplier ASC, id ASC
+		ORDER BY last_seen_at DESC, id DESC
 		LIMIT ` + limitRef
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {

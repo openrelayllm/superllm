@@ -101,7 +101,7 @@ func (r *MemoryRepository) List(_ context.Context, filter SupplierFilter) ([]*ad
 		items = append(items, cloneSupplier(supplier))
 	}
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].ID < items[j].ID
+		return items[i].ID > items[j].ID
 	})
 	return items, nil
 }
@@ -171,7 +171,7 @@ func (r *MemoryRepository) ListAccounts(_ context.Context, supplierID int64) ([]
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].ID < items[j].ID
+		return items[i].ID > items[j].ID
 	})
 	return items, nil
 }
@@ -247,7 +247,7 @@ func (r *MemoryRepository) ListLocalAccounts(_ context.Context, query string, li
 		items = append(items, &cp)
 	}
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].ID < items[j].ID
+		return items[i].ID > items[j].ID
 	})
 	if limit > 0 && len(items) > limit {
 		items = items[:limit]

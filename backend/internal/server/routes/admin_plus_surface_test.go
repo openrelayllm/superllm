@@ -10,17 +10,17 @@ import (
 	actionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
 	announcementsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/announcements"
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
-	billingapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/billing"
+	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
-	reconciliationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/reconciliation"
 	schedulerapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
 	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	suppliergroupsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
 	supplierkeysapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/supplierkeys"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
+	usagecostsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -68,20 +68,20 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 			System:    &adminhandler.SystemHandler{},
 		},
 		AdminPlus: &handler.AdminPlusHandlers{
-			Supplier:       adminplushandler.NewSupplierHandler(supplierService),
-			SupplierGroup:  adminplushandler.NewSupplierGroupHandler(supplierGroupService),
-			SupplierKey:    adminplushandler.NewSupplierKeyHandler(supplierKeyService),
-			Rate:           adminplushandler.NewRateHandler(ratesapp.NewServiceWithDependencies(newRouteSurfaceRateRepository(), nil, sessionService, &routeSurfaceRateReader{})),
-			Balance:        adminplushandler.NewBalanceHandler(balancesapp.NewService(balancesapp.NewMemoryRepository())),
-			Announcement:   adminplushandler.NewAnnouncementHandler(announcementsapp.NewService(announcementsapp.NewMemoryRepository())),
-			Health:         adminplushandler.NewHealthHandler(healthapp.NewService(healthapp.NewMemoryRepository())),
-			Billing:        adminplushandler.NewBillingHandler(billingapp.NewServiceWithDependencies(billingapp.NewMemoryRepository(), sessionService, &routeSurfaceBillingReader{})),
-			Extension:      adminplushandler.NewExtensionHandler(extensionService, nil),
-			Session:        adminplushandler.NewSessionHandler(sessionService, nil),
-			Scheduler:      adminplushandler.NewSchedulerHandler(schedulerapp.NewService(supplierService, extensionService)),
-			Action:         adminplushandler.NewActionHandler(actionsapp.NewRuleService()),
-			Reconciliation: adminplushandler.NewReconciliationHandler(reconciliationapp.NewService()),
-			Sub2API:        adminplushandler.NewSub2APIHandler(sub2apiapp.NewService(newRouteSurfaceSub2APIRepository(), newRouteSurfaceSub2APIRuntimeReader())),
+			Supplier:      adminplushandler.NewSupplierHandler(supplierService),
+			SupplierGroup: adminplushandler.NewSupplierGroupHandler(supplierGroupService),
+			SupplierKey:   adminplushandler.NewSupplierKeyHandler(supplierKeyService),
+			Rate:          adminplushandler.NewRateHandler(ratesapp.NewServiceWithDependencies(newRouteSurfaceRateRepository(), nil, sessionService, &routeSurfaceRateReader{})),
+			Balance:       adminplushandler.NewBalanceHandler(balancesapp.NewService(balancesapp.NewMemoryRepository())),
+			Announcement:  adminplushandler.NewAnnouncementHandler(announcementsapp.NewService(announcementsapp.NewMemoryRepository())),
+			Health:        adminplushandler.NewHealthHandler(healthapp.NewService(healthapp.NewMemoryRepository())),
+			UsageCost:     adminplushandler.NewUsageCostHandler(usagecostsapp.NewServiceWithDependencies(usagecostsapp.NewMemoryRepository(), sessionService, &routeSurfaceUsageCostReader{})),
+			Cost:          adminplushandler.NewCostHandler(costsapp.NewService(costsapp.NewMemoryRepository())),
+			Extension:     adminplushandler.NewExtensionHandler(extensionService, nil),
+			Session:       adminplushandler.NewSessionHandler(sessionService, nil),
+			Scheduler:     adminplushandler.NewSchedulerHandler(schedulerapp.NewService(supplierService, extensionService)),
+			Action:        adminplushandler.NewActionHandler(actionsapp.NewRuleService()),
+			Sub2API:       adminplushandler.NewSub2APIHandler(sub2apiapp.NewService(newRouteSurfaceSub2APIRepository(), newRouteSurfaceSub2APIRuntimeReader())),
 		},
 	}
 
@@ -133,11 +133,17 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin-plus/suppliers/:id/groups",
 		"POST /api/v1/admin-plus/suppliers/:id/groups/sync",
 		"GET /api/v1/admin-plus/suppliers/:id/keys",
+		"POST /api/v1/admin-plus/suppliers/:id/keys/ensure-all",
 		"POST /api/v1/admin-plus/suppliers/:id/keys/provision",
 		"POST /api/v1/admin-plus/suppliers/:id/keys/:keyID/repair-binding",
 		"POST /api/v1/admin-plus/suppliers/:id/rates/sync",
 		"GET /api/v1/admin-plus/suppliers/:id/balance/current",
-		"POST /api/v1/admin-plus/suppliers/:id/billing/sync",
+		"POST /api/v1/admin-plus/suppliers/:id/usage-costs/sync",
+		"POST /api/v1/admin-plus/suppliers/:id/costs/sync",
+		"GET /api/v1/admin-plus/suppliers/:id/costs/summary",
+		"GET /api/v1/admin-plus/suppliers/:id/funding-transactions",
+		"GET /api/v1/admin-plus/suppliers/:id/entitlement-transactions",
+		"GET /api/v1/admin-plus/suppliers/:id/cost-ledger",
 		"GET /api/v1/admin-plus/suppliers/:id/session",
 		"POST /api/v1/admin-plus/suppliers/:id/session/login",
 		"POST /api/v1/admin-plus/suppliers/:id/session/probe",
@@ -162,8 +168,9 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin-plus/health/samples",
 		"GET /api/v1/admin-plus/health/events",
 		"PATCH /api/v1/admin-plus/health/events/:id/ack",
-		"POST /api/v1/admin-plus/billing/lines/import",
-		"GET /api/v1/admin-plus/billing/lines",
+		"POST /api/v1/admin-plus/usage-costs/lines/import",
+		"GET /api/v1/admin-plus/usage-costs/lines",
+		"GET /api/v1/admin-plus/costs/suppliers",
 		"POST /api/v1/admin-plus/extension/tasks",
 		"GET /api/v1/admin-plus/extension/tasks",
 		"POST /api/v1/admin-plus/extension/tasks/claim",
@@ -172,7 +179,6 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"POST /api/v1/admin-plus/extension/tasks/:id/fail",
 		"GET /api/v1/admin-plus/scheduler/status",
 		"POST /api/v1/admin-plus/scheduler/run",
-		"POST /api/v1/admin-plus/reconciliation/run",
 		"POST /api/v1/admin-plus/actions/generate",
 		"GET /api/v1/admin-plus/actions/recommendations",
 		"PATCH /api/v1/admin-plus/actions/recommendations/:id/status",
@@ -204,6 +210,10 @@ func TestAdminPlusDeadRoutesStayUnregistered(t *testing.T) {
 		"POST /api/v1/admin-plus/promotions",
 		"GET /api/v1/admin-plus/promotions",
 		"PATCH /api/v1/admin-plus/promotions/:id/ack",
+		"POST /api/v1/admin-plus/suppliers/:id/billing/sync",
+		"POST /api/v1/admin-plus/billing/lines/import",
+		"GET /api/v1/admin-plus/billing/lines",
+		"POST /api/v1/admin-plus/reconciliation/run",
 		"GET /v1/chat/completions",
 		"POST /v1/chat/completions",
 	}
@@ -312,10 +322,10 @@ func (r *routeSurfaceRateReader) ReadRates(_ context.Context, in ports.SessionPr
 	return &ports.ReadRatesResult{SupplierID: in.SupplierID, SystemType: "sub2api"}, nil
 }
 
-type routeSurfaceBillingReader struct{}
+type routeSurfaceUsageCostReader struct{}
 
-func (r *routeSurfaceBillingReader) ReadBilling(_ context.Context, in ports.SessionProbeInput, _ ports.ReadBillingInput) (*ports.ReadBillingResult, error) {
-	return &ports.ReadBillingResult{SupplierID: in.SupplierID, SystemType: "sub2api"}, nil
+func (r *routeSurfaceUsageCostReader) ReadUsageCosts(_ context.Context, in ports.SessionProbeInput, _ ports.ReadUsageCostsInput) (*ports.ReadUsageCostsResult, error) {
+	return &ports.ReadUsageCostsResult{SupplierID: in.SupplierID, SystemType: "sub2api"}, nil
 }
 
 type routeSurfaceKeyAdapter struct{}
@@ -332,7 +342,9 @@ func (r *routeSurfaceKeyAdapter) CreateKey(_ context.Context, in ports.SessionPr
 	}, nil
 }
 
-type routeSurfaceLocalAccountCreator struct{}
+type routeSurfaceLocalAccountCreator struct {
+	groups []service.Group
+}
 
 func (r *routeSurfaceLocalAccountCreator) CreateAccount(_ context.Context, input *service.CreateAccountInput) (*service.Account, error) {
 	return &service.Account{
@@ -340,6 +352,7 @@ func (r *routeSurfaceLocalAccountCreator) CreateAccount(_ context.Context, input
 		Name:     input.Name,
 		Platform: input.Platform,
 		Type:     input.Type,
+		GroupIDs: append([]int64(nil), input.GroupIDs...),
 	}, nil
 }
 
@@ -350,6 +363,37 @@ func (r *routeSurfaceLocalAccountCreator) GetAccount(_ context.Context, id int64
 		Platform: service.PlatformOpenAI,
 		Type:     service.AccountTypeAPIKey,
 	}, nil
+}
+
+func (r *routeSurfaceLocalAccountCreator) UpdateAccount(_ context.Context, id int64, input *service.UpdateAccountInput) (*service.Account, error) {
+	account := &service.Account{
+		ID:       id,
+		Name:     "route-surface-local",
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+	}
+	if input.GroupIDs != nil {
+		account.GroupIDs = append([]int64(nil), (*input.GroupIDs)...)
+	}
+	return account, nil
+}
+
+func (r *routeSurfaceLocalAccountCreator) CreateGroup(_ context.Context, input *service.CreateGroupInput) (*service.Group, error) {
+	group := service.Group{
+		ID:             int64(1 + len(r.groups)),
+		Name:           input.Name,
+		Platform:       input.Platform,
+		RateMultiplier: input.RateMultiplier,
+		Status:         "active",
+	}
+	r.groups = append(r.groups, group)
+	return &group, nil
+}
+
+func (r *routeSurfaceLocalAccountCreator) GetAllGroupsIncludingInactive(_ context.Context) ([]service.Group, error) {
+	out := make([]service.Group, len(r.groups))
+	copy(out, r.groups)
+	return out, nil
 }
 
 func newRouteSurfaceRateRepository() *routeSurfaceRateRepository {

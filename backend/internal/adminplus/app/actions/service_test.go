@@ -124,30 +124,6 @@ func TestServiceGenerateDegradesSlowOrSaturatedSupplier(t *testing.T) {
 	requireAction(t, result.Items, adminplusdomain.ActionTypeDegradeSupplier, "supplier_performance_degraded")
 }
 
-func TestServiceGenerateInvestigatesLowProfitMargin(t *testing.T) {
-	svc := NewRuleService()
-
-	result, err := svc.Generate(context.Background(), GenerateInput{
-		Suppliers: []SupplierSignal{
-			{
-				SupplierID:    1,
-				RuntimeStatus: adminplusdomain.SupplierRuntimeStatusActive,
-				HealthStatus:  adminplusdomain.SupplierHealthStatusNormal,
-				BalanceCents:  5000,
-			},
-		},
-		Reconciliation: adminplusdomain.ReconciliationSummary{
-			RevenueCents: 1000,
-			CostCents:    950,
-			ProfitCents:  50,
-		},
-		MinProfitMargin: 0.1,
-	})
-
-	require.NoError(t, err)
-	requireAction(t, result.Items, adminplusdomain.ActionTypeInvestigateProfit, "profit_margin_below_threshold")
-}
-
 func requireAction(t *testing.T, items []*adminplusdomain.ActionRecommendation, actionType adminplusdomain.ActionType, reason string) *adminplusdomain.ActionRecommendation {
 	t.Helper()
 	for _, item := range items {

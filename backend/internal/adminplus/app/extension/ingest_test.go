@@ -8,10 +8,10 @@ import (
 
 	announcementsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/announcements"
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
-	billingapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/billing"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
+	usagecostsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +23,7 @@ func TestCompleteTaskIngestsRateResult(t *testing.T) {
 		balancesapp.NewService(balancesapp.NewMemoryRepository()),
 		announcementsapp.NewService(announcementsapp.NewMemoryRepository()),
 		healthapp.NewService(healthapp.NewMemoryRepository()),
-		billingapp.NewService(billingapp.NewMemoryRepository()),
+		usagecostsapp.NewService(usagecostsapp.NewMemoryRepository()),
 		sessionsapp.NewService(sessionsapp.NewMemoryRepository(), stubSessionCipher{}),
 	)
 	svc := NewServiceWithResultProcessor(NewMemoryRepository(), processor)
@@ -75,14 +75,14 @@ func TestCompleteTaskIngestsRateResult(t *testing.T) {
 	require.Equal(t, 1, ingest["rate_snapshots"])
 }
 
-func TestCompleteTaskIngestsBillExportResult(t *testing.T) {
-	billRepo := billingapp.NewMemoryRepository()
+func TestCompleteTaskIngestsUsageCostResult(t *testing.T) {
+	usageCostRepo := usagecostsapp.NewMemoryRepository()
 	processor := NewIngestProcessor(
 		ratesapp.NewService(newIngestRateRepository()),
 		balancesapp.NewService(balancesapp.NewMemoryRepository()),
 		announcementsapp.NewService(announcementsapp.NewMemoryRepository()),
 		healthapp.NewService(healthapp.NewMemoryRepository()),
-		billingapp.NewService(billRepo),
+		usagecostsapp.NewService(usageCostRepo),
 		sessionsapp.NewService(sessionsapp.NewMemoryRepository(), stubSessionCipher{}),
 	)
 	svc := NewServiceWithResultProcessor(NewMemoryRepository(), processor)
@@ -92,7 +92,7 @@ func TestCompleteTaskIngestsBillExportResult(t *testing.T) {
 
 	_, err := svc.CreateTask(context.Background(), CreateTaskInput{
 		SupplierID: 7,
-		Type:       adminplusdomain.ExtensionTaskTypeExportBills,
+		Type:       adminplusdomain.ExtensionTaskTypeFetchUsageCosts,
 	})
 	require.NoError(t, err)
 	task, err := svc.ClaimTask(context.Background(), ClaimTaskInput{DeviceID: "chrome-1"})
@@ -112,15 +112,15 @@ func TestCompleteTaskIngestsBillExportResult(t *testing.T) {
 			"source": "chrome",
 			"lines": []any{
 				map[string]any{
-					"external_bill_id":    "bill-1",
-					"external_request_id": "req-1",
-					"model":               "gpt-4o-mini",
-					"currency":            "USD",
-					"cost_cents":          float64(120),
-					"input_tokens":        float64(1000),
-					"output_tokens":       float64(300),
-					"started_at":          "2026-06-20T10:00:00Z",
-					"ended_at":            "2026-06-20T10:00:02Z",
+					"external_usage_cost_id": "bill-1",
+					"external_request_id":    "req-1",
+					"model":                  "gpt-4o-mini",
+					"currency":               "USD",
+					"cost_cents":             float64(120),
+					"input_tokens":           float64(1000),
+					"output_tokens":          float64(300),
+					"started_at":             "2026-06-20T10:00:00Z",
+					"ended_at":               "2026-06-20T10:00:02Z",
 				},
 			},
 		},
@@ -128,13 +128,13 @@ func TestCompleteTaskIngestsBillExportResult(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, adminplusdomain.ExtensionTaskStatusSucceeded, completed.Status)
-	lines, err := billRepo.ListBillLines(context.Background(), billingapp.BillLineFilter{SupplierID: 7, Limit: 20})
+	lines, err := usageCostRepo.ListUsageCostLines(context.Background(), usagecostsapp.UsageCostLineFilter{SupplierID: 7, Limit: 20})
 	require.NoError(t, err)
 	require.Len(t, lines, 1)
 	require.Equal(t, "req-1", lines[0].ExternalRequestID)
 	ingest, ok := completed.Result["ingest"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, 1, ingest["bill_lines"])
+	require.Equal(t, 1, ingest["usage_cost_lines"])
 }
 
 func TestCompleteTaskEncryptsCapturedSessionBundle(t *testing.T) {
@@ -144,7 +144,7 @@ func TestCompleteTaskEncryptsCapturedSessionBundle(t *testing.T) {
 		balancesapp.NewService(balancesapp.NewMemoryRepository()),
 		announcementsapp.NewService(announcementsapp.NewMemoryRepository()),
 		healthapp.NewService(healthapp.NewMemoryRepository()),
-		billingapp.NewService(billingapp.NewMemoryRepository()),
+		usagecostsapp.NewService(usagecostsapp.NewMemoryRepository()),
 		sessionsapp.NewService(sessionRepo, stubSessionCipher{}),
 		stubSessionCipher{},
 	)

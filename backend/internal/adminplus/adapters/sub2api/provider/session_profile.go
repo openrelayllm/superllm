@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -366,7 +367,7 @@ func (c *SessionProfileClient) probeSub2APICapabilities(ctx context.Context, api
 		"can_read_groups":        false,
 		"can_read_rates":         false,
 		"can_read_announcements": false,
-		"can_read_billing":       false,
+		"can_read_usage_costs":   false,
 		"can_create_key":         false,
 	}
 	for _, endpoint := range []capabilityEndpoint{
@@ -374,7 +375,7 @@ func (c *SessionProfileClient) probeSub2APICapabilities(ctx context.Context, api
 		{key: "can_read_rates", path: "/channels/available"},
 		{key: "can_read_announcements", path: "/announcements", query: map[string]string{"unread_only": "false"}},
 		{key: "can_read_announcements", path: "/payment/checkout-info"},
-		{key: "can_read_billing", path: "/usage", query: map[string]string{"page": "1", "page_size": "1"}},
+		{key: "can_read_usage_costs", path: "/usage", query: map[string]string{"page": "1", "page_size": "1"}},
 		{key: "can_create_key", path: "/keys", query: map[string]string{"page": "1", "page_size": "1"}},
 	} {
 		if capabilities[endpoint.key] {
@@ -605,7 +606,7 @@ func (c *SessionProfileClient) ReadAnnouncements(ctx context.Context, in ports.S
 	}, nil
 }
 
-func (c *SessionProfileClient) ReadBilling(ctx context.Context, in ports.SessionProbeInput, request ports.ReadBillingInput) (*ports.ReadBillingResult, error) {
+func (c *SessionProfileClient) ReadUsageCosts(ctx context.Context, in ports.SessionProbeInput, request ports.ReadUsageCostsInput) (*ports.ReadUsageCostsResult, error) {
 	if c == nil || c.httpClient == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", "provider adapter is not configured")
 	}
@@ -613,7 +614,7 @@ func (c *SessionProfileClient) ReadBilling(ctx context.Context, in ports.Session
 		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_ID_INVALID", "invalid supplier id")
 	}
 	if request.StartedAt.IsZero() || request.EndedAt.IsZero() || !request.StartedAt.Before(request.EndedAt) {
-		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_BILLING_TIME_RANGE_INVALID", "invalid supplier billing time range")
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_USAGE_COST_TIME_RANGE_INVALID", "invalid supplier usage cost time range")
 	}
 	apiBaseURL := firstNonEmpty(in.APIBaseURL, stringValueAt(in.Bundle, "context", "api_base_url"), stringValue(in.Bundle, "api_base_url"), in.Origin)
 	candidates := []billingEndpointCandidate{
@@ -629,17 +630,17 @@ func (c *SessionProfileClient) ReadBilling(ctx context.Context, in ports.Session
 		if err != nil {
 			return nil, err
 		}
-		endpoint = appendBillingQuery(endpoint, request)
+		endpoint = appendUsageCostQuery(endpoint, request)
 		body, err := c.doSessionJSON(ctx, http.MethodGet, endpoint, in.Bundle, false)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		lines := parseSub2APIBillingLines(body)
+		lines := parseSub2APIUsageCostLines(body)
 		if len(lines) == 0 {
 			continue
 		}
-		return &ports.ReadBillingResult{
+		return &ports.ReadUsageCostsResult{
 			SupplierID: in.SupplierID,
 			SystemType: "sub2api",
 			Origin:     in.Origin,
@@ -651,7 +652,88 @@ func (c *SessionProfileClient) ReadBilling(ctx context.Context, in ports.Session
 	if lastErr != nil {
 		return nil, lastErr
 	}
-	return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_BILLING_CAPABILITY_MISSING", "supplier session cannot read billing lines")
+	return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_USAGE_COST_CAPABILITY_MISSING", "supplier session cannot read usage cost lines")
+}
+
+func (c *SessionProfileClient) ReadFundingTransactions(ctx context.Context, in ports.SessionProbeInput, request ports.ReadFundingTransactionsInput) (*ports.ReadFundingTransactionsResult, error) {
+	if c == nil || c.httpClient == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", "provider adapter is not configured")
+	}
+	if request.SupplierID <= 0 {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	apiBaseURL := firstNonEmpty(in.APIBaseURL, stringValueAt(in.Bundle, "context", "api_base_url"), stringValue(in.Bundle, "api_base_url"), in.Origin)
+	items := make([]ports.ProviderFundingTransaction, 0)
+	var lastErr error
+	for page := 1; page <= 20; page++ {
+		endpoint, err := buildSub2APIUserEndpointURL(apiBaseURL, "/payment/orders/my")
+		if err != nil {
+			return nil, err
+		}
+		endpoint = appendQueryValues(endpoint, map[string]string{
+			"page":      strconv.Itoa(page),
+			"page_size": "100",
+		})
+		body, err := c.doSessionJSON(ctx, http.MethodGet, endpoint, in.Bundle, false)
+		if err != nil {
+			lastErr = err
+			break
+		}
+		pageItems := parseSub2APIFundingTransactions(body)
+		if len(pageItems) == 0 {
+			break
+		}
+		items = append(items, pageItems...)
+		if len(pageItems) < 100 {
+			break
+		}
+	}
+	if len(items) == 0 {
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_FUNDING_CAPABILITY_MISSING", "supplier session cannot read funding transactions")
+	}
+	return &ports.ReadFundingTransactionsResult{
+		SupplierID:   in.SupplierID,
+		ProviderType: "sub2api",
+		SystemType:   "sub2api",
+		Origin:       in.Origin,
+		APIBaseURL:   apiBaseURL,
+		Items:        items,
+		CapturedAt:   c.now().UTC(),
+	}, nil
+}
+
+func (c *SessionProfileClient) ReadEntitlementTransactions(ctx context.Context, in ports.SessionProbeInput, request ports.ReadEntitlementTransactionsInput) (*ports.ReadEntitlementTransactionsResult, error) {
+	if c == nil || c.httpClient == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", "provider adapter is not configured")
+	}
+	if request.SupplierID <= 0 {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	apiBaseURL := firstNonEmpty(in.APIBaseURL, stringValueAt(in.Bundle, "context", "api_base_url"), stringValue(in.Bundle, "api_base_url"), in.Origin)
+	endpoint, err := buildSub2APIUserEndpointURL(apiBaseURL, "/redeem/history")
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doSessionJSON(ctx, http.MethodGet, endpoint, in.Bundle, false)
+	if err != nil {
+		return nil, err
+	}
+	items := parseSub2APIEntitlementTransactions(body)
+	if len(items) == 0 {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_ENTITLEMENT_CAPABILITY_MISSING", "supplier session cannot read entitlement transactions")
+	}
+	return &ports.ReadEntitlementTransactionsResult{
+		SupplierID:   in.SupplierID,
+		ProviderType: "sub2api",
+		SystemType:   "sub2api",
+		Origin:       in.Origin,
+		APIBaseURL:   apiBaseURL,
+		Items:        items,
+		CapturedAt:   c.now().UTC(),
+	}, nil
 }
 
 func (c *SessionProfileClient) doSessionJSON(ctx context.Context, method string, endpoint string, bundle map[string]any, strict bool) ([]byte, error) {
@@ -1492,7 +1574,7 @@ func priceEntriesFromPricing(model string, pricing map[string]any, raw map[strin
 	return out
 }
 
-func appendBillingQuery(endpoint string, request ports.ReadBillingInput) string {
+func appendUsageCostQuery(endpoint string, request ports.ReadUsageCostsInput) string {
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		return endpoint
@@ -1524,18 +1606,18 @@ func appendQueryValues(endpoint string, pairs map[string]string) string {
 	return u.String()
 }
 
-func parseSub2APIBillingLines(data []byte) []ports.ProviderBillLine {
+func parseSub2APIUsageCostLines(data []byte) []ports.ProviderUsageCostLine {
 	values, err := unwrapDataArray(data)
 	if err != nil {
 		return nil
 	}
-	lines := make([]ports.ProviderBillLine, 0, len(values))
+	lines := make([]ports.ProviderUsageCostLine, 0, len(values))
 	for _, value := range values {
 		raw, ok := value.(map[string]any)
 		if !ok {
 			continue
 		}
-		line, ok := parseSub2APIBillingLine(raw)
+		line, ok := parseSub2APIUsageCostLine(raw)
 		if ok {
 			lines = append(lines, line)
 		}
@@ -1543,7 +1625,161 @@ func parseSub2APIBillingLines(data []byte) []ports.ProviderBillLine {
 	return lines
 }
 
-func parseSub2APIBillingLine(raw map[string]any) (ports.ProviderBillLine, bool) {
+func parseSub2APIFundingTransactions(data []byte) []ports.ProviderFundingTransaction {
+	values, err := unwrapDataArray(data)
+	if err != nil {
+		return nil
+	}
+	items := make([]ports.ProviderFundingTransaction, 0, len(values))
+	for _, value := range values {
+		raw, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		item, ok := parseSub2APIFundingTransaction(raw)
+		if ok {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+func parseSub2APIFundingTransaction(raw map[string]any) (ports.ProviderFundingTransaction, bool) {
+	externalID := firstNonEmpty(
+		stringFromAny(raw["external_order_id"]),
+		stringFromAny(raw["externalOrderId"]),
+		stringFromAny(raw["order_id"]),
+		stringFromAny(raw["orderId"]),
+		stringFromAny(raw["id"]),
+		idStringFromAny(raw["id"]),
+	)
+	if externalID == "" {
+		return ports.ProviderFundingTransaction{}, false
+	}
+	createdAt, hasCreatedAt := firstTimeValue(raw, "created_at", "createdAt", "created_time", "createdTime")
+	paidAt, hasPaidAt := firstTimeValue(raw, "paid_at", "paidAt", "pay_at", "payAt", "paid_time", "paidTime")
+	completedAt, hasCompletedAt := firstTimeValue(raw, "completed_at", "completedAt", "completed_time", "completedTime", "updated_at", "updatedAt")
+	item := ports.ProviderFundingTransaction{
+		ExternalID: firstNonEmpty(externalID),
+		OutTradeNo: firstNonEmpty(
+			stringFromAny(raw["out_trade_no"]),
+			stringFromAny(raw["outTradeNo"]),
+			stringFromAny(raw["trade_no"]),
+			stringFromAny(raw["tradeNo"]),
+		),
+		PaymentTradeNo: maskTail(firstNonEmpty(
+			stringFromAny(raw["payment_trade_no"]),
+			stringFromAny(raw["paymentTradeNo"]),
+			stringFromAny(raw["transaction_id"]),
+			stringFromAny(raw["transactionId"]),
+		), 6),
+		PaymentType: firstNonEmpty(stringFromAny(raw["payment_type"]), stringFromAny(raw["paymentType"]), stringFromAny(raw["pay_type"]), stringFromAny(raw["payType"])),
+		OrderType:   firstNonEmpty(stringFromAny(raw["order_type"]), stringFromAny(raw["orderType"]), stringFromAny(raw["type"])),
+		Status:      strings.ToUpper(firstNonEmpty(stringFromAny(raw["status"]), stringFromAny(raw["state"]), "UNKNOWN")),
+		Currency:    firstNonEmpty(stringFromAny(raw["currency"]), stringFromAny(raw["Currency"]), "USD"),
+		AmountCents: firstCostCentsValue(raw,
+			"amount_cents", "amountCents", "balance_amount_cents", "balanceAmountCents",
+			"amount", "balance_amount", "balanceAmount", "actual_amount", "actualAmount",
+		),
+		CashAmountCents: firstCostCentsValue(raw,
+			"pay_amount_cents", "payAmountCents", "cash_amount_cents", "cashAmountCents",
+			"pay_amount", "payAmount", "cash_amount", "cashAmount", "payment_amount", "paymentAmount",
+		),
+		RefundAmountCents: firstCostCentsValue(raw,
+			"refund_amount_cents", "refundAmountCents",
+			"refund_amount", "refundAmount",
+		),
+		FeeRate:    optionalFloat64Ptr(raw, "fee_rate", "feeRate"),
+		RawPayload: sanitizeUsageCostPayload(raw),
+	}
+	if item.CashAmountCents == 0 {
+		item.CashAmountCents = item.AmountCents
+	}
+	if hasCreatedAt {
+		t := createdAt.UTC()
+		item.CreatedAtExternal = &t
+	}
+	if hasPaidAt {
+		t := paidAt.UTC()
+		item.PaidAt = &t
+	}
+	if hasCompletedAt {
+		t := completedAt.UTC()
+		item.CompletedAt = &t
+	}
+	return item, true
+}
+
+func parseSub2APIEntitlementTransactions(data []byte) []ports.ProviderEntitlementTransaction {
+	values, err := unwrapDataArray(data)
+	if err != nil {
+		return nil
+	}
+	items := make([]ports.ProviderEntitlementTransaction, 0, len(values))
+	for _, value := range values {
+		raw, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		item, ok := parseSub2APIEntitlementTransaction(raw)
+		if ok {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+func parseSub2APIEntitlementTransaction(raw map[string]any) (ports.ProviderEntitlementTransaction, bool) {
+	code := firstNonEmpty(
+		stringFromAny(raw["code"]),
+		stringFromAny(raw["redeem_code"]),
+		stringFromAny(raw["redeemCode"]),
+	)
+	externalID := firstNonEmpty(
+		stringFromAny(raw["external_redeem_id"]),
+		stringFromAny(raw["externalRedeemId"]),
+		stringFromAny(raw["redeem_id"]),
+		stringFromAny(raw["redeemId"]),
+		stringFromAny(raw["id"]),
+		idStringFromAny(raw["id"]),
+		codeFingerprint(code),
+	)
+	if externalID == "" {
+		return ports.ProviderEntitlementTransaction{}, false
+	}
+	usedAt, hasUsedAt := firstTimeValue(raw, "used_at", "usedAt", "redeemed_at", "redeemedAt", "updated_at", "updatedAt")
+	createdAt, hasCreatedAt := firstTimeValue(raw, "created_at", "createdAt")
+	rawValue := float64FromAny(firstExisting(raw, "raw_value", "rawValue", "value", "amount", "balance", "quota"))
+	itemType := firstNonEmpty(stringFromAny(raw["type"]), stringFromAny(raw["redeem_type"]), stringFromAny(raw["redeemType"]), "balance")
+	item := ports.ProviderEntitlementTransaction{
+		ExternalID:      externalID,
+		CodeFingerprint: codeFingerprint(code),
+		CodeLast4:       lastN(code, 4),
+		SourceFamily:    entitlementSourceFamily(code),
+		Type:            itemType,
+		Status:          strings.ToLower(firstNonEmpty(stringFromAny(raw["status"]), stringFromAny(raw["state"]), "used")),
+		Currency:        firstNonEmpty(stringFromAny(raw["currency"]), stringFromAny(raw["Currency"]), "USD"),
+		ValueCents: firstCostCentsValue(raw,
+			"value_cents", "valueCents", "amount_cents", "amountCents", "balance_cents", "balanceCents",
+			"value", "amount", "balance", "quota",
+		),
+		RawValue:     rawValue,
+		GroupID:      int64FromAny(firstExisting(raw, "group_id", "groupId")),
+		ValidityDays: int(int64FromAny(firstExisting(raw, "validity_days", "validityDays", "days"))),
+		RawPayload:   sanitizeUsageCostPayload(raw),
+	}
+	if hasUsedAt {
+		t := usedAt.UTC()
+		item.UsedAt = &t
+	}
+	if hasCreatedAt {
+		t := createdAt.UTC()
+		item.CreatedAtExternal = &t
+	}
+	return item, true
+}
+
+func parseSub2APIUsageCostLine(raw map[string]any) (ports.ProviderUsageCostLine, bool) {
 	model := firstNonEmpty(
 		stringFromAny(raw["model"]),
 		stringFromAny(raw["requested_model"]),
@@ -1555,7 +1791,7 @@ func parseSub2APIBillingLine(raw map[string]any) (ports.ProviderBillLine, bool) 
 	)
 	startedAt, ok := firstTimeValue(raw, "started_at", "startedAt", "created_at", "createdAt", "timestamp", "time")
 	if model == "" || !ok {
-		return ports.ProviderBillLine{}, false
+		return ports.ProviderUsageCostLine{}, false
 	}
 	endedAt, hasEndedAt := firstTimeValue(raw, "ended_at", "endedAt", "completed_at", "completedAt", "finished_at", "finishedAt")
 	var endedAtPtr *time.Time
@@ -1563,8 +1799,10 @@ func parseSub2APIBillingLine(raw map[string]any) (ports.ProviderBillLine, bool) 
 		endedAtUTC := endedAt.UTC()
 		endedAtPtr = &endedAtUTC
 	}
-	return ports.ProviderBillLine{
-		ExternalBillID: firstNonEmpty(
+	return ports.ProviderUsageCostLine{
+		ExternalUsageCostID: firstNonEmpty(
+			stringFromAny(raw["external_usage_cost_id"]),
+			stringFromAny(raw["externalUsageCostId"]),
 			stringFromAny(raw["external_bill_id"]),
 			stringFromAny(raw["externalBillId"]),
 			stringFromAny(raw["bill_id"]),
@@ -1609,7 +1847,7 @@ func parseSub2APIBillingLine(raw map[string]any) (ports.ProviderBillLine, bool) 
 		UserAgent:       firstNonEmpty(stringFromAny(raw["user_agent"]), stringFromAny(raw["userAgent"])),
 		StartedAt:       startedAt.UTC(),
 		EndedAt:         endedAtPtr,
-		RawPayload:      sanitizeBillingPayload(raw),
+		RawPayload:      sanitizeUsageCostPayload(raw),
 	}, true
 }
 
@@ -1644,7 +1882,10 @@ func firstCostCentsValue(in map[string]any, keys ...string) int64 {
 			continue
 		}
 		switch key {
-		case "cost_cents", "costCents", "amount_cents", "amountCents", "fee_cents", "feeCents":
+		case "cost_cents", "costCents", "amount_cents", "amountCents", "fee_cents", "feeCents",
+			"balance_amount_cents", "balanceAmountCents", "pay_amount_cents", "payAmountCents",
+			"cash_amount_cents", "cashAmountCents", "refund_amount_cents", "refundAmountCents",
+			"value_cents", "valueCents", "balance_cents", "balanceCents":
 			if n, ok := int64Value(value); ok {
 				return n
 			}
@@ -1786,7 +2027,7 @@ func unixTimeFromNumber(value int64) (time.Time, bool) {
 	return time.Unix(value, 0).UTC(), true
 }
 
-func sanitizeBillingPayload(raw map[string]any) map[string]any {
+func sanitizeUsageCostPayload(raw map[string]any) map[string]any {
 	if len(raw) == 0 {
 		return map[string]any{}
 	}
@@ -1795,19 +2036,19 @@ func sanitizeBillingPayload(raw map[string]any) map[string]any {
 		if isSensitivePayloadKey(key) {
 			continue
 		}
-		out[key] = sanitizeBillingValue(value)
+		out[key] = sanitizeUsageCostValue(value)
 	}
 	return out
 }
 
-func sanitizeBillingValue(value any) any {
+func sanitizeUsageCostValue(value any) any {
 	switch v := value.(type) {
 	case map[string]any:
-		return sanitizeBillingPayload(v)
+		return sanitizeUsageCostPayload(v)
 	case []any:
 		out := make([]any, 0, len(v))
 		for _, item := range v {
-			out = append(out, sanitizeBillingValue(item))
+			out = append(out, sanitizeUsageCostValue(item))
 		}
 		return out
 	default:
@@ -2131,6 +2372,54 @@ func optionalFloat64(raw map[string]any, key string) *float64 {
 	n := float64FromAny(value)
 	out := n
 	return &out
+}
+
+func optionalFloat64Ptr(in map[string]any, keys ...string) *float64 {
+	for _, key := range keys {
+		if value := optionalFloat64(in, key); value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func codeFingerprint(code string) string {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(code))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func entitlementSourceFamily(code string) string {
+	normalized := strings.ToUpper(strings.TrimSpace(code))
+	if strings.HasPrefix(normalized, "PAY") {
+		return "payment_auto_redeem"
+	}
+	return "manual_redeem"
+}
+
+func lastN(value string, n int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || n <= 0 {
+		return ""
+	}
+	if len(value) <= n {
+		return value
+	}
+	return value[len(value)-n:]
+}
+
+func maskTail(value string, tail int) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if tail <= 0 || len(value) <= tail {
+		return value
+	}
+	return strings.Repeat("*", len(value)-tail) + value[len(value)-tail:]
 }
 
 func normalizeProviderFamily(value string) string {

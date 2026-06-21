@@ -241,7 +241,7 @@ func TestSQLRepositoryClaimNextTaskUsesAtomicUpdate(t *testing.T) {
 		WillReturnRows(newExtensionTaskRows().AddRow(
 			int64(11),
 			int64(7),
-			"export_bills",
+			"fetch_usage_costs",
 			"",
 			"claimed",
 			10,
@@ -262,7 +262,7 @@ func TestSQLRepositoryClaimNextTaskUsesAtomicUpdate(t *testing.T) {
 		))
 
 	got, err := repo.ClaimNextTask(context.Background(), now, []adminplusdomain.ExtensionTaskType{
-		adminplusdomain.ExtensionTaskTypeExportBills,
+		adminplusdomain.ExtensionTaskTypeFetchUsageCosts,
 	}, Lease{
 		DeviceID:  "chrome-1",
 		Token:     "lease-token",

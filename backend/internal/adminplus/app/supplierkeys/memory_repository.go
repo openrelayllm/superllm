@@ -78,6 +78,25 @@ func (r *MemoryRepository) GetKey(_ context.Context, supplierID int64, keyID int
 	return cloneKey(key), nil
 }
 
+func (r *MemoryRepository) ListGroups(_ context.Context, supplierID int64) ([]*adminplusdomain.SupplierGroup, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	items := make([]*adminplusdomain.SupplierGroup, 0)
+	for _, group := range r.groups {
+		if group.SupplierID != supplierID || group.Status != adminplusdomain.SupplierGroupStatusActive {
+			continue
+		}
+		items = append(items, cloneGroup(group))
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	return items, nil
+}
+
 func (r *MemoryRepository) FindActiveByGroup(_ context.Context, supplierID int64, groupID int64) (*adminplusdomain.SupplierKey, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -148,6 +167,26 @@ func (r *MemoryRepository) CreateBinding(_ context.Context, account *adminplusdo
 		}
 		if account.SupplierKeyID > 0 && existing.SupplierID == account.SupplierID && existing.SupplierKeyID == account.SupplierKeyID {
 			return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_ALREADY_BOUND", "supplier key is already bound")
+		}
+	}
+	cp := *account
+	cp.ID = r.nextBindID
+	r.nextBindID++
+	r.bindings[cp.ID] = &cp
+	out := cp
+	return &out, nil
+}
+
+func (r *MemoryRepository) UpsertBinding(_ context.Context, account *adminplusdomain.SupplierAccount) (*adminplusdomain.SupplierAccount, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, existing := range r.bindings {
+		if account.SupplierKeyID > 0 && existing.SupplierID == account.SupplierID && existing.SupplierKeyID == account.SupplierKeyID {
+			cp := *account
+			cp.ID = id
+			r.bindings[id] = &cp
+			out := cp
+			return &out, nil
 		}
 	}
 	cp := *account

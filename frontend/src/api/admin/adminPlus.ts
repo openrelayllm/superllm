@@ -21,6 +21,19 @@ export type SupplierHealthStatus = 'normal' | 'unavailable' | 'credential_invali
 export type SupplierGroupStatus = 'active' | 'missing' | 'disabled'
 export type SupplierKeyStatus = 'provisioning' | 'bound' | 'manual_secret_required' | 'failed' | 'disabled'
 export type SupplierSessionSource = 'direct_login' | 'browser_extension' | 'manual_import'
+export type SupplierProvisionJobType = 'sync_groups' | 'provision_group_key' | 'provision_all_group_keys' | 'repair_binding' | 'sync_supplier_costs'
+export type SupplierProvisionStatus = 'queued' | 'running' | 'succeeded' | 'partial_succeeded' | 'retryable_failed' | 'manual_required' | 'dead' | 'cancelled'
+export type SupplierProvisionStepType =
+  | 'ensure_supplier_session'
+  | 'sync_supplier_group'
+  | 'ensure_third_party_key'
+  | 'ensure_sub2api_group'
+  | 'ensure_sub2api_account'
+  | 'upsert_admin_plus_binding'
+  | 'enqueue_initial_collection'
+  | 'provision_all_group_keys'
+  | 'repair_binding'
+  | 'sync_supplier_costs'
 
 export interface SupplierCredentialStatus {
   postgres_configured: boolean
@@ -285,6 +298,96 @@ export interface ProvisionSupplierKeyResponse {
   binding: SupplierAccount
 }
 
+export interface EnsureSupplierKeysPayload {
+  local_account_base_url?: string
+  local_account_concurrency?: number
+  local_account_priority?: number
+  runtime_status?: SupplierRuntimeStatus
+  health_status?: SupplierHealthStatus
+  balance_threshold_cents?: number
+  balance_cents?: number
+  balance_currency?: string
+}
+
+export interface EnsureSupplierKeyItem {
+  supplier_group_id: number
+  external_group_id: string
+  group_name: string
+  action: 'created' | 'skipped' | 'failed'
+  key?: SupplierKey
+  binding?: SupplierAccount
+  local_sub2api_group_id?: number
+  local_sub2api_group_name?: string
+  local_group_created?: boolean
+  local_account_group_bound?: boolean
+  error_code?: string
+  error_message?: string
+}
+
+export interface EnsureSupplierKeysResponse {
+  supplier_id: number
+  total: number
+  created: number
+  skipped: number
+  failed: number
+  local_groups_created: number
+  local_accounts_bound: number
+  items: EnsureSupplierKeyItem[]
+}
+
+export interface SupplierProvisionStep {
+  id: number
+  job_id: number
+  supplier_id: number
+  supplier_group_id?: number
+  step_type: SupplierProvisionStepType
+  status: SupplierProvisionStatus | 'skipped'
+  attempts: number
+  max_attempts: number
+  next_run_at: string
+  error_code?: string
+  error_message?: string
+  request_snapshot?: Record<string, unknown>
+  result_snapshot?: Record<string, unknown>
+  created_at: string
+  updated_at: string
+  finished_at?: string | null
+}
+
+export interface SupplierProvisionJob {
+  id: number
+  job_type: SupplierProvisionJobType
+  supplier_id: number
+  status: SupplierProvisionStatus
+  requested_by?: number
+  request_snapshot?: Record<string, unknown>
+  result_snapshot?: Record<string, unknown>
+  total_steps: number
+  succeeded_steps: number
+  failed_steps: number
+  manual_required_steps: number
+  attempts: number
+  max_attempts: number
+  next_run_at: string
+  error_code?: string
+  error_message?: string
+  created_at: string
+  updated_at: string
+  finished_at?: string | null
+  steps?: SupplierProvisionStep[]
+}
+
+export interface SubmitProvisionJobResponse {
+  job_id: number
+  status: SupplierProvisionStatus
+  job_type: SupplierProvisionJobType
+  supplier_id: number
+  supplier_group_id?: number
+  poll_url: string
+  mode: 'async_job'
+  replayed?: boolean
+}
+
 export interface RepairSupplierKeyBindingPayload {
   local_sub2api_account_id: number
   runtime_status?: SupplierRuntimeStatus
@@ -349,16 +452,6 @@ export interface CreateSupplierAccountPayload {
 
 export type UpdateSupplierAccountPayload = Omit<CreateSupplierAccountPayload, 'local_sub2api_account_id'>
 
-export interface RateSnapshotEntryPayload {
-  model: string
-  billing_mode: string
-  price_item: string
-  unit: string
-  currency?: string
-  price_micros: number
-  raw_payload?: Record<string, unknown>
-}
-
 export interface RateSnapshot {
   id: number
   supplier_id: number
@@ -372,26 +465,6 @@ export interface RateSnapshot {
   raw_payload?: Record<string, unknown>
   captured_at: string
   created_at: string
-}
-
-export interface RateChangeEvent {
-  id: number
-  supplier_id: number
-  snapshot_id: number
-  model: string
-  billing_mode: string
-  price_item: string
-  unit: string
-  currency: string
-  old_price_micros?: number | null
-  new_price_micros: number
-  direction: 'new' | 'increase' | 'decrease'
-  change_percent?: number | null
-  threshold_percent: number
-  threshold_exceeded: boolean
-  status: 'open' | 'acknowledged' | 'ignored'
-  created_at: string
-  acknowledged_at?: string | null
 }
 
 export interface BalanceSnapshot {
@@ -447,23 +520,6 @@ export interface AnnouncementEvent {
   raw_payload?: Record<string, unknown>
 }
 
-export interface HealthSample {
-  id: number
-  supplier_id: number
-  source: string
-  model: string
-  first_token_latency_ms: number
-  total_latency_ms: number
-  status_code: number
-  error_class?: string
-  observed_concurrency: number
-  available_concurrency?: number | null
-  concurrency_limit?: number | null
-  raw_payload?: Record<string, unknown>
-  captured_at: string
-  created_at: string
-}
-
 export interface HealthEvent {
   id: number
   supplier_id: number
@@ -479,21 +535,11 @@ export interface HealthEvent {
   acknowledged_at?: string | null
 }
 
-export interface ProbeOpenAIResponsesHealthPayload {
-  supplier_id: number
-  supplier_account_id?: number
-  model?: string
-  prompt?: string
-  first_token_threshold_ms?: number
-  total_latency_threshold_ms?: number
-  concurrency_saturation_percent?: number
-}
-
-export interface SupplierBillLine {
+export interface SupplierUsageCostLine {
   id: number
   supplier_id: number
   source: string
-  external_bill_id?: string
+  external_usage_cost_id?: string
   external_request_id?: string
   api_key_name?: string
   model: string
@@ -516,19 +562,129 @@ export interface SupplierBillLine {
   created_at: string
 }
 
-export interface SyncSupplierBillingPayload {
+export interface SyncSupplierUsageCostsPayload {
   started_at: string
   ended_at: string
 }
 
-export interface SyncSupplierBillingResponse {
+export interface SyncSupplierUsageCostsResponse {
   supplier_id: number
   system_type: string
   origin: string
   api_base_url?: string
   synced_at: string
   total: number
-  items: SupplierBillLine[]
+  items: SupplierUsageCostLine[]
+}
+
+export interface SupplierCostSnapshot {
+  id: number
+  supplier_id: number
+  currency: string
+  completed_funding_amount_cents: number
+  completed_funding_cash_cents: number
+  entitlement_amount_cents: number
+  usage_cost_cents: number
+  refund_amount_cents: number
+  adjustment_amount_cents: number
+  expected_balance_cents: number
+  actual_balance_cents?: number | null
+  balance_delta_cents?: number | null
+  captured_at: string
+  created_at: string
+}
+
+export interface SupplierFundingTransaction {
+  id: number
+  supplier_id: number
+  provider_type: string
+  external_id: string
+  out_trade_no?: string
+  payment_trade_no?: string
+  payment_type?: string
+  order_type?: string
+  status: string
+  currency: string
+  amount_cents: number
+  cash_amount_cents: number
+  refund_amount_cents: number
+  fee_rate?: number | null
+  created_at_external?: string | null
+  paid_at?: string | null
+  completed_at?: string | null
+  last_seen_at: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SupplierEntitlementTransaction {
+  id: number
+  supplier_id: number
+  provider_type: string
+  external_id: string
+  code_fingerprint?: string
+  code_last4?: string
+  source_family: string
+  type: string
+  status: string
+  currency: string
+  value_cents: number
+  raw_value: number
+  group_id?: number
+  validity_days?: number
+  used_at?: string | null
+  created_at_external?: string | null
+  last_seen_at: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SupplierCostLedgerEntry {
+  id: number
+  supplier_id: number
+  provider_type: string
+  entry_type: string
+  source_type: string
+  source_id: number
+  source_external_id?: string
+  currency: string
+  amount_cents: number
+  cash_amount_cents: number
+  occurred_at: string
+  created_at: string
+}
+
+export interface SyncSupplierCostsPayload {
+  started_at?: string
+  ended_at?: string
+  include_funding_transactions?: boolean
+  include_entitlement_transactions?: boolean
+  include_usage_cost_lines?: boolean
+  include_balance_snapshot?: boolean
+  low_balance_threshold_cents?: number
+}
+
+export type SyncSupplierCostsResponse = SubmitProvisionJobResponse
+
+export interface SupplierCostSyncResultSnapshot {
+  supplier_id: number
+  provider_type?: string
+  system_type?: string
+  origin?: string
+  api_base_url?: string
+  synced_at?: string
+  funding_transactions?: number
+  entitlement_transactions?: number
+  usage_cost_lines?: number
+  ledger_entries?: number
+  snapshot_id?: number
+  currency?: string
+  usage_cost_cents?: number
+  expected_balance_cents?: number
+  actual_balance_cents?: number | null
+  balance_delta_cents?: number | null
+  capabilities?: Record<string, boolean>
+  diagnostics?: Record<string, string>
 }
 
 export interface LocalUsageLine {
@@ -581,64 +737,10 @@ export interface LocalAccountUsageSummary {
   last_request_created_at: string
 }
 
-export interface LocalAccountRuntime {
-  account_id: number
-  account_name: string
-  account_platform: string
-  account_type: string
-  status: string
-  schedulable: boolean
-  configured_limit: number
-  current_concurrency: number
-  waiting_count: number
-  load_percent: number
-  switch_eligible: boolean
-  blocked_reason?: string
-  error_message?: string
-  rate_limit_reset_at?: string | null
-  overload_until?: string | null
-  temp_unsched_until?: string | null
-  temp_unsched_reason?: string
-  last_used_at?: string | null
-  collected_at: string
-  redis_read_configured: boolean
-}
-
-export interface ReconciliationLine {
-  status: 'matched' | 'supplier_only' | 'local_only' | 'currency_mismatch' | 'cost_mismatch'
-  supplier_bill_id?: number
-  local_usage_id?: number
-  external_request_id?: string
-  model: string
-  currency: string
-  cost_cents: number
-  revenue_cents: number
-  profit_cents: number
-  profit_margin?: number | null
-  notes?: string
-}
-
-export interface ReconciliationSummary {
-  total_supplier_lines: number
-  total_local_lines: number
-  matched_lines: number
-  supplier_only_lines: number
-  local_only_lines: number
-  cost_cents: number
-  revenue_cents: number
-  profit_cents: number
-  profit_margin?: number | null
-}
-
-export interface ReconciliationResult {
-  lines: ReconciliationLine[]
-  summary: ReconciliationSummary
-}
-
 export interface ExtensionTask {
   id: number
   supplier_id: number
-  type: 'fetch_rates' | 'fetch_groups' | 'fetch_balance' | 'fetch_announcements' | 'export_bills' | 'fetch_health' | 'capture_supplier_session'
+  type: 'fetch_rates' | 'fetch_groups' | 'fetch_balance' | 'fetch_announcements' | 'fetch_usage_costs' | 'fetch_health' | 'capture_supplier_session'
   schedule_key?: string
   status: 'pending' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled'
   priority: number
@@ -815,8 +917,10 @@ export async function listSupplierGroups(supplierId: number, params?: { status?:
   return data
 }
 
-export async function syncSupplierGroups(supplierId: number): Promise<SyncSupplierGroupsResponse> {
-  const { data } = await apiClient.post<SyncSupplierGroupsResponse>(`/admin-plus/suppliers/${supplierId}/groups/sync`, {})
+export async function syncSupplierGroups(supplierId: number): Promise<SubmitProvisionJobResponse> {
+  const { data } = await apiClient.post<SubmitProvisionJobResponse>(`/admin-plus/suppliers/${supplierId}/groups/sync`, {}, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-groups-sync') }
+  })
   return data
 }
 
@@ -825,9 +929,16 @@ export async function listSupplierKeys(supplierId: number, params?: { status?: S
   return data
 }
 
-export async function provisionSupplierKey(supplierId: number, payload: ProvisionSupplierKeyPayload): Promise<ProvisionSupplierKeyResponse> {
-  const { data } = await apiClient.post<ProvisionSupplierKeyResponse>(`/admin-plus/suppliers/${supplierId}/keys/provision`, payload, {
+export async function provisionSupplierKey(supplierId: number, payload: ProvisionSupplierKeyPayload): Promise<SubmitProvisionJobResponse> {
+  const { data } = await apiClient.post<SubmitProvisionJobResponse>(`/admin-plus/suppliers/${supplierId}/keys/provision`, payload, {
     headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-key-provision') }
+  })
+  return data
+}
+
+export async function ensureSupplierKeys(supplierId: number, payload?: EnsureSupplierKeysPayload): Promise<SubmitProvisionJobResponse> {
+  const { data } = await apiClient.post<SubmitProvisionJobResponse>(`/admin-plus/suppliers/${supplierId}/keys/ensure-all`, payload || {}, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-key-ensure-all') }
   })
   return data
 }
@@ -844,6 +955,16 @@ function createAdminPlusIdempotencyKey(prefix: string): string {
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`
   return `${prefix}-${random}`
+}
+
+export async function getSupplierProvisionJob(jobId: number): Promise<SupplierProvisionJob> {
+  const { data } = await apiClient.get<SupplierProvisionJob>(`/admin-plus/supplier-provision-jobs/${jobId}`)
+  return data
+}
+
+export async function listSupplierProvisionJobs(params?: { supplier_id?: number; status?: SupplierProvisionStatus | '' } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<SupplierProvisionJob>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<SupplierProvisionJob>>('/admin-plus/supplier-provision-jobs', { params })
+  return data
 }
 
 export async function listLocalSub2APIAccounts(params?: { q?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalSub2APIAccount>> {
@@ -866,11 +987,6 @@ export async function listLocalAccountUsageSummary(params?: { account_id?: numbe
   return data
 }
 
-export async function listLocalAccountRuntime(params?: { account_id?: number; q?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalAccountRuntime>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<LocalAccountRuntime>>('/admin-plus/sub2api/account-runtime', { params })
-  return data
-}
-
 export async function listSupplierAccounts(supplierId: number, params?: AdminPlusPaginationParams): Promise<AdminPlusListResponse<SupplierAccount>> {
   const { data } = await apiClient.get<AdminPlusListResponse<SupplierAccount>>(`/admin-plus/suppliers/${supplierId}/accounts`, { params })
   return data
@@ -890,56 +1006,13 @@ export async function deleteSupplierAccount(supplierId: number, accountId: numbe
   await apiClient.delete(`/admin-plus/suppliers/${supplierId}/accounts/${accountId}`)
 }
 
-export async function recordRateSnapshot(payload: {
-  supplier_id: number
-  source?: string
-  threshold_percent?: number
-  entries: RateSnapshotEntryPayload[]
-}) {
-  const { data } = await apiClient.post<{ snapshots: RateSnapshot[]; events: RateChangeEvent[] }>('/admin-plus/rates/snapshots', payload)
-  return data
-}
-
 export async function listRateSnapshots(params?: { supplier_id?: number; model?: string } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<RateSnapshot>>('/admin-plus/rates/snapshots', { params })
   return data
 }
 
-export async function listRateEvents(params?: { supplier_id?: number; status?: string } & AdminPlusPaginationParams) {
-  const { data } = await apiClient.get<AdminPlusListResponse<RateChangeEvent>>('/admin-plus/rates/events', { params })
-  return data
-}
-
-export async function acknowledgeRateEvent(id: number): Promise<RateChangeEvent> {
-  const { data } = await apiClient.patch<RateChangeEvent>(`/admin-plus/rates/events/${id}/ack`)
-  return data
-}
-
-export async function recordBalanceSnapshot(payload: {
-  supplier_id: number
-  source?: string
-  runtime_status?: SupplierRuntimeStatus
-  balance_cents: number
-  currency?: string
-  low_balance_threshold_cents?: number
-  raw_payload?: Record<string, unknown>
-}) {
-  const { data } = await apiClient.post<{ snapshot: BalanceSnapshot; event?: BalanceEvent | null }>('/admin-plus/balances/snapshots', payload)
-  return data
-}
-
-export async function listBalanceSnapshots(params?: { supplier_id?: number } & AdminPlusPaginationParams) {
-  const { data } = await apiClient.get<AdminPlusListResponse<BalanceSnapshot>>('/admin-plus/balances/snapshots', { params })
-  return data
-}
-
 export async function listBalanceEvents(params?: { supplier_id?: number; status?: string } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<BalanceEvent>>('/admin-plus/balances/events', { params })
-  return data
-}
-
-export async function acknowledgeBalanceEvent(id: number): Promise<BalanceEvent> {
-  const { data } = await apiClient.patch<BalanceEvent>(`/admin-plus/balances/events/${id}/ack`)
   return data
 }
 
@@ -984,68 +1057,53 @@ export async function acknowledgeAnnouncementEvent(id: number): Promise<Announce
   return data
 }
 
-export async function recordHealthSample(payload: {
-  supplier_id: number
-  source?: string
-  model: string
-  first_token_latency_ms?: number
-  total_latency_ms?: number
-  status_code?: number
-  error_class?: string
-  observed_concurrency?: number
-  available_concurrency?: number | null
-  concurrency_limit?: number | null
-  first_token_threshold_ms?: number
-  total_latency_threshold_ms?: number
-  concurrency_saturation_percent?: number
-  raw_payload?: Record<string, unknown>
-}) {
-  const { data } = await apiClient.post<{ sample: HealthSample; events: HealthEvent[] }>('/admin-plus/health/samples', payload)
-  return data
-}
-
-export async function probeOpenAIResponsesHealth(payload: ProbeOpenAIResponsesHealthPayload) {
-  const { data } = await apiClient.post<{ sample: HealthSample; events: HealthEvent[] }>('/admin-plus/health/probe', payload)
-  return data
-}
-
-export async function listHealthSamples(params?: { supplier_id?: number; model?: string } & AdminPlusPaginationParams) {
-  const { data } = await apiClient.get<AdminPlusListResponse<HealthSample>>('/admin-plus/health/samples', { params })
-  return data
-}
-
 export async function listHealthEvents(params?: { supplier_id?: number; status?: string; type?: string } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<HealthEvent>>('/admin-plus/health/events', { params })
   return data
 }
 
-export async function acknowledgeHealthEvent(id: number): Promise<HealthEvent> {
-  const { data } = await apiClient.patch<HealthEvent>(`/admin-plus/health/events/${id}/ack`)
+export async function importUsageCostLines(lines: Array<Omit<SupplierUsageCostLine, 'id' | 'created_at' | 'source'> & { source?: string }>) {
+  const { data } = await apiClient.post<AdminPlusListResponse<SupplierUsageCostLine>>('/admin-plus/usage-costs/lines/import', { lines })
   return data
 }
 
-export async function importBillLines(lines: Array<Omit<SupplierBillLine, 'id' | 'created_at' | 'source'> & { source?: string }>) {
-  const { data } = await apiClient.post<AdminPlusListResponse<SupplierBillLine>>('/admin-plus/billing/lines/import', { lines })
+export async function syncSupplierUsageCosts(supplierId: number, payload: SyncSupplierUsageCostsPayload): Promise<SyncSupplierUsageCostsResponse> {
+  const { data } = await apiClient.post<SyncSupplierUsageCostsResponse>(`/admin-plus/suppliers/${supplierId}/usage-costs/sync`, payload)
   return data
 }
 
-export async function syncSupplierBilling(supplierId: number, payload: SyncSupplierBillingPayload): Promise<SyncSupplierBillingResponse> {
-  const { data } = await apiClient.post<SyncSupplierBillingResponse>(`/admin-plus/suppliers/${supplierId}/billing/sync`, payload)
+export async function listUsageCostLines(params?: { supplier_id?: number } & AdminPlusPaginationParams) {
+  const { data } = await apiClient.get<AdminPlusListResponse<SupplierUsageCostLine>>('/admin-plus/usage-costs/lines', { params })
   return data
 }
 
-export async function listBillLines(params?: { supplier_id?: number } & AdminPlusPaginationParams) {
-  const { data } = await apiClient.get<AdminPlusListResponse<SupplierBillLine>>('/admin-plus/billing/lines', { params })
+export async function syncSupplierCosts(supplierId: number, payload: SyncSupplierCostsPayload): Promise<SyncSupplierCostsResponse> {
+  const { data } = await apiClient.post<SyncSupplierCostsResponse>(`/admin-plus/suppliers/${supplierId}/costs/sync`, payload)
   return data
 }
 
-export async function runReconciliation(payload: {
-  supplier_bills: SupplierBillLine[]
-  local_usages: LocalUsageLine[]
-  time_tolerance_seconds?: number
-  cost_mismatch_cents?: number
-}) {
-  const { data } = await apiClient.post<ReconciliationResult>('/admin-plus/reconciliation/run', payload)
+export async function listSupplierCostSnapshots(params?: { supplier_id?: number } & AdminPlusPaginationParams) {
+  const { data } = await apiClient.get<AdminPlusListResponse<SupplierCostSnapshot>>('/admin-plus/costs/suppliers', { params })
+  return data
+}
+
+export async function getSupplierCostSummary(supplierId: number): Promise<{ items: SupplierCostSnapshot[]; total: number }> {
+  const { data } = await apiClient.get<{ items: SupplierCostSnapshot[]; total: number }>(`/admin-plus/suppliers/${supplierId}/costs/summary`)
+  return data
+}
+
+export async function listSupplierFundingTransactions(supplierId: number, params?: AdminPlusPaginationParams) {
+  const { data } = await apiClient.get<AdminPlusListResponse<SupplierFundingTransaction>>(`/admin-plus/suppliers/${supplierId}/funding-transactions`, { params })
+  return data
+}
+
+export async function listSupplierEntitlementTransactions(supplierId: number, params?: AdminPlusPaginationParams) {
+  const { data } = await apiClient.get<AdminPlusListResponse<SupplierEntitlementTransaction>>(`/admin-plus/suppliers/${supplierId}/entitlement-transactions`, { params })
+  return data
+}
+
+export async function listSupplierCostLedger(supplierId: number, params?: AdminPlusPaginationParams) {
+  const { data } = await apiClient.get<AdminPlusListResponse<SupplierCostLedgerEntry>>(`/admin-plus/suppliers/${supplierId}/cost-ledger`, { params })
   return data
 }
 
@@ -1148,7 +1206,6 @@ export async function generateActions(payload: {
   balance_events?: BalanceEvent[]
   announcement_events?: AnnouncementEvent[]
   health_events?: HealthEvent[]
-  reconciliation?: ReconciliationSummary
   min_profit_margin?: number
 }) {
   const { data } = await apiClient.post<AdminPlusListResponse<ActionRecommendation>>('/admin-plus/actions/generate', payload)
@@ -1184,6 +1241,7 @@ export const adminPlusAPI = {
   listSupplierGroups,
   syncSupplierGroups,
   listSupplierKeys,
+  ensureSupplierKeys,
   provisionSupplierKey,
   repairSupplierKeyBinding,
   listLocalSub2APIAccounts,
@@ -1193,27 +1251,22 @@ export const adminPlusAPI = {
   createSupplierAccount,
   updateSupplierAccount,
   deleteSupplierAccount,
-  recordRateSnapshot,
   listRateSnapshots,
-  listRateEvents,
-  acknowledgeRateEvent,
-  recordBalanceSnapshot,
-  listBalanceSnapshots,
   listBalanceEvents,
-  acknowledgeBalanceEvent,
   recordAnnouncement,
   syncSupplierAnnouncements,
   listAnnouncementEvents,
   acknowledgeAnnouncementEvent,
-  recordHealthSample,
-  probeOpenAIResponsesHealth,
-  listHealthSamples,
   listHealthEvents,
-  acknowledgeHealthEvent,
-  importBillLines,
-  syncSupplierBilling,
-  listBillLines,
-  runReconciliation,
+  importUsageCostLines,
+  syncSupplierUsageCosts,
+  listUsageCostLines,
+  syncSupplierCosts,
+  listSupplierCostSnapshots,
+  getSupplierCostSummary,
+  listSupplierFundingTransactions,
+  listSupplierEntitlementTransactions,
+  listSupplierCostLedger,
   createExtensionTask,
   listExtensionTasks,
   getExtensionManifest,

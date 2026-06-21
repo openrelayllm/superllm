@@ -9,10 +9,10 @@ import (
 
 	announcementsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/announcements"
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
-	billingapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/billing"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
+	usagecostsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 )
 
@@ -25,7 +25,7 @@ type IngestProcessor struct {
 	balances      *balancesapp.Service
 	announcements *announcementsapp.Service
 	health        *healthapp.Service
-	billing       *billingapp.Service
+	billing       *usagecostsapp.Service
 	sessions      *sessionsapp.Service
 	cipher        SessionCipher
 }
@@ -39,7 +39,7 @@ func NewIngestProcessor(
 	balances *balancesapp.Service,
 	announcements *announcementsapp.Service,
 	health *healthapp.Service,
-	billing *billingapp.Service,
+	billing *usagecostsapp.Service,
 	sessions *sessionsapp.Service,
 ) *IngestProcessor {
 	return &IngestProcessor{
@@ -57,7 +57,7 @@ func NewIngestProcessorWithCipher(
 	balances *balancesapp.Service,
 	announcements *announcementsapp.Service,
 	health *healthapp.Service,
-	billing *billingapp.Service,
+	billing *usagecostsapp.Service,
 	sessions *sessionsapp.Service,
 	cipher SessionCipher,
 ) *IngestProcessor {
@@ -81,8 +81,8 @@ func (p *IngestProcessor) ProcessTaskResult(ctx context.Context, task *adminplus
 		return p.processAnnouncements(ctx, task, result)
 	case adminplusdomain.ExtensionTaskTypeFetchHealth:
 		return p.processHealth(ctx, task, result)
-	case adminplusdomain.ExtensionTaskTypeExportBills:
-		return p.processBills(ctx, task, result)
+	case adminplusdomain.ExtensionTaskTypeFetchUsageCosts:
+		return p.processUsageCosts(ctx, task, result)
 	default:
 		return nil, nil
 	}
@@ -303,12 +303,12 @@ func (p *IngestProcessor) processHealth(ctx context.Context, task *adminplusdoma
 	}, nil
 }
 
-func (p *IngestProcessor) processBills(ctx context.Context, task *adminplusdomain.ExtensionTask, result map[string]any) (map[string]any, error) {
+func (p *IngestProcessor) processUsageCosts(ctx context.Context, task *adminplusdomain.ExtensionTask, result map[string]any) (map[string]any, error) {
 	linesRaw, ok := result["lines"].([]any)
 	if !ok || len(linesRaw) == 0 {
 		return nil, nil
 	}
-	lines := make([]billingapp.ImportBillLineInput, 0, len(linesRaw))
+	lines := make([]usagecostsapp.ImportUsageCostLineInput, 0, len(linesRaw))
 	for _, raw := range linesRaw {
 		item, ok := raw.(map[string]any)
 		if !ok {
@@ -318,39 +318,39 @@ func (p *IngestProcessor) processBills(ctx context.Context, task *adminplusdomai
 		if startedAt.IsZero() {
 			continue
 		}
-		lines = append(lines, billingapp.ImportBillLineInput{
-			SupplierID:        task.SupplierID,
-			Source:            sourceValue(result),
-			ExternalBillID:    stringValue(item, "external_bill_id"),
-			ExternalRequestID: stringValue(item, "external_request_id"),
-			APIKeyName:        stringValue(item, "api_key_name"),
-			Model:             stringValue(item, "model"),
-			Endpoint:          stringValue(item, "endpoint"),
-			RequestType:       stringValue(item, "request_type"),
-			BillingMode:       stringValue(item, "billing_mode"),
-			ReasoningEffort:   stringValue(item, "reasoning_effort"),
-			Currency:          stringValue(item, "currency"),
-			CostCents:         int64Value(item, "cost_cents"),
-			InputTokens:       int64Value(item, "input_tokens"),
-			OutputTokens:      int64Value(item, "output_tokens"),
-			CacheReadTokens:   int64Value(item, "cache_read_tokens"),
-			TotalTokens:       int64Value(item, "total_tokens"),
-			FirstTokenMS:      int64Value(item, "first_token_ms"),
-			DurationMS:        int64Value(item, "duration_ms"),
-			UserAgent:         stringValue(item, "user_agent"),
-			StartedAt:         startedAt,
-			EndedAt:           optionalTimeValue(item, "ended_at"),
-			RawPayload:        mapValue(item, "raw_payload"),
+		lines = append(lines, usagecostsapp.ImportUsageCostLineInput{
+			SupplierID:          task.SupplierID,
+			Source:              sourceValue(result),
+			ExternalUsageCostID: stringValue(item, "external_usage_cost_id"),
+			ExternalRequestID:   stringValue(item, "external_request_id"),
+			APIKeyName:          stringValue(item, "api_key_name"),
+			Model:               stringValue(item, "model"),
+			Endpoint:            stringValue(item, "endpoint"),
+			RequestType:         stringValue(item, "request_type"),
+			BillingMode:         stringValue(item, "billing_mode"),
+			ReasoningEffort:     stringValue(item, "reasoning_effort"),
+			Currency:            stringValue(item, "currency"),
+			CostCents:           int64Value(item, "cost_cents"),
+			InputTokens:         int64Value(item, "input_tokens"),
+			OutputTokens:        int64Value(item, "output_tokens"),
+			CacheReadTokens:     int64Value(item, "cache_read_tokens"),
+			TotalTokens:         int64Value(item, "total_tokens"),
+			FirstTokenMS:        int64Value(item, "first_token_ms"),
+			DurationMS:          int64Value(item, "duration_ms"),
+			UserAgent:           stringValue(item, "user_agent"),
+			StartedAt:           startedAt,
+			EndedAt:             optionalTimeValue(item, "ended_at"),
+			RawPayload:          mapValue(item, "raw_payload"),
 		})
 	}
 	if len(lines) == 0 {
 		return nil, nil
 	}
-	created, err := p.billing.ImportBillLines(ctx, lines)
+	created, err := p.billing.ImportUsageCostLines(ctx, lines)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"bill_lines": len(created)}, nil
+	return map[string]any{"usage_cost_lines": len(created)}, nil
 }
 
 func sourceValue(values map[string]any) string {

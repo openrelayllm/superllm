@@ -293,41 +293,25 @@ const adminNavItems = computed((): NavItem[] => [
     icon: OperationsIcon,
     children: [
       { path: '/admin/collection/scheduler', label: '任务调度', icon: OperationsIcon },
-      { path: '/admin/collection/plugin-tasks', label: '插件任务', icon: OperationsIcon },
       { path: '/admin/collection/sessions', label: '采集会话', icon: OperationsIcon }
     ]
   },
   {
-    path: '/admin/monitoring/rates',
-    label: '运营监控',
+    path: '/admin/monitoring/announcements',
+    label: '运营事件',
     icon: ChartIcon,
     children: [
-      { path: '/admin/ops', label: t('nav.ops'), icon: ChartIcon },
-      { path: '/admin/monitoring/rates', label: '费率', icon: ChartIcon },
-      { path: '/admin/monitoring/balances', label: '余额', icon: ChartIcon },
-      { path: '/admin/monitoring/health', label: '健康与并发', icon: ChartIcon },
-      { path: '/admin/monitoring/account-runtime', label: '账号运行态', icon: ChartIcon },
       { path: '/admin/monitoring/announcements', label: '公告', icon: ChartIcon }
     ]
   },
   {
-    path: '/admin/finance/billing',
+    path: '/admin/finance/costs',
     label: '财务对账',
     icon: ChartIcon,
     children: [
-      { path: '/admin/finance/billing', label: '供应商账单', icon: ChartIcon },
-      { path: '/admin/finance/local-usage', label: '本地用量', icon: ChartIcon },
-      { path: '/admin/finance/reconciliation', label: '对账结果', icon: ChartIcon }
-    ]
-  },
-  {
-    path: '/admin/automation/actions',
-    label: '自动化',
-    icon: OperationsIcon,
-    children: [
-      { path: '/admin/automation/actions', label: '动作建议', icon: OperationsIcon },
-      { path: '/admin/automation/notifications', label: '通知记录', icon: OperationsIcon },
-      { path: '/admin/automation/audits', label: '执行审计', icon: OperationsIcon }
+      { path: '/admin/finance/costs', label: '成本对账', icon: ChartIcon },
+      { path: '/admin/finance/usage-costs', label: '用量消耗', icon: ChartIcon },
+      { path: '/admin/finance/local-usage', label: '本地用量', icon: ChartIcon }
     ]
   },
   { path: '/admin/settings', label: t('nav.settings'), icon: CogIcon }
@@ -350,6 +334,9 @@ watch(
 )
 
 function toggleSidebar() {
+  if (!sidebarCollapsed.value) {
+    expandedGroupPath.value = null
+  }
   appStore.toggleSidebar()
 }
 

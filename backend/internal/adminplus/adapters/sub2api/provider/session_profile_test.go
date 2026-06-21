@@ -94,7 +94,7 @@ func TestSessionProfileClientProbeSub2APIUserProfile(t *testing.T) {
 	require.True(t, result.Capabilities["can_read_rates"])
 	require.True(t, result.Capabilities["can_read_announcements"])
 	require.True(t, result.Capabilities["can_create_key"])
-	require.True(t, result.Capabilities["can_read_billing"])
+	require.True(t, result.Capabilities["can_read_usage_costs"])
 	require.Equal(t, int64(42), result.Profile.ID)
 	require.Equal(t, "ops@example.com", result.Profile.Email)
 	require.Equal(t, []int64{1, 2}, result.Profile.AllowedGroups)
@@ -575,7 +575,7 @@ func TestSessionProfileClientReadAnnouncements(t *testing.T) {
 	require.Equal(t, "maintenance", result.Announcements[2].RawPayload["classification"])
 }
 
-func TestSessionProfileClientReadBilling(t *testing.T) {
+func TestSessionProfileClientReadUsageCosts(t *testing.T) {
 	startedAt := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
 	endedAt := startedAt.Add(24 * time.Hour)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -625,7 +625,7 @@ func TestSessionProfileClientReadBilling(t *testing.T) {
 	defer server.Close()
 
 	client := NewSessionProfileClient(server.Client())
-	result, err := client.ReadBilling(context.Background(), ports.SessionProbeInput{
+	result, err := client.ReadUsageCosts(context.Background(), ports.SessionProbeInput{
 		SupplierID: 7,
 		Origin:     server.URL,
 		APIBaseURL: server.URL,
@@ -635,7 +635,7 @@ func TestSessionProfileClientReadBilling(t *testing.T) {
 				"cookie": "sid=abc",
 			},
 		},
-	}, ports.ReadBillingInput{
+	}, ports.ReadUsageCostsInput{
 		SupplierID: 7,
 		StartedAt:  startedAt,
 		EndedAt:    endedAt,
@@ -646,7 +646,7 @@ func TestSessionProfileClientReadBilling(t *testing.T) {
 	require.Equal(t, "sub2api", result.SystemType)
 	require.Len(t, result.Lines, 1)
 	line := result.Lines[0]
-	require.Equal(t, "91", line.ExternalBillID)
+	require.Equal(t, "91", line.ExternalUsageCostID)
 	require.Equal(t, "req-1", line.ExternalRequestID)
 	require.Equal(t, "ops-key", line.APIKeyName)
 	require.Equal(t, "gpt-5-mini", line.Model)
@@ -661,6 +661,176 @@ func TestSessionProfileClientReadBilling(t *testing.T) {
 	require.True(t, ok)
 	require.NotContains(t, headers, "cookie")
 	require.Equal(t, "kept", headers["x-safe"])
+}
+
+func TestParseSub2APIUsageCostLine_RealSub2APIShape(t *testing.T) {
+	lines := parseSub2APIUsageCostLines([]byte(`{
+		"code": 0,
+		"data": {
+			"items": [
+				{
+					"id": 45140367,
+					"request_id": "generated:r1n61tur3bvbcl-3wwwf",
+					"model": "gpt-5.5",
+					"service_tier": "default",
+					"reasoning_effort": "xhigh",
+					"inbound_endpoint": "/v1/responses",
+					"upstream_endpoint": "/v1/responses",
+					"input_tokens": 17273,
+					"output_tokens": 1635,
+					"cache_read_tokens": 4544,
+					"input_cost": 1.136365,
+					"output_cost": 0.04905,
+					"total_cost": 1.189959,
+					"actual_cost": 0.2379918,
+					"balance_deducted": 0.2379918,
+					"billing_wallet_type": "balance",
+					"request_type": "stream",
+					"duration_ms": 35525,
+					"first_token_ms": 996,
+					"billing_mode": "token",
+					"created_at": "2026-06-21T11:39:27.689924+08:00"
+				}
+			]
+		}
+	}`))
+
+	require.Len(t, lines, 1)
+	line := lines[0]
+	require.Equal(t, "45140367", line.ExternalUsageCostID)
+	require.Equal(t, "generated:r1n61tur3bvbcl-3wwwf", line.ExternalRequestID)
+	require.Equal(t, "gpt-5.5", line.Model)
+	require.Equal(t, "/v1/responses", line.Endpoint)
+	require.Equal(t, "stream", line.RequestType)
+	require.Equal(t, "token", line.BillingMode)
+	require.Equal(t, "xhigh", line.ReasoningEffort)
+	require.Equal(t, int64(24), line.CostCents)
+	require.Equal(t, int64(17273), line.InputTokens)
+	require.Equal(t, int64(1635), line.OutputTokens)
+	require.Equal(t, int64(4544), line.CacheReadTokens)
+	require.Equal(t, int64(996), line.FirstTokenMS)
+	require.Equal(t, int64(35525), line.DurationMS)
+}
+
+func TestSessionProfileClientReadFundingTransactions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "Bearer browser-access-token", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/payment/orders/my":
+			require.Equal(t, "1", r.URL.Query().Get("page"))
+			require.Equal(t, "100", r.URL.Query().Get("page_size"))
+			_, _ = w.Write([]byte(`{
+				"data": {
+					"items": [
+						{
+							"id": 91,
+							"out_trade_no": "out-91",
+							"payment_trade_no": "pay-secret-abcdef",
+							"payment_type": "stripe",
+							"order_type": "balance",
+							"status": "paid",
+							"currency": "usd",
+							"amount": "12.34",
+							"pay_amount_cents": 1200,
+							"fee_rate": 0.03,
+							"created_at": "2026-06-20T10:00:00Z",
+							"paid_at": "2026-06-20T10:00:02Z"
+						}
+					]
+				}
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSessionProfileClient(server.Client())
+	result, err := client.ReadFundingTransactions(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Bundle:     map[string]any{"access_token": "browser-access-token"},
+	}, ports.ReadFundingTransactionsInput{SupplierID: 7})
+
+	require.NoError(t, err)
+	require.Equal(t, "sub2api", result.ProviderType)
+	require.Len(t, result.Items, 1)
+	item := result.Items[0]
+	require.Equal(t, "91", item.ExternalID)
+	require.Equal(t, "out-91", item.OutTradeNo)
+	require.Equal(t, "***********abcdef", item.PaymentTradeNo)
+	require.Equal(t, "stripe", item.PaymentType)
+	require.Equal(t, "PAID", item.Status)
+	require.Equal(t, int64(1234), item.AmountCents)
+	require.Equal(t, int64(1200), item.CashAmountCents)
+	require.NotNil(t, item.FeeRate)
+	require.InEpsilon(t, 0.03, *item.FeeRate, 0.0001)
+	require.NotNil(t, item.PaidAt)
+	require.Equal(t, time.Date(2026, 6, 20, 10, 0, 2, 0, time.UTC), *item.PaidAt)
+}
+
+func TestSessionProfileClientReadEntitlementTransactions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "Bearer browser-access-token", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/redeem/history":
+			_, _ = w.Write([]byte(`{
+				"data": [
+					{
+						"id": 10,
+						"code": "PAY-ORDER-SECRET-0001",
+						"type": "balance",
+						"status": "used",
+						"currency": "usd",
+						"value": "5.50",
+						"group_id": 3,
+						"validity_days": 30,
+						"used_at": "2026-06-20T11:00:00Z"
+					},
+					{
+						"id": 11,
+						"redeem_code": "MANUAL-CODE-9999",
+						"amount_cents": 2500,
+						"created_at": "2026-06-20T12:00:00Z"
+					}
+				]
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSessionProfileClient(server.Client())
+	result, err := client.ReadEntitlementTransactions(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Bundle:     map[string]any{"access_token": "browser-access-token"},
+	}, ports.ReadEntitlementTransactionsInput{SupplierID: 7})
+
+	require.NoError(t, err)
+	require.Equal(t, "sub2api", result.ProviderType)
+	require.Len(t, result.Items, 2)
+	auto := result.Items[0]
+	require.Equal(t, "10", auto.ExternalID)
+	require.Equal(t, "payment_auto_redeem", auto.SourceFamily)
+	require.Equal(t, "0001", auto.CodeLast4)
+	require.NotEmpty(t, auto.CodeFingerprint)
+	require.Equal(t, int64(550), auto.ValueCents)
+	require.Equal(t, int64(3), auto.GroupID)
+	require.Equal(t, 30, auto.ValidityDays)
+	require.NotNil(t, auto.UsedAt)
+
+	manual := result.Items[1]
+	require.Equal(t, "11", manual.ExternalID)
+	require.Equal(t, "manual_redeem", manual.SourceFamily)
+	require.Equal(t, "9999", manual.CodeLast4)
+	require.Equal(t, int64(2500), manual.ValueCents)
+	require.NotEmpty(t, manual.CodeFingerprint)
 }
 
 func findRateEntry(t *testing.T, entries []ports.ProviderRateEntry, priceItem string) ports.ProviderRateEntry {

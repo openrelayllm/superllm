@@ -274,7 +274,7 @@ func (s *Service) DecryptedBundle(ctx context.Context, supplierID int64) (map[st
 	}
 	plain, err := s.cipher.Decrypt(session.SessionBundleCiphertext)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, infraerrors.New(http.StatusConflict, "SUPPLIER_SESSION_DECRYPT_FAILED", "supplier browser session cannot be decrypted; refresh supplier session").WithCause(err)
 	}
 	var bundle map[string]any
 	if err := json.Unmarshal([]byte(plain), &bundle); err != nil {

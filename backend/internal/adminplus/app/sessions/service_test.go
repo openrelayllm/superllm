@@ -3,6 +3,7 @@ package sessions
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"testing"
 	"time"
 
@@ -63,6 +64,33 @@ func TestServiceLoginStoresDirectLoginSession(t *testing.T) {
 	require.Equal(t, "https://relay.example.com/api/v1", input.APIBaseURL)
 }
 
+func TestServiceDecryptedProbeInputReportsDecryptFailure(t *testing.T) {
+	repo := NewMemoryRepository()
+	supplier := &sessionTestSupplierLookup{supplier: &adminplusdomain.Supplier{
+		ID:           7,
+		Name:         "Relay",
+		Type:         adminplusdomain.SupplierTypeSub2API,
+		DashboardURL: "https://relay.example.com",
+		APIBaseURL:   "https://relay.example.com/api/v1",
+	}}
+	svc := NewServiceWithDependencies(repo, failingSessionCipher{}, supplier, nil)
+
+	_, err := repo.Upsert(context.Background(), &adminplusdomain.SupplierBrowserSession{
+		SupplierID:              7,
+		SessionSource:           adminplusdomain.SupplierSessionSourceDirectLogin,
+		Origin:                  "https://relay.example.com",
+		APIBaseURL:              "https://relay.example.com/api/v1",
+		SessionBundleCiphertext: "stale-ciphertext",
+		CapturedAt:              time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+
+	_, err = svc.DecryptedProbeInput(context.Background(), 7)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "SUPPLIER_SESSION_DECRYPT_FAILED")
+	require.NotContains(t, err.Error(), "stale-ciphertext")
+}
+
 type sessionTestSupplierLookup struct {
 	supplier   *adminplusdomain.Supplier
 	credential *adminplusdomain.SupplierBrowserCredential
@@ -111,4 +139,14 @@ func (sessionTestCipher) Decrypt(ciphertext string) (string, error) {
 		return "", err
 	}
 	return string(raw), nil
+}
+
+type failingSessionCipher struct{}
+
+func (failingSessionCipher) Encrypt(plaintext string) (string, error) {
+	return plaintext, nil
+}
+
+func (failingSessionCipher) Decrypt(string) (string, error) {
+	return "", errors.New("decrypt: message authentication failed")
 }

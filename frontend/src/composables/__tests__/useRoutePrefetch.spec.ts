@@ -25,7 +25,6 @@ const createMockRouter = (): Router => {
 
   const routes: Partial<RouteRecordNormalized>[] = [
     { path: '/admin/dashboard', components: { default: mockImportFn } },
-    { path: '/admin/ops', components: { default: mockImportFn } },
     { path: '/admin/settings', components: { default: mockImportFn } }
   ]
 
@@ -65,7 +64,6 @@ describe('useRoutePrefetch', () => {
     it('应该正确识别管理员路由', () => {
       const { _isAdminRoute } = useRoutePrefetch(mockRouter)
       expect(_isAdminRoute('/admin/dashboard')).toBe(true)
-      expect(_isAdminRoute('/admin/ops')).toBe(true)
       expect(_isAdminRoute('/admin/settings')).toBe(true)
     })
 
@@ -83,7 +81,7 @@ describe('useRoutePrefetch', () => {
       const route = createMockRoute('/admin/dashboard')
       const config = _getPrefetchConfig(route)
 
-      expect(config).toHaveLength(2)
+      expect(config).toHaveLength(1)
     })
 
     it('用户端 dead 路由不应该返回预加载配置', () => {
@@ -153,13 +151,13 @@ describe('useRoutePrefetch', () => {
       triggerPrefetch(createMockRoute('/admin/dashboard'))
 
       // 立即切换到另一个路由
-      triggerPrefetch(createMockRoute('/admin/ops'))
+      triggerPrefetch(createMockRoute('/admin/settings'))
 
       // 等待执行
       await new Promise((resolve) => setTimeout(resolve, 100))
 
       // 只有最后一个路由应该被预加载
-      expect(prefetchedRoutes.value.has('/admin/ops')).toBe(true)
+      expect(prefetchedRoutes.value.has('/admin/settings')).toBe(true)
     })
   })
 
@@ -182,8 +180,8 @@ describe('useRoutePrefetch', () => {
   describe('预加载映射表', () => {
     it('管理员预加载映射表应该包含正确的路由', () => {
       expect(_adminPrefetchMap).toHaveProperty('/admin/dashboard')
-      expect(_adminPrefetchMap['/admin/dashboard']).toHaveLength(2)
-      expect(_adminPrefetchMap['/admin/dashboard']).toEqual(['/admin/ops', '/admin/settings'])
+      expect(_adminPrefetchMap['/admin/dashboard']).toHaveLength(1)
+      expect(_adminPrefetchMap['/admin/dashboard']).toEqual(['/admin/settings'])
     })
 
     it('预加载映射表不应包含 dead 路由', () => {
@@ -196,6 +194,7 @@ describe('useRoutePrefetch', () => {
         '/admin/accounts',
         '/admin/users',
         '/admin/groups',
+        '/admin/ops',
         '/admin/subscriptions',
         '/admin/redeem'
       ]

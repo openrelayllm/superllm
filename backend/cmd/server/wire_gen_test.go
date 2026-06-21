@@ -25,6 +25,9 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 	emailQueueSvc := service.NewEmailQueueService(nil, 1)
 	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	opsSystemLogSinkSvc := service.NewOpsSystemLogSink(nil)
+	idempotencyCoordinator := service.NewIdempotencyCoordinator(nil, service.DefaultIdempotencyConfig())
+	idempotencyCleanupSvc := service.NewIdempotencyCleanupService(nil, cfg)
+	service.SetDefaultIdempotencyCoordinator(idempotencyCoordinator)
 
 	cleanup := provideCleanup(
 		nil, // entClient
@@ -37,11 +40,15 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		opsSystemLogSinkSvc,
 		emailQueueSvc,
 		billingCacheSvc,
+		idempotencyCoordinator,
+		idempotencyCleanupSvc,
 		adminplussub2api.Sub2APIRedis{},
+		nil,
 		nil,
 	)
 
 	require.NotPanics(t, func() {
 		cleanup()
 	})
+	require.Nil(t, service.DefaultIdempotencyCoordinator())
 }

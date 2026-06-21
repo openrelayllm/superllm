@@ -26,7 +26,6 @@ type GenerateInput struct {
 	BalanceEvents      []*adminplusdomain.BalanceEvent
 	AnnouncementEvents []*adminplusdomain.AnnouncementEvent
 	HealthEvents       []*adminplusdomain.HealthEvent
-	Reconciliation     adminplusdomain.ReconciliationSummary
 	MinProfitMargin    float64
 }
 
@@ -77,9 +76,6 @@ func (s *Service) Generate(ctx context.Context, in GenerateInput) (*GenerateResu
 	items = append(items, s.actionsFromBalanceEvents(now, suppliers, in.BalanceEvents, bestCandidate)...)
 	items = append(items, s.actionsFromAnnouncementEvents(now, suppliers, in.AnnouncementEvents)...)
 	items = append(items, s.actionsFromHealthEvents(now, suppliers, in.HealthEvents, bestCandidate)...)
-	if item := s.actionFromReconciliation(now, in.Reconciliation, in.MinProfitMargin); item != nil {
-		items = append(items, item)
-	}
 	sort.SliceStable(items, func(i, j int) bool {
 		return severityRank(items[i].Severity) > severityRank(items[j].Severity)
 	})
@@ -206,20 +202,6 @@ func (s *Service) actionsFromHealthEvents(now time.Time, suppliers map[int64]Sup
 		}
 	}
 	return items
-}
-
-func (s *Service) actionFromReconciliation(now time.Time, summary adminplusdomain.ReconciliationSummary, minMargin float64) *adminplusdomain.ActionRecommendation {
-	if summary.RevenueCents <= 0 {
-		return nil
-	}
-	margin := float64(summary.ProfitCents) / float64(summary.RevenueCents)
-	if minMargin <= 0 {
-		minMargin = 0.1
-	}
-	if margin >= minMargin {
-		return nil
-	}
-	return newAction(now, 0, nil, adminplusdomain.ActionTypeInvestigateProfit, adminplusdomain.ActionSeverityWarning, "profit_margin_below_threshold", "Investigate low profit margin", "Current reconciliation indicates margin is below the configured threshold.", "protect relay operator profitability", []string{"profit_margin_low"})
 }
 
 func indexSuppliers(items []SupplierSignal) map[int64]SupplierSignal {

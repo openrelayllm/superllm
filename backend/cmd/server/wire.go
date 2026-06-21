@@ -12,6 +12,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus"
+	adminplusprovisionjobs "github.com/Wei-Shaw/sub2api/internal/adminplus/app/provisionjobs"
 	adminplusscheduler "github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
 	adminplussub2api "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -75,7 +76,10 @@ func provideCleanup(
 	opsSystemLogSink *service.OpsSystemLogSink,
 	emailQueue *service.EmailQueueService,
 	billingCache *service.BillingCacheService,
+	idempotencyCoordinator *service.IdempotencyCoordinator,
+	idempotencyCleanup *service.IdempotencyCleanupService,
 	sub2apiRedis adminplussub2api.Sub2APIRedis,
+	adminPlusProvisionWorker *adminplusprovisionjobs.Worker,
 	adminPlusScheduler *adminplusscheduler.Worker,
 ) func() {
 	return func() {
@@ -133,9 +137,27 @@ func provideCleanup(
 				billingCache.Stop()
 				return nil
 			}},
+			{"IdempotencyCleanupService", func() error {
+				if idempotencyCleanup != nil {
+					idempotencyCleanup.Stop()
+				}
+				return nil
+			}},
+			{"IdempotencyCoordinator", func() error {
+				if idempotencyCoordinator != nil {
+					service.SetDefaultIdempotencyCoordinator(nil)
+				}
+				return nil
+			}},
 			{"AdminPlusScheduler", func() error {
 				if adminPlusScheduler != nil {
 					adminPlusScheduler.Stop()
+				}
+				return nil
+			}},
+			{"AdminPlusProvisionWorker", func() error {
+				if adminPlusProvisionWorker != nil {
+					adminPlusProvisionWorker.Stop()
 				}
 				return nil
 			}},

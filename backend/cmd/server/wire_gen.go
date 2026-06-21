@@ -13,18 +13,19 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/announcements"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
-	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/billing"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/provisionjobs"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
-	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/reconciliation"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/supplierkeys"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
@@ -119,6 +120,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	serviceBuildInfo := provideServiceBuildInfo(buildInfo)
 	updateService := service.ProvideUpdateService(updateCache, gitHubReleaseClient, serviceBuildInfo)
 	idempotencyRepository := repository.NewIdempotencyRepository(client, db)
+	idempotencyCoordinator := service.ProvideIdempotencyCoordinator(idempotencyRepository, configConfig)
+	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)
 	systemOperationLockService := service.ProvideSystemOperationLockService(idempotencyRepository, configConfig)
 	systemHandler := handler.ProvideSystemHandler(updateService, systemOperationLockService)
 	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, groupHandler, settingHandler, opsHandler, systemHandler)
@@ -134,7 +137,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	sessionProfileClient := provider.NewSessionProfileClient(httpClient)
 	sessionsService := sessions.ProvideService(sessionsSQLRepository, cipher, suppliersService, sessionProfileClient, sessionProfileClient)
 	suppliergroupsService := suppliergroups.NewService(suppliergroupsSQLRepository, sessionsService, sessionProfileClient)
-	supplierGroupHandler := adminplus.NewSupplierGroupHandler(suppliergroupsService)
 	supplierkeysSQLRepository := supplierkeys.NewSQLRepository(db)
 	redeemCodeRepository := repository.NewRedeemCodeRepository(client)
 	proxyExitInfoProber := repository.NewProxyExitInfoProber(configConfig)
@@ -150,7 +152,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	billingService := service.NewBillingService(configConfig, pricingService)
+	coreBillingService := service.NewBillingService(configConfig, pricingService)
 	geminiQuotaService := service.NewGeminiQuotaService(configConfig, settingRepository)
 	tempUnschedCache := repository.NewTempUnschedCache(redisClient)
 	timeoutCounterCache := repository.NewTimeoutCounterCache(redisClient)
@@ -166,14 +168,14 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	openAITokenProvider := service.ProvideOpenAITokenProvider(accountRepository, geminiTokenCache, openAIOAuthService, oAuthRefreshAPI)
 	channelRepository := repository.NewChannelRepository(db)
 	channelService := service.NewChannelService(channelRepository, groupRepository, apiKeyAuthCacheInvalidator, pricingService)
-	modelPricingResolver := service.NewModelPricingResolver(channelService, billingService)
+	modelPricingResolver := service.NewModelPricingResolver(channelService, coreBillingService)
 	notificationEmailService := service.NewNotificationEmailService(settingRepository, emailService)
 	balanceNotifyService := service.ProvideBalanceNotifyService(emailService, settingRepository, accountRepository, notificationEmailService)
-	openAIGatewayService := service.NewOpenAIGatewayService(accountRepository, usageLogRepository, usageBillingRepository, userRepository, userSubscriptionRepository, userGroupRateRepository, gatewayCache, configConfig, schedulerSnapshotService, concurrencyService, billingService, rateLimitService, billingCacheService, httpUpstream, deferredService, openAITokenProvider, modelPricingResolver, channelService, balanceNotifyService, settingService, serviceUserPlatformQuotaRepository)
+	openAIGatewayService := service.NewOpenAIGatewayService(accountRepository, usageLogRepository, usageBillingRepository, userRepository, userSubscriptionRepository, userGroupRateRepository, gatewayCache, configConfig, schedulerSnapshotService, concurrencyService, coreBillingService, rateLimitService, billingCacheService, httpUpstream, deferredService, openAITokenProvider, modelPricingResolver, channelService, balanceNotifyService, settingService, serviceUserPlatformQuotaRepository)
 	adminService := service.NewAdminService(userRepository, groupRepository, accountRepository, proxyRepository, apiKeyRepository, redeemCodeRepository, userGroupRateRepository, userRPMCache, billingCacheService, proxyExitInfoProber, proxyLatencyCache, apiKeyAuthCacheInvalidator, client, settingService, subscriptionService, userSubscriptionRepository, privacyClientFactory, openAIGatewayService)
-	localAccountCreator := supplierkeys.UseLocalAccountService(adminService)
-	supplierkeysService := supplierkeys.NewService(supplierkeysSQLRepository, sessionsService, sessionProfileClient, localAccountCreator)
-	supplierKeyHandler := adminplus.NewSupplierKeyHandler(supplierkeysService)
+	sub2APIGateway := supplierkeys.UseSub2APIGateway(adminService, httpClient)
+	legacyAccountService := supplierkeys.UseLegacyAccountService(adminService)
+	supplierkeysService := supplierkeys.NewServiceWithLegacy(supplierkeysSQLRepository, sessionsService, sessionProfileClient, sub2APIGateway, legacyAccountService)
 	ratesSQLRepository := rates.NewSQLRepository(db)
 	notificationsSQLRepository := notifications.NewSQLRepository(db)
 	feishuNotifier := rates.NewFeishuNotifierFromEnv(notificationsSQLRepository)
@@ -184,6 +186,16 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	adminPlusBalanceCache := repository.NewAdminPlusBalanceCache(redisClient)
 	balancesService := balances.NewServiceWithCurrentCache(balancesSQLRepository, balancesFeishuNotifier, sessionsService, sessionProfileClient, adminPlusBalanceCache)
 	balanceHandler := adminplus.NewBalanceHandler(balancesService)
+	usageCostSQLRepository := usagecosts.NewSQLRepository(db)
+	usageCostService := usagecosts.NewServiceWithDependencies(usageCostSQLRepository, sessionsService, sessionProfileClient)
+	costsSQLRepository := costs.NewSQLRepository(db)
+	costsService := costs.NewServiceWithDependencies(costsSQLRepository, sessionsService, sessionProfileClient, sessionProfileClient, usageCostService, balancesService)
+	provisionjobsSQLRepository := provisionjobs.NewSQLRepository(db)
+	streamPublisher := provisionjobs.NewStreamPublisher(redisClient)
+	provisionjobsService := provisionjobs.NewServiceWithCostSyncer(provisionjobsSQLRepository, streamPublisher, suppliergroupsService, supplierkeysService, costsService)
+	supplierGroupHandler := adminplus.NewSupplierGroupHandlerWithProvisionJobs(suppliergroupsService, provisionjobsService)
+	supplierKeyHandler := adminplus.NewSupplierKeyHandlerWithProvisionJobs(supplierkeysService, provisionjobsService)
+	provisionJobHandler := adminplus.NewProvisionJobHandler(provisionjobsService)
 	announcementsSQLRepository := announcements.NewSQLRepository(db)
 	announcementsFeishuNotifier := announcements.NewFeishuNotifierFromEnv(notificationsSQLRepository)
 	announcementsService := announcements.NewServiceWithDependencies(announcementsSQLRepository, announcementsFeishuNotifier, sessionsService, sessionProfileClient)
@@ -193,29 +205,25 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	healthService := health.NewServiceWithNotifier(healthSQLRepository, healthFeishuNotifier)
 	healthHandler := adminplus.NewHealthHandler(healthService)
 	notificationHandler := adminplus.NewNotificationHandler(notificationsSQLRepository)
-	billingSQLRepository := billing.NewSQLRepository(db)
-	service2 := billing.NewServiceWithDependencies(billingSQLRepository, sessionsService, sessionProfileClient)
-	billingHandler := adminplus.NewBillingHandler(service2)
+	usageCostHandler := adminplus.NewUsageCostHandler(usageCostService)
+	costHandler := adminplus.NewCostHandlerWithProvisionJobs(costsService, provisionjobsService)
 	extensionSQLRepository := extension.NewSQLRepository(db)
 	sessionCipher := extension.UseSessionCipher(secretEncryptor)
-	ingestProcessor := extension.NewIngestProcessorWithCipher(ratesService, balancesService, announcementsService, healthService, service2, sessionsService, sessionCipher)
+	ingestProcessor := extension.NewIngestProcessorWithCipher(ratesService, balancesService, announcementsService, healthService, usageCostService, sessionsService, sessionCipher)
 	extensionService := extension.NewServiceWithDependencies(extensionSQLRepository, ingestProcessor, suppliersService)
 	extensionHandler := adminplus.NewExtensionHandler(extensionService, suppliersService)
 	sessionHandler := adminplus.NewSessionHandler(sessionsService, balancesService)
-	schedulerService := scheduler.NewServiceWithDependencies(suppliersService, extensionService, suppliergroupsService, ratesService, balancesService, announcementsService, healthService, service2)
+	schedulerService := scheduler.NewServiceWithDependencies(suppliersService, extensionService, suppliergroupsService, ratesService, balancesService, announcementsService, healthService, usageCostService)
 	schedulerHandler := adminplus.NewSchedulerHandler(schedulerService)
 	actionsSQLRepository := actions.NewSQLRepository(db)
 	actionsService := actions.NewService(actionsSQLRepository)
 	actionHandler := adminplus.NewActionHandler(actionsService)
-	reconciliationFeishuNotifier := reconciliation.NewFeishuNotifierFromEnv(notificationsSQLRepository)
-	reconciliationService := reconciliation.NewServiceWithNotifier(reconciliationFeishuNotifier)
-	reconciliationHandler := adminplus.NewReconciliationHandler(reconciliationService)
 	sub2apiSQLRepository := sub2api.NewSQLRepository(readDB)
 	sub2APIRedis := sub2api.ProvideReadRedis(redisClient, configConfig)
 	runtimeRepository := sub2api.NewRuntimeRepository(readDB, sub2APIRedis)
 	sub2apiService := sub2api.NewService(sub2apiSQLRepository, runtimeRepository)
 	sub2APIHandler := adminplus.NewSub2APIHandler(sub2apiService)
-	adminPlusHandlers := handler.ProvideAdminPlusHandlers(supplierHandler, supplierGroupHandler, supplierKeyHandler, rateHandler, balanceHandler, announcementHandler, healthHandler, notificationHandler, billingHandler, extensionHandler, sessionHandler, schedulerHandler, actionHandler, reconciliationHandler, sub2APIHandler)
+	adminPlusHandlers := handler.ProvideAdminPlusHandlers(supplierHandler, supplierGroupHandler, supplierKeyHandler, provisionJobHandler, rateHandler, balanceHandler, announcementHandler, healthHandler, notificationHandler, usageCostHandler, costHandler, extensionHandler, sessionHandler, schedulerHandler, actionHandler, sub2APIHandler)
 	handlerSettingHandler := handler.ProvideSettingHandler(settingService, buildInfo, notificationEmailService)
 	handlers := handler.ProvideHandlers(authHandler, adminHandlers, adminPlusHandlers, handlerSettingHandler)
 	jwtAuthMiddleware := middleware.NewJWTAuthMiddleware(authService, userService)
@@ -230,7 +238,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	opsCleanupService := service.ProvideOpsCleanupService(opsRepository, db, redisClient, configConfig, channelMonitorService, settingRepository, opsService)
 	opsScheduledReportService := service.ProvideOpsScheduledReportService(opsService, userService, emailService, redisClient, configConfig)
 	worker := scheduler.ProvideWorker(schedulerService)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, emailQueueService, billingCacheService, sub2APIRedis, worker)
+	provisionWorker := provisionjobs.ProvideWorker(provisionjobsService)
+	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, emailQueueService, billingCacheService, idempotencyCoordinator, idempotencyCleanupService, sub2APIRedis, provisionWorker, worker)
 	application := &Application{
 		Server:  httpServer,
 		Cleanup: v,
@@ -263,7 +272,10 @@ func provideCleanup(
 	opsSystemLogSink *service.OpsSystemLogSink,
 	emailQueue *service.EmailQueueService,
 	billingCache *service.BillingCacheService,
+	idempotencyCoordinator *service.IdempotencyCoordinator,
+	idempotencyCleanup *service.IdempotencyCleanupService,
 	sub2apiRedis sub2api.Sub2APIRedis,
+	adminPlusProvisionWorker *provisionjobs.Worker,
 	adminPlusScheduler *scheduler.Worker,
 ) func() {
 	return func() {
@@ -320,9 +332,27 @@ func provideCleanup(
 				billingCache.Stop()
 				return nil
 			}},
+			{"IdempotencyCleanupService", func() error {
+				if idempotencyCleanup != nil {
+					idempotencyCleanup.Stop()
+				}
+				return nil
+			}},
+			{"IdempotencyCoordinator", func() error {
+				if idempotencyCoordinator != nil {
+					service.SetDefaultIdempotencyCoordinator(nil)
+				}
+				return nil
+			}},
 			{"AdminPlusScheduler", func() error {
 				if adminPlusScheduler != nil {
 					adminPlusScheduler.Stop()
+				}
+				return nil
+			}},
+			{"AdminPlusProvisionWorker", func() error {
+				if adminPlusProvisionWorker != nil {
+					adminPlusProvisionWorker.Stop()
 				}
 				return nil
 			}},

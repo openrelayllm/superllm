@@ -203,7 +203,7 @@ func (r *SQLRepository) List(ctx context.Context, filter SupplierFilter) ([]*adm
 			balance_cents, balance_currency, balance_updated_at, created_at, updated_at
 		FROM admin_plus_suppliers
 		WHERE ` + strings.Join(where, " AND ") + `
-		ORDER BY id ASC
+		ORDER BY created_at DESC, id DESC
 	`
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -359,7 +359,7 @@ func (r *SQLRepository) ListAccounts(ctx context.Context, supplierID int64) ([]*
 		LEFT JOIN admin_plus_supplier_keys sk ON sk.id = asa.supplier_key_id
 		LEFT JOIN admin_plus_supplier_groups sg ON sg.id = sk.supplier_group_id
 		WHERE asa.supplier_id = $1
-		ORDER BY asa.id ASC
+		ORDER BY asa.created_at DESC, asa.id DESC
 	`, supplierID)
 	if err != nil {
 		return nil, err
@@ -533,7 +533,7 @@ func (r *SQLRepository) ListLocalAccounts(ctx context.Context, query string, lim
 		SELECT id, name, platform, type, status, schedulable, concurrency, priority, rate_multiplier
 		FROM accounts
 		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY id ASC
+		ORDER BY id DESC
 		LIMIT `+limitRef+`
 	`, args...)
 	if err != nil {

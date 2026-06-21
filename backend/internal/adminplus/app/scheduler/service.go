@@ -11,12 +11,12 @@ import (
 
 	announcementsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/announcements"
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
-	billingapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/billing"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	suppliergroupsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
+	usagecostsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 )
 
@@ -47,7 +47,7 @@ type Service struct {
 	balanceSyncer      BalanceSyncer
 	announcementSyncer AnnouncementSyncer
 	healthSyncer       HealthSyncer
-	billingSyncer      BillingSyncer
+	usageCostSyncer    UsageCostSyncer
 	now                func() time.Time
 }
 
@@ -71,8 +71,8 @@ type HealthSyncer interface {
 	SyncFromSession(ctx context.Context, in healthapp.SyncFromSessionInput) (*healthapp.SyncFromSessionResult, error)
 }
 
-type BillingSyncer interface {
-	SyncFromSession(ctx context.Context, in billingapp.SyncFromSessionInput) (*billingapp.SyncFromSessionResult, error)
+type UsageCostSyncer interface {
+	SyncFromSession(ctx context.Context, in usagecostsapp.SyncFromSessionInput) (*usagecostsapp.SyncFromSessionResult, error)
 }
 
 func NewService(supplierService *suppliersapp.Service, extensionService *extensionapp.Service) *Service {
@@ -91,7 +91,7 @@ func NewServiceWithDependencies(
 	balanceSyncer BalanceSyncer,
 	announcementSyncer AnnouncementSyncer,
 	healthSyncer HealthSyncer,
-	billingSyncer BillingSyncer,
+	usageCostSyncer UsageCostSyncer,
 ) *Service {
 	service := NewService(supplierService, extensionService)
 	service.groupSyncer = groupSyncer
@@ -99,7 +99,7 @@ func NewServiceWithDependencies(
 	service.balanceSyncer = balanceSyncer
 	service.announcementSyncer = announcementSyncer
 	service.healthSyncer = healthSyncer
-	service.billingSyncer = billingSyncer
+	service.usageCostSyncer = usageCostSyncer
 	return service
 }
 
@@ -283,13 +283,13 @@ func (s *Service) syncSupplierTask(ctx context.Context, supplier *adminplusdomai
 		if result != nil {
 			item.Total = result.Total
 		}
-	case adminplusdomain.ExtensionTaskTypeExportBills:
-		if s.billingSyncer == nil {
-			item.Reason = "billing_syncer_missing"
+	case adminplusdomain.ExtensionTaskTypeFetchUsageCosts:
+		if s.usageCostSyncer == nil {
+			item.Reason = "usage_cost_syncer_missing"
 			return
 		}
-		startedAt, endedAt := billingWindow(now)
-		result, err := s.billingSyncer.SyncFromSession(ctx, billingapp.SyncFromSessionInput{
+		startedAt, endedAt := usageCostWindow(now)
+		result, err := s.usageCostSyncer.SyncFromSession(ctx, usagecostsapp.SyncFromSessionInput{
 			SupplierID: supplier.ID,
 			StartedAt:  startedAt,
 			EndedAt:    endedAt,
@@ -354,7 +354,7 @@ func ineligibleReason(supplier *adminplusdomain.Supplier, taskType adminplusdoma
 		}
 	}
 	switch taskType {
-	case adminplusdomain.ExtensionTaskTypeFetchHealth, adminplusdomain.ExtensionTaskTypeExportBills:
+	case adminplusdomain.ExtensionTaskTypeFetchHealth, adminplusdomain.ExtensionTaskTypeFetchUsageCosts:
 		if !adminplusdomain.CanUseSupplierForSwitching(supplier.RuntimeStatus, supplier.BalanceCents) {
 			return "not_switch_eligible"
 		}
@@ -369,7 +369,7 @@ func actionForTaskType(taskType adminplusdomain.ExtensionTaskType) string {
 		adminplusdomain.ExtensionTaskTypeFetchBalance,
 		adminplusdomain.ExtensionTaskTypeFetchAnnouncements,
 		adminplusdomain.ExtensionTaskTypeFetchHealth,
-		adminplusdomain.ExtensionTaskTypeExportBills:
+		adminplusdomain.ExtensionTaskTypeFetchUsageCosts:
 		return actionDirectSync
 	case adminplusdomain.ExtensionTaskTypeCaptureSession:
 		return actionExtensionTask
@@ -378,13 +378,13 @@ func actionForTaskType(taskType adminplusdomain.ExtensionTaskType) string {
 	}
 }
 
-func billingWindow(now time.Time) (time.Time, time.Time) {
+func usageCostWindow(now time.Time) (time.Time, time.Time) {
 	startedAt := now.UTC().Truncate(24 * time.Hour)
 	return startedAt, startedAt.Add(24 * time.Hour)
 }
 
 func scheduleBucket(taskType adminplusdomain.ExtensionTaskType, now time.Time, windowMinutes int) string {
-	if taskType == adminplusdomain.ExtensionTaskTypeExportBills {
+	if taskType == adminplusdomain.ExtensionTaskTypeFetchUsageCosts {
 		return now.Format(dailyBucketLayout)
 	}
 	window := time.Duration(windowMinutes) * time.Minute
@@ -405,7 +405,7 @@ func taskPriority(taskType adminplusdomain.ExtensionTaskType) int {
 		return 70
 	case adminplusdomain.ExtensionTaskTypeFetchHealth:
 		return 60
-	case adminplusdomain.ExtensionTaskTypeExportBills:
+	case adminplusdomain.ExtensionTaskTypeFetchUsageCosts:
 		return 40
 	default:
 		return 10

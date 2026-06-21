@@ -225,61 +225,121 @@ type SessionRateAdapter interface {
 	ReadRates(ctx context.Context, in SessionProbeInput) (*ReadRatesResult, error)
 }
 
-type ProviderBillLine struct {
-	ExternalBillID    string
-	ExternalRequestID string
-	APIKeyName        string
-	Model             string
-	Endpoint          string
-	RequestType       string
-	BillingMode       string
-	ReasoningEffort   string
+type ProviderUsageCostLine struct {
+	ExternalUsageCostID string
+	ExternalRequestID   string
+	APIKeyName          string
+	Model               string
+	Endpoint            string
+	RequestType         string
+	BillingMode         string
+	ReasoningEffort     string
+	Currency            string
+	CostCents           int64
+	InputTokens         int64
+	OutputTokens        int64
+	CacheReadTokens     int64
+	TotalTokens         int64
+	FirstTokenMS        int64
+	DurationMS          int64
+	UserAgent           string
+	StartedAt           time.Time
+	EndedAt             *time.Time
+	RawPayload          map[string]any
+}
+
+type ProviderFundingTransaction struct {
+	ExternalID        string
+	OutTradeNo        string
+	PaymentTradeNo    string
+	PaymentType       string
+	OrderType         string
+	Status            string
 	Currency          string
-	CostCents         int64
-	InputTokens       int64
-	OutputTokens      int64
-	CacheReadTokens   int64
-	TotalTokens       int64
-	FirstTokenMS      int64
-	DurationMS        int64
-	UserAgent         string
-	StartedAt         time.Time
-	EndedAt           *time.Time
+	AmountCents       int64
+	CashAmountCents   int64
+	RefundAmountCents int64
+	FeeRate           *float64
+	CreatedAtExternal *time.Time
+	PaidAt            *time.Time
+	CompletedAt       *time.Time
 	RawPayload        map[string]any
 }
 
-type ReadBillingInput struct {
+type ProviderEntitlementTransaction struct {
+	ExternalID        string
+	CodeFingerprint   string
+	CodeLast4         string
+	SourceFamily      string
+	Type              string
+	Status            string
+	Currency          string
+	ValueCents        int64
+	RawValue          float64
+	GroupID           int64
+	ValidityDays      int
+	UsedAt            *time.Time
+	CreatedAtExternal *time.Time
+	RawPayload        map[string]any
+}
+
+type ReadUsageCostsInput struct {
 	SupplierID int64
 	StartedAt  time.Time
 	EndedAt    time.Time
 }
 
-type ReadBillingResult struct {
+type ReadUsageCostsResult struct {
 	SupplierID int64
 	SystemType string
 	Origin     string
 	APIBaseURL string
-	Lines      []ProviderBillLine
+	Lines      []ProviderUsageCostLine
 	CapturedAt time.Time
 }
 
-type SessionBillingAdapter interface {
-	ReadBilling(ctx context.Context, in SessionProbeInput, request ReadBillingInput) (*ReadBillingResult, error)
+type SessionUsageCostAdapter interface {
+	ReadUsageCosts(ctx context.Context, in SessionProbeInput, request ReadUsageCostsInput) (*ReadUsageCostsResult, error)
 }
 
-type BillExportRequest struct {
+type ReadFundingTransactionsInput struct {
 	SupplierID int64
-	StartedAt  time.Time
-	EndedAt    time.Time
-	Format     string
+	StartedAt  *time.Time
+	EndedAt    *time.Time
 }
 
-type BillExportResult struct {
+type ReadFundingTransactionsResult struct {
+	SupplierID   int64
+	ProviderType string
+	SystemType   string
+	Origin       string
+	APIBaseURL   string
+	Items        []ProviderFundingTransaction
+	CapturedAt   time.Time
+}
+
+type ReadEntitlementTransactionsInput struct {
 	SupplierID int64
-	FileName   string
-	MimeType   string
-	Content    []byte
-	ExportedAt time.Time
+	StartedAt  *time.Time
+	EndedAt    *time.Time
+}
+
+type ReadEntitlementTransactionsResult struct {
+	SupplierID   int64
+	ProviderType string
+	SystemType   string
+	Origin       string
+	APIBaseURL   string
+	Items        []ProviderEntitlementTransaction
+	CapturedAt   time.Time
+}
+
+type SessionFundingAdapter interface {
+	ReadFundingTransactions(ctx context.Context, in SessionProbeInput, request ReadFundingTransactionsInput) (*ReadFundingTransactionsResult, error)
+}
+
+type SessionEntitlementAdapter interface {
+	ReadEntitlementTransactions(ctx context.Context, in SessionProbeInput, request ReadEntitlementTransactionsInput) (*ReadEntitlementTransactionsResult, error)
 }
 
 type ProviderAdapter interface {
@@ -288,5 +348,4 @@ type ProviderAdapter interface {
 	FetchBalance(ctx context.Context, fetch FetchContext) (*ProviderBalanceSnapshotInput, error)
 	FetchAnnouncements(ctx context.Context, fetch FetchContext) ([]ProviderAnnouncement, error)
 	FetchHealthSample(ctx context.Context, fetch FetchContext) (*ProviderHealthSampleInput, error)
-	ExportBills(ctx context.Context, request BillExportRequest) (*BillExportResult, error)
 }

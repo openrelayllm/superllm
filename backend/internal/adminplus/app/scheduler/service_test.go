@@ -7,12 +7,12 @@ import (
 
 	announcementsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/announcements"
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
-	billingapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/billing"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	suppliergroupsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
+	usagecostsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/stretchr/testify/require"
 )
@@ -76,8 +76,8 @@ func TestServiceRunDirectSyncTasksDoNotCreateExtensionTasks(t *testing.T) {
 	balanceSyncer := &stubBalanceSyncer{total: 1}
 	announcementSyncer := &stubAnnouncementSyncer{total: 5}
 	healthSyncer := &stubHealthSyncer{total: 1}
-	billingSyncer := &stubBillingSyncer{total: 4}
-	service := NewServiceWithDependencies(supplierService, extensionService, groupSyncer, rateSyncer, balanceSyncer, announcementSyncer, healthSyncer, billingSyncer)
+	usageCostSyncer := &stubUsageCostSyncer{total: 4}
+	service := NewServiceWithDependencies(supplierService, extensionService, groupSyncer, rateSyncer, balanceSyncer, announcementSyncer, healthSyncer, usageCostSyncer)
 	service.now = func() time.Time {
 		return time.Date(2026, 6, 20, 10, 4, 0, 0, time.UTC)
 	}
@@ -101,7 +101,7 @@ func TestServiceRunDirectSyncTasksDoNotCreateExtensionTasks(t *testing.T) {
 			adminplusdomain.ExtensionTaskTypeFetchBalance,
 			adminplusdomain.ExtensionTaskTypeFetchAnnouncements,
 			adminplusdomain.ExtensionTaskTypeFetchHealth,
-			adminplusdomain.ExtensionTaskTypeExportBills,
+			adminplusdomain.ExtensionTaskTypeFetchUsageCosts,
 		},
 	})
 	require.NoError(t, err)
@@ -121,9 +121,9 @@ func TestServiceRunDirectSyncTasksDoNotCreateExtensionTasks(t *testing.T) {
 	require.Equal(t, 1, balanceSyncer.calls)
 	require.Equal(t, 1, announcementSyncer.calls)
 	require.Equal(t, 1, healthSyncer.calls)
-	require.Equal(t, 1, billingSyncer.calls)
-	require.Equal(t, time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC), billingSyncer.startedAt)
-	require.Equal(t, time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC), billingSyncer.endedAt)
+	require.Equal(t, 1, usageCostSyncer.calls)
+	require.Equal(t, time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC), usageCostSyncer.startedAt)
+	require.Equal(t, time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC), usageCostSyncer.endedAt)
 
 	tasks, err := extensionService.ListTasks(context.Background(), extensionapp.TaskFilter{SupplierID: supplier.ID, Limit: 20})
 	require.NoError(t, err)
@@ -249,7 +249,7 @@ func TestServiceRunKeepsNoBalanceSupplierOutOfSwitchOnlyTasks(t *testing.T) {
 			adminplusdomain.ExtensionTaskTypeFetchBalance,
 			adminplusdomain.ExtensionTaskTypeFetchAnnouncements,
 			adminplusdomain.ExtensionTaskTypeFetchHealth,
-			adminplusdomain.ExtensionTaskTypeExportBills,
+			adminplusdomain.ExtensionTaskTypeFetchUsageCosts,
 		},
 	})
 	require.NoError(t, err)
@@ -266,7 +266,7 @@ func TestServiceRunKeepsNoBalanceSupplierOutOfSwitchOnlyTasks(t *testing.T) {
 	require.Empty(t, reasons[adminplusdomain.ExtensionTaskTypeFetchBalance])
 	require.Empty(t, reasons[adminplusdomain.ExtensionTaskTypeFetchAnnouncements])
 	require.Equal(t, "not_switch_eligible", reasons[adminplusdomain.ExtensionTaskTypeFetchHealth])
-	require.Equal(t, "not_switch_eligible", reasons[adminplusdomain.ExtensionTaskTypeExportBills])
+	require.Equal(t, "not_switch_eligible", reasons[adminplusdomain.ExtensionTaskTypeFetchUsageCosts])
 	for _, item := range run.Items {
 		if item.TaskType == adminplusdomain.ExtensionTaskTypeFetchGroups || item.TaskType == adminplusdomain.ExtensionTaskTypeFetchRates || item.TaskType == adminplusdomain.ExtensionTaskTypeFetchBalance || item.TaskType == adminplusdomain.ExtensionTaskTypeFetchAnnouncements {
 			require.Equal(t, actionDirectSync, item.Action)
@@ -364,18 +364,18 @@ func (s *stubHealthSyncer) SyncFromSession(_ context.Context, in healthapp.SyncF
 	return &healthapp.SyncFromSessionResult{SupplierID: in.SupplierID, Total: s.total}, nil
 }
 
-type stubBillingSyncer struct {
+type stubUsageCostSyncer struct {
 	calls     int
 	total     int
 	startedAt time.Time
 	endedAt   time.Time
 }
 
-func (s *stubBillingSyncer) SyncFromSession(_ context.Context, in billingapp.SyncFromSessionInput) (*billingapp.SyncFromSessionResult, error) {
+func (s *stubUsageCostSyncer) SyncFromSession(_ context.Context, in usagecostsapp.SyncFromSessionInput) (*usagecostsapp.SyncFromSessionResult, error) {
 	s.calls++
 	s.startedAt = in.StartedAt
 	s.endedAt = in.EndedAt
-	return &billingapp.SyncFromSessionResult{SupplierID: in.SupplierID, Total: s.total}, nil
+	return &usagecostsapp.SyncFromSessionResult{SupplierID: in.SupplierID, Total: s.total}, nil
 }
 
 func createSchedulerSupplier(t *testing.T, service *suppliersapp.Service, in suppliersapp.CreateSupplierInput) *adminplusdomain.Supplier {

@@ -9,7 +9,7 @@ ALTER TABLE admin_plus_extension_tasks
         'fetch_balance',
         'fetch_announcements',
         'fetch_promotions',
-        'export_bills',
+        'fetch_usage_costs',
         'fetch_health',
         'capture_supplier_session'
     ));

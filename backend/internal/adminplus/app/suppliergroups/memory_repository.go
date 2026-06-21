@@ -62,7 +62,6 @@ func (r *MemoryRepository) UpsertMany(_ context.Context, supplierID int64, group
 			existing.UpdatedAt = seenAt
 		}
 	}
-	sortSupplierGroups(out)
 	return out, nil
 }
 
@@ -96,13 +95,10 @@ func (r *MemoryRepository) List(_ context.Context, filter ListFilter) ([]*adminp
 
 func sortSupplierGroups(items []*adminplusdomain.SupplierGroup) {
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].Status == items[j].Status {
-			if items[i].EffectiveRateMultiplier == items[j].EffectiveRateMultiplier {
-				return items[i].ID < items[j].ID
-			}
-			return items[i].EffectiveRateMultiplier < items[j].EffectiveRateMultiplier
+		if items[i].LastSeenAt.Equal(items[j].LastSeenAt) {
+			return items[i].ID > items[j].ID
 		}
-		return items[i].Status < items[j].Status
+		return items[i].LastSeenAt.After(items[j].LastSeenAt)
 	})
 }
 

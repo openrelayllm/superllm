@@ -161,4 +161,40 @@ func TestIsMigrationChecksumCompatible(t *testing.T) {
 		)
 		require.False(t, ok)
 	})
+
+	t.Run("161历史supplier bill checksum可兼容usage cost版本", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"161_admin_plus_supplier_bill_line_details.sql",
+			"bf0da7bc24aa878fdc5e8390b95cf5b902a2c2a24277bcabd8c51b087f1112fe",
+			"ee173db2c0ca7e64aa3826250f9a8bf52599b84846fafbb7695d67b0d904f701",
+		)
+		require.True(t, ok)
+	})
+
+	t.Run("167末尾换行checksum可兼容", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"167_admin_plus_extension_task_fetch_promotions.sql",
+			"77e8273ddc7096504c0c5159dd652dd8fef7cd18e38dedfc97cc44819050cb8f",
+			"5953b3d13b305d13e483cfe0e510365d7c51736236631d7b0f43e551cd570271",
+		)
+		require.True(t, ok)
+	})
+
+	t.Run("167历史数据库checksum可兼容fetch usage costs版本", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"167_admin_plus_extension_task_fetch_promotions.sql",
+			"77e8273ddc7096504c0c5159dd652dd8fef7cd18e38dedfc97cc44819050cb8f",
+			"9de6c863903d7e1fc2a373b9139d18e85f3ead346268dc6c9518700c3e3444d4",
+		)
+		require.True(t, ok)
+	})
+
+	t.Run("159历史数据库checksum可兼容无末尾换行版本", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"159_admin_plus_extension_session_capture.sql",
+			"add4d590fba88b92602441e4f0afc5c14b912550dfe55606c1b3e85fdb25834d",
+			"77e8273ddc7096504c0c5159dd652dd8fef7cd18e38dedfc97cc44819050cb8f",
+		)
+		require.True(t, ok)
+	})
 }

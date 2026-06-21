@@ -148,13 +148,29 @@
           </template>
 
           <template #cell-name="{ row }">
-            <div class="min-w-[220px]">
-              <div class="flex items-center gap-2">
-                <span class="font-medium text-gray-900 dark:text-white">{{ row.name }}</span>
+            <div class="w-[210px] max-w-[210px]">
+              <div class="flex min-w-0 items-center gap-2">
+                <a
+                  v-if="supplierLinkURL(row)"
+                  :href="supplierLinkURL(row)"
+                  target="_blank"
+                  rel="noreferrer"
+                  class="flex max-w-full min-w-0 items-center font-medium text-primary-600 hover:underline dark:text-primary-400"
+                  :title="supplierNameTitle(row)"
+                >
+                  <span class="truncate">{{ splitMiddleEllipsis(row.name, 24).head }}</span>
+                  <span v-if="splitMiddleEllipsis(row.name, 24).ellipsized" class="shrink-0">...</span>
+                  <span v-if="splitMiddleEllipsis(row.name, 24).ellipsized" class="shrink-0">{{ splitMiddleEllipsis(row.name, 24).tail }}</span>
+                </a>
+                <span v-else class="flex max-w-full min-w-0 items-center font-medium text-gray-900 dark:text-white" :title="row.name">
+                  <span class="truncate">{{ splitMiddleEllipsis(row.name, 24).head }}</span>
+                  <span v-if="splitMiddleEllipsis(row.name, 24).ellipsized" class="shrink-0">...</span>
+                  <span v-if="splitMiddleEllipsis(row.name, 24).ellipsized" class="shrink-0">{{ splitMiddleEllipsis(row.name, 24).tail }}</span>
+                </span>
               </div>
-              <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-dark-400">
+              <div class="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-dark-400">
                 <span class="font-mono">#{{ row.id }}</span>
-                <span v-if="row.contact">{{ row.contact }}</span>
+                <span v-if="row.contact" class="max-w-[100px] truncate" :title="row.contact">{{ middleEllipsis(row.contact, 18) }}</span>
                 <span v-if="row.notes" class="max-w-[260px] truncate" :title="row.notes">{{ row.notes }}</span>
               </div>
             </div>
@@ -193,14 +209,48 @@
             </div>
           </template>
 
+          <template #cell-cost="{ row }">
+            <div class="min-w-[190px] text-right">
+              <template v-if="supplierCostSnapshot(row.id)">
+                <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  充值 {{ formatMoney(supplierCostSnapshot(row.id)?.completed_funding_amount_cents || 0, supplierCostSnapshot(row.id)?.currency || row.balance_currency) }}
+                </div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                  兑换 {{ formatMoney(supplierCostSnapshot(row.id)?.entitlement_amount_cents || 0, supplierCostSnapshot(row.id)?.currency || row.balance_currency) }}
+                  · 消耗 {{ formatMoney(supplierCostSnapshot(row.id)?.usage_cost_cents || 0, supplierCostSnapshot(row.id)?.currency || row.balance_currency) }}
+                </div>
+                <div class="mt-1 text-xs" :class="costDeltaClass(row.id)">
+                  差异 {{ costDeltaLabel(row.id) }}
+                </div>
+              </template>
+              <template v-else>
+                <span class="badge badge-gray">未同步成本</span>
+              </template>
+            </div>
+          </template>
+
           <template #cell-credential="{ row }">
-            <div class="flex min-w-[180px] flex-wrap gap-1">
+            <div class="flex min-w-[210px] flex-wrap gap-1">
               <span v-if="row.credential.browser_login_enabled" class="badge badge-warning">Chrome</span>
               <span v-if="row.credential.browser_login_username_configured" class="badge badge-gray">
                 {{ row.credential.masked_browser_login_username || '账号' }}
               </span>
               <span v-if="row.credential.browser_login_password_configured" class="badge badge-success">密码</span>
-              <span v-if="row.credential.browser_login_token_configured" class="badge badge-primary">Token</span>
+              <span
+                v-if="needsDirectLoginCredential(row)"
+                class="badge badge-danger"
+                title="未配置登录账号密码或临时 Token，请先编辑供应商补齐凭据"
+              >
+                凭据未配置
+              </span>
+              <span
+                v-if="shouldShowTokenBadge(row)"
+                class="badge"
+                :class="credentialTokenBadgeClass(row)"
+                :title="credentialTokenBadgeTitle(row)"
+              >
+                {{ credentialTokenBadgeText(row) }}
+              </span>
               <span v-if="row.credential.postgres_configured" class="badge badge-purple">PG</span>
               <span v-if="row.credential.redis_configured" class="badge badge-primary">Redis</span>
               <span v-if="!hasCredential(row)" class="badge badge-gray">未配置</span>
@@ -216,22 +266,12 @@
             </div>
           </template>
 
-          <template #cell-address="{ row }">
-            <div class="max-w-[300px] text-xs text-gray-500 dark:text-dark-400">
-              <a v-if="row.dashboard_url" :href="row.dashboard_url" target="_blank" rel="noreferrer" class="block truncate text-primary-600 hover:underline dark:text-primary-400">
-                {{ row.dashboard_url }}
-              </a>
-              <span v-else class="block">后台地址未配置</span>
-              <div class="truncate">{{ row.api_base_url || 'API Base URL 未配置' }}</div>
-            </div>
-          </template>
-
           <template #cell-created_at="{ row }">
             <div class="min-w-[150px] text-xs text-gray-500 dark:text-dark-400">{{ formatDateTime(row.created_at) }}</div>
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex min-w-[330px] justify-end gap-2">
+            <div class="flex min-w-[420px] justify-end gap-2">
               <button type="button" class="btn btn-secondary btn-sm" title="编辑" @click="openEditDialog(row)">
                 <Icon name="edit" size="sm" />
                 编辑
@@ -239,6 +279,16 @@
               <button type="button" class="btn btn-secondary btn-sm" title="状态" @click="openStatusDialog(row)">
                 <Icon name="checkCircle" size="sm" />
                 状态
+              </button>
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm"
+                :disabled="Boolean(rowLoginSupplierID)"
+                :title="oneClickLoginTitle(row)"
+                @click="loginSupplierFromRow(row)"
+              >
+                <Icon name="login" size="sm" :class="{ 'animate-spin': rowLoginSupplierID === row.id }" />
+                一键登录
               </button>
               <button type="button" class="btn btn-secondary btn-sm" title="供应商会话" @click="openSessionDialog(row)">
                 <Icon name="shield" size="sm" />
@@ -561,7 +611,7 @@
       </template>
     </BaseDialog>
 
-    <BaseDialog :show="groupsDialogOpen" :title="groupsSupplier ? `供应商分组 - ${groupsSupplier.name}` : '供应商分组'" width="wide" @close="groupsDialogOpen = false">
+    <BaseDialog :show="groupsDialogOpen" :title="groupsSupplier ? `供应商分组 - ${groupsSupplier.name}` : '供应商分组'" width="wide" @close="closeGroupsDialog">
       <div class="space-y-4">
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div class="grid flex-1 gap-3 sm:grid-cols-[minmax(180px,1fr)_160px]">
@@ -587,10 +637,47 @@
               <Icon name="refresh" size="sm" :class="{ 'animate-spin': groupsLoading }" />
               刷新
             </button>
-            <button type="button" class="btn btn-primary" :disabled="groupsSyncing || !currentGroupSession?.has_encrypted_bundle" @click="syncCurrentGroups">
+            <button type="button" class="btn btn-secondary" :disabled="groupsSyncing || !canSubmitGroupSync" @click="syncCurrentGroups">
               <Icon name="sync" size="sm" :class="{ 'animate-spin': groupsSyncing }" />
               同步分组
             </button>
+            <button type="button" class="btn btn-primary" :disabled="keysEnsuring || !canSubmitEnsureKeys" @click="ensureCurrentKeys">
+              <Icon name="key" size="sm" :class="{ 'animate-spin': keysEnsuring }" />
+              补齐 Key/账号
+            </button>
+          </div>
+        </div>
+
+        <div class="rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-800">
+          <div class="grid gap-3 sm:grid-cols-4">
+            <div v-for="step in groupWorkflowSteps" :key="step.key" class="flex items-start gap-3">
+              <span class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold" :class="workflowStepDotClass(step.status)">
+                <Icon v-if="step.status === 'succeeded'" name="checkCircle" size="xs" />
+                <Icon v-else-if="step.status === 'running' || step.status === 'retryable_failed'" name="refresh" size="xs" class="animate-spin" />
+                <span v-else>{{ step.label.slice(0, 1) }}</span>
+              </span>
+              <span class="min-w-0">
+                <span class="block text-sm font-medium text-gray-900 dark:text-gray-100">{{ step.label }}</span>
+                <span class="block truncate text-xs text-gray-500 dark:text-dark-400" :title="step.caption">{{ step.caption }}</span>
+              </span>
+            </div>
+          </div>
+
+          <div v-if="activeProvisionJob" class="mt-4 rounded-md border border-gray-100 bg-gray-50 p-3 text-sm dark:border-dark-700 dark:bg-dark-900/40">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="badge" :class="provisionJobStatusClass(activeProvisionJob.status)">{{ provisionJobStatusLabel(activeProvisionJob.status) }}</span>
+                <span class="font-medium text-gray-900 dark:text-gray-100">{{ provisionJobTypeLabel(activeProvisionJob.job_type) }}</span>
+                <span class="font-mono text-xs text-gray-500 dark:text-dark-400">#{{ activeProvisionJob.id }}</span>
+              </div>
+              <span class="text-xs text-gray-500 dark:text-dark-400">{{ formatDateTime(activeProvisionJob.updated_at) }}</span>
+            </div>
+            <div v-if="activeProvisionJob.error_message" class="mt-2 text-xs text-red-600 dark:text-red-300">
+              {{ activeProvisionJob.error_message }}
+            </div>
+            <div v-else class="mt-2 text-xs text-gray-500 dark:text-dark-400">
+              {{ provisionJobCaption(activeProvisionJob) }}
+            </div>
           </div>
         </div>
 
@@ -598,13 +685,17 @@
           {{ groupsError }}
         </div>
 
+        <div v-if="provisionJobError" class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+          {{ provisionJobError }}
+        </div>
+
         <DataTable
           :columns="groupColumns"
           :data="supplierGroups"
           :loading="groupsLoading"
           row-key="id"
-          default-sort-key="effective_rate_multiplier"
-          default-sort-order="asc"
+          default-sort-key="last_seen_at"
+          default-sort-order="desc"
           :estimate-row-height="72"
         >
           <template #cell-name="{ row }">
@@ -729,7 +820,7 @@
       </div>
 
       <template #footer>
-        <button type="button" class="btn btn-secondary" @click="groupsDialogOpen = false">关闭</button>
+        <button type="button" class="btn btn-secondary" @click="closeGroupsDialog">关闭</button>
       </template>
     </BaseDialog>
 
@@ -825,13 +916,21 @@
         <div v-if="provisionError" class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
           {{ provisionError }}
         </div>
+
+        <div v-if="activeProvisionJob?.job_type === 'provision_group_key'" class="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm dark:border-dark-700 dark:bg-dark-900/40">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="badge" :class="provisionJobStatusClass(activeProvisionJob.status)">{{ provisionJobStatusLabel(activeProvisionJob.status) }}</span>
+            <span class="font-medium text-gray-900 dark:text-gray-100">开通任务 #{{ activeProvisionJob.id }}</span>
+          </div>
+          <div class="mt-2 text-xs text-gray-500 dark:text-dark-400">{{ provisionJobCaption(activeProvisionJob) }}</div>
+        </div>
       </form>
 
       <template #footer>
         <button type="button" class="btn btn-secondary" @click="closeProvisionDialog">取消</button>
-        <button type="submit" form="supplier-key-provision-form" class="btn btn-primary" :disabled="provisionSubmitting">
+        <button type="submit" form="supplier-key-provision-form" class="btn btn-primary" :disabled="provisionSubmitting || activeProvisionJobRunning">
           <Icon name="key" size="sm" :class="{ 'animate-spin': provisionSubmitting }" />
-          {{ provisionSubmitting ? '开通中...' : '创建 Key 并绑定' }}
+          {{ provisionSubmitting ? '提交中...' : '提交开通任务' }}
         </button>
       </template>
     </BaseDialog>
@@ -931,7 +1030,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -947,12 +1046,16 @@ import type { GroupPlatform } from '@/types'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { useAppStore } from '@/stores/app'
+import { extractApiErrorCode } from '@/utils/apiError'
 import {
   createSupplier,
   deleteSupplier,
+  ensureSupplierKeys,
+  getSupplierProvisionJob,
   getSupplierCurrentBalance,
   getSupplierSession,
   listLocalSub2APIAccounts,
+  listSupplierCostSnapshots,
   listSupplierKeys,
   listSupplierGroups,
   listSuppliers,
@@ -966,12 +1069,16 @@ import {
   type LocalSub2APIAccount,
   type Supplier,
   type SupplierBrowserSession,
+  type SupplierCostSnapshot,
   type SupplierCurrentBalance,
   type SupplierGroup,
   type SupplierGroupStatus,
   type SupplierHealthStatus,
   type SupplierKey,
   type SupplierKeyStatus,
+  type SupplierProvisionJob,
+  type SupplierProvisionJobType,
+  type SupplierProvisionStatus,
   type SupplierSessionProbeResult,
   type SupplierKind,
   type SupplierRuntimeStatus,
@@ -1006,6 +1113,8 @@ const deletingSupplier = ref<Supplier | null>(null)
 const suppliers = ref<Supplier[]>([])
 const supplierGroups = ref<SupplierGroup[]>([])
 const supplierKeys = ref<SupplierKey[]>([])
+const supplierCostSnapshots = ref<Record<number, SupplierCostSnapshot | undefined>>({})
+const activeProvisionJob = ref<SupplierProvisionJob | null>(null)
 const localAccounts = ref<LocalSub2APIAccount[]>([])
 const sessionStore = reactive<Record<number, SupplierBrowserSession | undefined>>({})
 const currentBalanceStore = reactive<Record<number, SupplierCurrentBalance | undefined>>({})
@@ -1015,12 +1124,16 @@ const probingSession = ref(false)
 const currentBalanceLoading = ref(false)
 const groupsLoading = ref(false)
 const groupsSyncing = ref(false)
+const keysEnsuring = ref(false)
 const repairAccountsLoading = ref(false)
 const sessionLoadError = ref('')
 const groupsError = ref('')
 const provisionError = ref('')
+const provisionJobError = ref('')
 const repairError = ref('')
 const lastProbe = ref<SupplierSessionProbeResult | null>(null)
+const rowLoginSupplierID = ref<number | null>(null)
+let provisionJobTimer: ReturnType<typeof window.setTimeout> | undefined
 
 const filters = reactive({
   q: typeof route.query.q === 'string' ? route.query.q : '',
@@ -1105,11 +1218,11 @@ const columns: Column[] = [
   { key: 'select', label: '', class: 'w-10' },
   { key: 'name', label: '供应商', sortable: true },
   { key: 'balance', label: '余额', class: 'text-right' },
+  { key: 'cost', label: '成本概览', class: 'text-right' },
   { key: 'status', label: '状态' },
   { key: 'kind_type', label: '归类 / 类型' },
   { key: 'credential', label: '采集凭据' },
   { key: 'session', label: '供应商会话' },
-  { key: 'address', label: '地址' },
   { key: 'created_at', label: '创建时间', sortable: true },
   { key: 'actions', label: '操作', class: 'text-right' }
 ]
@@ -1189,6 +1302,52 @@ const currentGroupSession = computed(() => {
   return supplierID ? sessionStore[supplierID] : undefined
 })
 
+const activeProvisionJobRunning = computed(() => {
+  const status = activeProvisionJob.value?.status
+  return status === 'queued' || status === 'running' || status === 'retryable_failed'
+})
+
+const groupWorkflowSteps = computed(() => {
+  const hasSession = Boolean(currentGroupSession.value?.has_encrypted_bundle)
+  const hasGroups = supplierGroups.value.length > 0
+  const hasKeys = supplierKeys.value.length > 0
+  const job = activeProvisionJob.value
+  return [
+    {
+      key: 'session',
+      label: '会话',
+      status: hasSession ? 'succeeded' : 'manual_required',
+      caption: hasSession ? sessionSourceLabel(currentGroupSession.value?.session_source) : '先直登或插件上报'
+    },
+    {
+      key: 'groups',
+      label: '分组',
+      status: job?.job_type === 'sync_groups' ? job.status : (hasGroups ? 'succeeded' : 'queued'),
+      caption: hasGroups ? `${supplierGroups.value.length} 个分组` : '待同步'
+    },
+    {
+      key: 'keys',
+      label: 'Key',
+      status: job?.job_type === 'provision_all_group_keys' || job?.job_type === 'provision_group_key' ? job.status : (hasKeys ? 'succeeded' : 'queued'),
+      caption: hasKeys ? `${supplierKeys.value.length} 个 Key` : '按分组补齐'
+    },
+    {
+      key: 'verify',
+      label: '验证',
+      status: hasKeys ? 'succeeded' : 'queued',
+      caption: hasKeys ? '可查看绑定' : '待任务完成'
+    }
+  ] as Array<{ key: string; label: string; status: SupplierProvisionStatus; caption: string }>
+})
+
+const canSubmitGroupSync = computed(() => {
+  return Boolean(groupsSupplier.value && currentGroupSession.value?.has_encrypted_bundle && !activeProvisionJobRunning.value && !groupsLoading.value)
+})
+
+const canSubmitEnsureKeys = computed(() => {
+  return Boolean(groupsSupplier.value && supplierGroups.value.length > 0 && !activeProvisionJobRunning.value && !groupsLoading.value)
+})
+
 const currentSessionSummary = computed(() => currentSession.value?.session_summary || {})
 
 const supplierKeysByGroupID = computed(() => {
@@ -1214,7 +1373,7 @@ const capabilityBadges = computed(() => {
     { key: 'can_read_balance', label: '余额', enabled: Boolean(capabilities.can_read_balance) },
     { key: 'can_read_groups', label: '分组', enabled: Boolean(capabilities.can_read_groups) },
     { key: 'can_create_key', label: '创建 Key', enabled: Boolean(capabilities.can_create_key) },
-    { key: 'can_read_billing', label: '账单', enabled: Boolean(capabilities.can_read_billing) }
+    { key: 'can_read_usage_costs', label: '用量消耗', enabled: Boolean(capabilities.can_read_usage_costs) }
   ]
 })
 
@@ -1253,9 +1412,19 @@ function formatDateTime(value?: string | null): string {
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString()
 }
 
+function supplierLinkURL(supplier: Supplier): string {
+  return supplier.dashboard_url?.trim() || supplier.api_base_url?.trim() || ''
+}
+
+function supplierNameTitle(supplier: Supplier): string {
+  const url = supplierLinkURL(supplier)
+  return url ? `${supplier.name} · ${url}` : supplier.name
+}
+
 function formatMultiplier(value?: number | null): string {
   if (typeof value !== 'number') return '-'
-  return `${Number(value).toFixed(4)}x`
+  if (!Number.isFinite(value)) return '-'
+  return `${value.toFixed(4).replace(/\.?0+$/, '')}x`
 }
 
 function formatUSDLimit(value?: number | null): string {
@@ -1345,6 +1514,22 @@ function supplierBalanceLabel(supplier: Supplier): string {
   return '仅监控余额'
 }
 
+function supplierCostSnapshot(supplierID: number): SupplierCostSnapshot | undefined {
+  return supplierCostSnapshots.value[supplierID]
+}
+
+function costDeltaLabel(supplierID: number): string {
+  const snapshot = supplierCostSnapshot(supplierID)
+  if (!snapshot || snapshot.balance_delta_cents === null || snapshot.balance_delta_cents === undefined) return '-'
+  return formatMoney(snapshot.balance_delta_cents, snapshot.currency)
+}
+
+function costDeltaClass(supplierID: number): string {
+  const delta = supplierCostSnapshot(supplierID)?.balance_delta_cents
+  if (delta === null || delta === undefined || delta === 0) return 'text-emerald-600 dark:text-emerald-400'
+  return 'text-rose-600 dark:text-rose-400'
+}
+
 function supplierSwitchStateLabel(supplier: Supplier): string {
   if (isSwitchable(supplier)) return supplier.runtime_status === 'active' ? '当前承载流量' : '可进入候选'
   if (supplier.runtime_status === 'monitor_only') return '仅监控，不切换'
@@ -1408,6 +1593,73 @@ function supplierKeyStatusClass(status?: SupplierKeyStatus): string {
   return 'badge-gray'
 }
 
+function provisionJobTypeLabel(type?: SupplierProvisionJobType): string {
+  if (type === 'sync_groups') return '同步分组'
+  if (type === 'provision_group_key') return '开通单组 Key/账号'
+  if (type === 'provision_all_group_keys') return '补齐全部 Key/账号'
+  if (type === 'repair_binding') return '修复绑定'
+  return '供应商任务'
+}
+
+function provisionJobStatusLabel(status?: SupplierProvisionStatus): string {
+  if (status === 'queued') return '排队中'
+  if (status === 'running') return '执行中'
+  if (status === 'succeeded') return '已完成'
+  if (status === 'partial_succeeded') return '部分完成'
+  if (status === 'retryable_failed') return '等待重试'
+  if (status === 'manual_required') return '需人工处理'
+  if (status === 'dead') return '失败'
+  if (status === 'cancelled') return '已取消'
+  return '未知'
+}
+
+function provisionJobStatusClass(status?: SupplierProvisionStatus): string {
+  if (status === 'succeeded') return 'badge-success'
+  if (status === 'running' || status === 'queued') return 'badge-primary'
+  if (status === 'retryable_failed' || status === 'manual_required' || status === 'partial_succeeded') return 'badge-warning'
+  if (status === 'dead' || status === 'cancelled') return 'badge-danger'
+  return 'badge-gray'
+}
+
+function workflowStepDotClass(status: SupplierProvisionStatus): string {
+  if (status === 'succeeded') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200'
+  if (status === 'running' || status === 'retryable_failed') return 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-200'
+  if (status === 'manual_required' || status === 'dead') return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200'
+  return 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-dark-300'
+}
+
+function provisionJobCaption(job: SupplierProvisionJob): string {
+  if (job.error_message) return job.error_message
+  if (job.status === 'succeeded') return '任务完成，列表会自动刷新。'
+  if (job.status === 'retryable_failed') return `第 ${job.attempts}/${job.max_attempts} 次失败，等待重试。`
+  if (job.status === 'running') return '服务端正在执行，请稍候。'
+  if (job.status === 'queued') return '任务已进入队列。'
+  return `步骤 ${job.succeeded_steps}/${Math.max(job.total_steps, 1)}`
+}
+
+function middleEllipsis(value?: string | null, maxLength = 34): string {
+  const text = String(value || '').trim()
+  if (text.length <= maxLength) return text
+  const keep = Math.max(4, Math.floor((maxLength - 1) / 2))
+  const head = text.slice(0, keep)
+  const tail = text.slice(text.length - (maxLength - keep - 1))
+  return `${head}…${tail}`
+}
+
+function splitMiddleEllipsis(value?: string | null, maxLength = 24): { head: string; tail: string; ellipsized: boolean } {
+  const text = String(value || '').trim()
+  if (text.length <= maxLength) {
+    return { head: text, tail: '', ellipsized: false }
+  }
+  const headLength = Math.max(8, Math.floor((maxLength - 3) * 0.58))
+  const tailLength = Math.max(6, maxLength - 3 - headLength)
+  return {
+    head: text.slice(0, headLength),
+    tail: text.slice(text.length - tailLength),
+    ellipsized: true
+  }
+}
+
 function groupKey(group: SupplierGroup): SupplierKey | undefined {
   return supplierKeysByGroupID.value.get(group.id)
 }
@@ -1433,6 +1685,80 @@ function sessionSummaryString(key: string): string {
   return typeof value === 'string' ? value : ''
 }
 
+function sessionHasAccessToken(session?: SupplierBrowserSession): boolean {
+  return Boolean(session?.session_summary?.has_access_token)
+}
+
+function hasConfiguredDirectLoginCredential(supplier: Supplier): boolean {
+  return supplier.credential.browser_login_token_configured ||
+    (supplier.credential.browser_login_username_configured && supplier.credential.browser_login_password_configured)
+}
+
+function needsDirectLoginCredential(supplier: Supplier): boolean {
+  return supplier.credential.browser_login_enabled && !hasConfiguredDirectLoginCredential(supplier)
+}
+
+function shouldShowTokenBadge(supplier: Supplier): boolean {
+  return supplier.credential.browser_login_token_configured || Boolean(sessionStore[supplier.id]?.session_summary)
+}
+
+function credentialTokenBadgeText(supplier: Supplier): string {
+  const session = sessionStore[supplier.id]
+  if (sessionHasAccessToken(session) && session?.status === 'valid') return 'Token 有效'
+  if (sessionHasAccessToken(session) && session?.status === 'expired') return 'Token 过期'
+  if (session?.session_summary) return 'Token 缺失'
+  if (supplier.credential.browser_login_token_configured) return 'Token 未验证'
+  return 'Token 未配置'
+}
+
+function credentialTokenBadgeClass(supplier: Supplier): string {
+  const session = sessionStore[supplier.id]
+  if (sessionHasAccessToken(session) && session?.status === 'valid') return 'badge-success'
+  if (sessionHasAccessToken(session) && session?.status === 'expired') return 'badge-warning'
+  if (session?.session_summary) return 'badge-danger'
+  if (supplier.credential.browser_login_token_configured) return 'badge-primary'
+  return 'badge-gray'
+}
+
+function credentialTokenBadgeTitle(supplier: Supplier): string {
+  const session = sessionStore[supplier.id]
+  if (sessionHasAccessToken(session) && session?.status === 'valid') return '当前会话摘要包含 Access Token，且会话未过期'
+  if (sessionHasAccessToken(session) && session?.status === 'expired') return '当前会话摘要包含 Access Token，但会话已过期，请重新一键登录或使用 Chrome 插件'
+  if (session?.session_summary) return '当前会话摘要没有 Access Token，请重新一键登录或使用 Chrome 插件'
+  if (supplier.credential.browser_login_token_configured) return '已保存临时 Token，但尚未形成有效供应商会话'
+  return '未配置临时 Token'
+}
+
+function oneClickLoginTitle(supplier: Supplier): string {
+  const preflightError = directLoginPreflightError(supplier)
+  if (preflightError) return preflightError
+  if (supplier.type !== 'sub2api') return '当前后端直登仅支持 Sub2API 供应商'
+  if (rowLoginSupplierID.value === supplier.id) return '正在登录'
+  return '使用已保存凭据后端直登并读取余额'
+}
+
+function directLoginPreflightError(supplier: Supplier): string {
+  if (supplier.type !== 'sub2api') return '当前一键登录仅支持 Sub2API 供应商'
+  if (!supplier.credential.browser_login_enabled) return '未启用登录凭据，请先编辑供应商启用并配置账号密码或临时 Token'
+  if (!hasConfiguredDirectLoginCredential(supplier)) return '未配置登录账号密码或临时 Token，请先编辑供应商补齐凭据'
+  if (!supplier.dashboard_url && !supplier.api_base_url) return '未配置后台地址或 API Base URL，请先编辑供应商补齐地址'
+  return ''
+}
+
+function directLoginErrorMessage(error: unknown): string {
+  const code = extractApiErrorCode(error)
+  if (code && ['LOGIN_CAPTCHA_REQUIRED', 'LOGIN_MFA_REQUIRED', 'BROWSER_FALLBACK_REQUIRED'].includes(code)) {
+    return '供应商登录需要验证码、2FA 或浏览器上下文，请使用 Chrome 插件采集会话'
+  }
+  if (code && ['SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED', 'SUPPLIER_BROWSER_CREDENTIAL_REQUIRED', 'SUPPLIER_BROWSER_LOGIN_DISABLED'].includes(code)) {
+    return '供应商未配置可用登录凭据，请先编辑供应商补齐账号密码或临时 Token'
+  }
+  if (code === 'SUPPLIER_DASHBOARD_URL_REQUIRED') {
+    return '供应商未配置后台地址，请先编辑供应商补齐地址'
+  }
+  return (error as { message?: string }).message || '后端直登失败'
+}
+
 function isSwitchable(supplier: Supplier): boolean {
   return ['candidate', 'active'].includes(supplier.runtime_status) && supplier.health_status === 'normal' && supplier.balance_cents > 0
 }
@@ -1453,16 +1779,20 @@ function hasCredential(supplier: Supplier): boolean {
 async function loadSuppliers() {
   loading.value = true
   try {
-    const result = await listSuppliers({
-      q: filters.q || undefined,
-      kind: filters.kind || undefined,
-      type: filters.type || undefined,
-      runtime_status: filters.runtime_status || undefined,
-      health_status: filters.health_status || undefined,
-      page: pagination.page,
-      page_size: pagination.page_size
-    })
+    const [result, costResult] = await Promise.all([
+      listSuppliers({
+        q: filters.q || undefined,
+        kind: filters.kind || undefined,
+        type: filters.type || undefined,
+        runtime_status: filters.runtime_status || undefined,
+        health_status: filters.health_status || undefined,
+        page: pagination.page,
+        page_size: pagination.page_size
+      }),
+      listSupplierCostSnapshots({ page: 1, page_size: 200 })
+    ])
     suppliers.value = result.items
+    supplierCostSnapshots.value = Object.fromEntries(costResult.items.map((item) => [item.supplier_id, item]))
     pagination.total = result.total || 0
     pagination.pages = result.pages || 0
     pagination.page = result.page || pagination.page
@@ -1682,15 +2012,23 @@ function openSessionDialog(supplier: Supplier) {
 }
 
 function openGroupsDialog(supplier: Supplier) {
+  stopProvisionJobPolling()
   groupsSupplier.value = supplier
   supplierGroups.value = []
   supplierKeys.value = []
+  activeProvisionJob.value = null
   groupsError.value = ''
+  provisionJobError.value = ''
   groupPagination.page = 1
   groupFilters.q = ''
   groupFilters.status = ''
   groupsDialogOpen.value = true
   void Promise.all([reloadGroupSession(), loadCurrentGroups()])
+}
+
+function closeGroupsDialog() {
+  groupsDialogOpen.value = false
+  stopProvisionJobPolling()
 }
 
 async function probeCurrentSession() {
@@ -1714,22 +2052,58 @@ async function probeCurrentSession() {
 
 async function loginCurrentSession() {
   if (!sessionSupplier.value) return
+  const preflightError = directLoginPreflightError(sessionSupplier.value)
+  if (preflightError) {
+    sessionLoadError.value = preflightError
+    appStore.showError(preflightError)
+    return
+  }
   loggingInSession.value = true
   sessionLoadError.value = ''
   try {
-    const result = await loginSupplierSession(sessionSupplier.value.id, {
-      record_balance_snapshot: true
+    await directLoginSupplier(sessionSupplier.value, {
+      updateLastProbe: true,
+      successMessage: '后端直登完成'
     })
-    sessionStore[sessionSupplier.value.id] = result.session
-    lastProbe.value = result.probe || null
-    appStore.showSuccess(result.probe ? '后端直登完成，已读取供应商余额' : '后端直登完成')
     await Promise.all([reloadCurrentBalance(false), loadSuppliers()])
   } catch (error) {
-    sessionLoadError.value = (error as { message?: string }).message || '后端直登失败'
+    sessionLoadError.value = directLoginErrorMessage(error)
     appStore.showError(sessionLoadError.value)
   } finally {
     loggingInSession.value = false
   }
+}
+
+async function loginSupplierFromRow(supplier: Supplier) {
+  const preflightError = directLoginPreflightError(supplier)
+  if (preflightError) {
+    appStore.showError(preflightError)
+    return
+  }
+  rowLoginSupplierID.value = supplier.id
+  try {
+    await directLoginSupplier(supplier, {
+      updateLastProbe: sessionSupplier.value?.id === supplier.id,
+      successMessage: '一键登录完成'
+    })
+    await loadSuppliers()
+  } catch (error) {
+    appStore.showError(directLoginErrorMessage(error))
+  } finally {
+    rowLoginSupplierID.value = null
+  }
+}
+
+async function directLoginSupplier(supplier: Supplier, options: { updateLastProbe: boolean; successMessage: string }) {
+  const result = await loginSupplierSession(supplier.id, {
+    record_balance_snapshot: true
+  })
+  sessionStore[supplier.id] = result.session
+  if (options.updateLastProbe) {
+    lastProbe.value = result.probe || null
+  }
+  appStore.showSuccess(result.probe ? `${options.successMessage}，已读取供应商余额` : options.successMessage)
+  return result
 }
 
 async function loadCurrentGroups() {
@@ -1876,7 +2250,7 @@ async function submitProvision() {
   provisionSubmitting.value = true
   provisionError.value = ''
   try {
-    await provisionSupplierKey(groupsSupplier.value.id, {
+    const job = await provisionSupplierKey(groupsSupplier.value.id, {
       supplier_group_id: provisionGroup.value.id,
       name: provisionForm.name,
       quota_usd: Number(provisionForm.quota_usd || 0),
@@ -1893,9 +2267,9 @@ async function submitProvision() {
       balance_cents: centsFromYuan(provisionForm.balance_yuan),
       balance_currency: provisionForm.balance_currency || 'USD'
     })
-    appStore.showSuccess('已创建第三方 Key，并同步创建本地 Sub2API 账号')
+    appStore.showSuccess(`开通任务已提交 #${job.job_id}`)
+    await watchProvisionJob(job.job_id)
     closeProvisionDialog()
-    await loadCurrentGroups()
   } catch (error) {
     provisionError.value = (error as { message?: string }).message || '开通 Key/账号失败'
     appStore.showError(provisionError.value)
@@ -1953,17 +2327,78 @@ async function syncCurrentGroups() {
   if (!groupsSupplier.value) return
   groupsSyncing.value = true
   groupsError.value = ''
+  provisionJobError.value = ''
   try {
-    const result = await syncSupplierGroups(groupsSupplier.value.id)
-    appStore.showSuccess(`已同步 ${result.total} 个供应商分组`)
-    groupPagination.page = 1
-    await Promise.all([reloadGroupSession(), loadCurrentGroups()])
+    const job = await syncSupplierGroups(groupsSupplier.value.id)
+    appStore.showSuccess(`同步分组任务已提交 #${job.job_id}`)
+    await watchProvisionJob(job.job_id)
   } catch (error) {
-    groupsError.value = (error as { message?: string }).message || '同步供应商分组失败'
+    groupsError.value = (error as { message?: string }).message || '同步分组任务提交失败'
     appStore.showError(groupsError.value)
   } finally {
     groupsSyncing.value = false
   }
+}
+
+async function ensureCurrentKeys() {
+  if (!groupsSupplier.value) return
+  keysEnsuring.value = true
+  groupsError.value = ''
+  provisionJobError.value = ''
+  try {
+    const supplier = groupsSupplier.value
+    const job = await ensureSupplierKeys(supplier.id, {
+      local_account_base_url: defaultProviderBaseURL(supplier),
+      local_account_concurrency: 2,
+      local_account_priority: 100,
+      runtime_status: 'monitor_only',
+      health_status: 'normal',
+      balance_threshold_cents: 0,
+      balance_cents: Math.max(0, supplier.balance_cents || 0),
+      balance_currency: supplier.balance_currency || 'USD'
+    })
+    appStore.showSuccess(`补齐 Key/账号任务已提交 #${job.job_id}`)
+    await watchProvisionJob(job.job_id)
+  } catch (error) {
+    groupsError.value = (error as { message?: string }).message || '补齐 Key/账号任务提交失败'
+    appStore.showError(groupsError.value)
+  } finally {
+    keysEnsuring.value = false
+  }
+}
+
+async function watchProvisionJob(jobID: number) {
+  stopProvisionJobPolling()
+  await refreshProvisionJob(jobID)
+}
+
+async function refreshProvisionJob(jobID: number) {
+  try {
+    const job = await getSupplierProvisionJob(jobID)
+    activeProvisionJob.value = job
+    provisionJobError.value = ''
+    if (isTerminalProvisionJobStatus(job.status)) {
+      groupPagination.page = 1
+      await Promise.all([reloadGroupSession(), loadCurrentGroups(), loadSuppliers()])
+      return
+    }
+    provisionJobTimer = window.setTimeout(() => {
+      void refreshProvisionJob(jobID)
+    }, 2000)
+  } catch (error) {
+    provisionJobError.value = (error as { message?: string }).message || '读取任务状态失败'
+  }
+}
+
+function stopProvisionJobPolling() {
+  if (provisionJobTimer) {
+    window.clearTimeout(provisionJobTimer)
+    provisionJobTimer = undefined
+  }
+}
+
+function isTerminalProvisionJobStatus(status: SupplierProvisionStatus): boolean {
+  return ['succeeded', 'partial_succeeded', 'manual_required', 'dead', 'cancelled'].includes(status)
 }
 
 function openBulkStatusDialog() {
@@ -2062,6 +2497,7 @@ watch(
 )
 
 onMounted(loadSuppliers)
+onBeforeUnmount(stopProvisionJobPolling)
 </script>
 
 <style scoped>

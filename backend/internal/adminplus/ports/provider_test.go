@@ -29,7 +29,3 @@ func (s *stubProviderAdapter) FetchHealthSample(_ context.Context, _ FetchContex
 	capturedAt := time.Now()
 	return &ProviderHealthSampleInput{SupplierID: 1, CapturedAt: &capturedAt}, nil
 }
-
-func (s *stubProviderAdapter) ExportBills(_ context.Context, _ BillExportRequest) (*BillExportResult, error) {
-	return nil, nil
-}

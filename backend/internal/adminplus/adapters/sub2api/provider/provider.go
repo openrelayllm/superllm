@@ -20,6 +20,8 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(ports.SessionGroupAdapter), new(*SessionProfileClient)),
 	wire.Bind(new(ports.SessionRateAdapter), new(*SessionProfileClient)),
 	wire.Bind(new(ports.SessionAnnouncementAdapter), new(*SessionProfileClient)),
-	wire.Bind(new(ports.SessionBillingAdapter), new(*SessionProfileClient)),
+	wire.Bind(new(ports.SessionUsageCostAdapter), new(*SessionProfileClient)),
+	wire.Bind(new(ports.SessionFundingAdapter), new(*SessionProfileClient)),
+	wire.Bind(new(ports.SessionEntitlementAdapter), new(*SessionProfileClient)),
 	wire.Bind(new(ports.SessionKeyAdapter), new(*SessionProfileClient)),
 )

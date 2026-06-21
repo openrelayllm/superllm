@@ -2,31 +2,31 @@ package domain
 
 import "time"
 
-type SupplierBillLine struct {
-	ID                int64          `json:"id"`
-	SupplierID        int64          `json:"supplier_id"`
-	Source            string         `json:"source"`
-	ExternalBillID    string         `json:"external_bill_id,omitempty"`
-	ExternalRequestID string         `json:"external_request_id,omitempty"`
-	APIKeyName        string         `json:"api_key_name,omitempty"`
-	Model             string         `json:"model"`
-	Endpoint          string         `json:"endpoint,omitempty"`
-	RequestType       string         `json:"request_type,omitempty"`
-	BillingMode       string         `json:"billing_mode,omitempty"`
-	ReasoningEffort   string         `json:"reasoning_effort,omitempty"`
-	Currency          string         `json:"currency"`
-	CostCents         int64          `json:"cost_cents"`
-	InputTokens       int64          `json:"input_tokens"`
-	OutputTokens      int64          `json:"output_tokens"`
-	CacheReadTokens   int64          `json:"cache_read_tokens"`
-	TotalTokens       int64          `json:"total_tokens"`
-	FirstTokenMS      int64          `json:"first_token_ms"`
-	DurationMS        int64          `json:"duration_ms"`
-	UserAgent         string         `json:"user_agent,omitempty"`
-	StartedAt         time.Time      `json:"started_at"`
-	EndedAt           *time.Time     `json:"ended_at,omitempty"`
-	RawPayload        map[string]any `json:"raw_payload,omitempty"`
-	CreatedAt         time.Time      `json:"created_at"`
+type SupplierUsageCostLine struct {
+	ID                  int64          `json:"id"`
+	SupplierID          int64          `json:"supplier_id"`
+	Source              string         `json:"source"`
+	ExternalUsageCostID string         `json:"external_usage_cost_id,omitempty"`
+	ExternalRequestID   string         `json:"external_request_id,omitempty"`
+	APIKeyName          string         `json:"api_key_name,omitempty"`
+	Model               string         `json:"model"`
+	Endpoint            string         `json:"endpoint,omitempty"`
+	RequestType         string         `json:"request_type,omitempty"`
+	BillingMode         string         `json:"billing_mode,omitempty"`
+	ReasoningEffort     string         `json:"reasoning_effort,omitempty"`
+	Currency            string         `json:"currency"`
+	CostCents           int64          `json:"cost_cents"`
+	InputTokens         int64          `json:"input_tokens"`
+	OutputTokens        int64          `json:"output_tokens"`
+	CacheReadTokens     int64          `json:"cache_read_tokens"`
+	TotalTokens         int64          `json:"total_tokens"`
+	FirstTokenMS        int64          `json:"first_token_ms"`
+	DurationMS          int64          `json:"duration_ms"`
+	UserAgent           string         `json:"user_agent,omitempty"`
+	StartedAt           time.Time      `json:"started_at"`
+	EndedAt             *time.Time     `json:"ended_at,omitempty"`
+	RawPayload          map[string]any `json:"raw_payload,omitempty"`
+	CreatedAt           time.Time      `json:"created_at"`
 }
 
 type LocalUsageLine struct {
@@ -100,40 +100,4 @@ type LocalAccountRuntime struct {
 	LastUsedAt          *time.Time `json:"last_used_at,omitempty"`
 	CollectedAt         time.Time  `json:"collected_at"`
 	RedisReadConfigured bool       `json:"redis_read_configured"`
-}
-
-type ReconciliationStatus string
-
-const (
-	ReconciliationStatusMatched          ReconciliationStatus = "matched"
-	ReconciliationStatusSupplierOnly     ReconciliationStatus = "supplier_only"
-	ReconciliationStatusLocalOnly        ReconciliationStatus = "local_only"
-	ReconciliationStatusCurrencyMismatch ReconciliationStatus = "currency_mismatch"
-	ReconciliationStatusCostMismatch     ReconciliationStatus = "cost_mismatch"
-)
-
-type ReconciliationLine struct {
-	Status            ReconciliationStatus `json:"status"`
-	SupplierBillID    int64                `json:"supplier_bill_id,omitempty"`
-	LocalUsageID      int64                `json:"local_usage_id,omitempty"`
-	ExternalRequestID string               `json:"external_request_id,omitempty"`
-	Model             string               `json:"model"`
-	Currency          string               `json:"currency"`
-	CostCents         int64                `json:"cost_cents"`
-	RevenueCents      int64                `json:"revenue_cents"`
-	ProfitCents       int64                `json:"profit_cents"`
-	ProfitMargin      *float64             `json:"profit_margin,omitempty"`
-	Notes             string               `json:"notes,omitempty"`
-}
-
-type ReconciliationSummary struct {
-	TotalSupplierLines int64    `json:"total_supplier_lines"`
-	TotalLocalLines    int64    `json:"total_local_lines"`
-	MatchedLines       int64    `json:"matched_lines"`
-	SupplierOnlyLines  int64    `json:"supplier_only_lines"`
-	LocalOnlyLines     int64    `json:"local_only_lines"`
-	CostCents          int64    `json:"cost_cents"`
-	RevenueCents       int64    `json:"revenue_cents"`
-	ProfitCents        int64    `json:"profit_cents"`
-	ProfitMargin       *float64 `json:"profit_margin,omitempty"`
 }

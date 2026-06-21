@@ -1,16 +1,21 @@
 # Release Notes
 
-## v0.7.3 - 2026-06-21
+## v0.8.0 - 2026-06-21
 
-### 修复
+### 新增
 
-- 修复 Railway 从 `0.6.x` / `0.7.x` 升级时，生产库历史 `fetch_promotions` 插件任务不满足 `admin_plus_extension_tasks_type_check`，导致迁移 `159_admin_plus_extension_session_capture.sql` 失败的问题。
-- 更新迁移 checksum 兼容规则，让已记录旧版 `159_admin_plus_extension_session_capture.sql` checksum 的环境继续启动。
-- 新增 `167_admin_plus_extension_task_fetch_promotions.sql`，把已经跑过旧版 `159` 的环境也收敛到补齐后的任务类型约束。
-- 修复供应商分组没有已绑定 Key 时，供应商 Key 查询路径把 not-found 包装错误当作真实错误返回的问题。
+- 新增供应商成本对账与用量消耗页面，支持供应商成本汇总、资金流水、权益流水、成本台账和 Sub2API 用量成本行导入/同步。
+- 新增供应商异步开通任务，供应商分组同步、单 Key 开通、全量 Key 确保和成本同步可提交为可查询的后台任务。
+- 新增供应商成本、用量成本和异步开通任务数据库迁移，补齐迁移 checksum 兼容规则。
+
+### 更新
+
+- 收敛 Admin Plus 运营面导航，移除旧 Ops 监控、账单对账、健康/余额/费率等分散页面，旧路由保留跳转到当前工作台。
+- 扩展供应商 Key 绑定能力，支持批量确保分组 Key、Sub2API 网关写入和绑定修复路径。
+- 插件任务摄取补充用量成本任务类型，采集会话页面承接插件任务入口。
 
 ### 发布
 
-- 更新版本号到 `0.7.3`。
+- 更新版本号到 `0.8.0`。
 - GitHub Release 继续只发布 Linux 产物：`linux_amd64`、`linux_arm64` 和 `checksums.txt`。
 - DockerHub 镜像继续由 GitHub Actions 发布，不依赖本地 Docker。

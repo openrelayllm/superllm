@@ -18,30 +18,32 @@ import (
 	sub2apiprovider "github.com/Wei-Shaw/sub2api/internal/adminplus/adapters/sub2api/provider"
 	actionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
-	billingapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/billing"
+	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	notificationsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
+	provisionjobsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/provisionjobs"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
 	suppliergroupsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
 	supplierkeysapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/supplierkeys"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
+	usagecostsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
-func TestBillingHandlerImportBillLines(t *testing.T) {
+func TestUsageCostHandlerImportUsageCostLines(t *testing.T) {
 	router := newOperationsHandlerTestRouter()
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/billing/lines/import", bytes.NewBufferString(`{
+	req := httptest.NewRequest(http.MethodPost, "/usage-costs/lines/import", bytes.NewBufferString(`{
 		"lines": [
 			{
 				"supplier_id": 7,
 				"source": "Chrome",
-				"external_bill_id": "bill-1",
+				"external_usage_cost_id": "bill-1",
 				"external_request_id": "req-1",
 				"model": "gpt-4o-mini",
 				"currency": "usd",
@@ -76,7 +78,7 @@ func TestBillingHandlerImportBillLines(t *testing.T) {
 	require.Equal(t, "USD", body.Data.Items[0].Currency)
 
 	list := httptest.NewRecorder()
-	listReq := httptest.NewRequest(http.MethodGet, "/billing/lines?supplier_id=7", nil)
+	listReq := httptest.NewRequest(http.MethodGet, "/usage-costs/lines?supplier_id=7", nil)
 	router.ServeHTTP(list, listReq)
 	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
 	require.Contains(t, list.Body.String(), `"external_request_id":"req-1"`)
@@ -87,7 +89,7 @@ func TestExtensionHandlerTaskLifecycle(t *testing.T) {
 
 	created := performJSON(t, router, http.MethodPost, "/extension/tasks", `{
 		"supplier_id": 7,
-		"type": "export_bills",
+		"type": "fetch_usage_costs",
 		"priority": 10,
 		"payload": {"page":"bills"}
 	}`)
@@ -95,7 +97,7 @@ func TestExtensionHandlerTaskLifecycle(t *testing.T) {
 
 	claimed := performJSON(t, router, http.MethodPost, "/extension/tasks/claim", `{
 		"device_id": "chrome-1",
-		"types": ["export_bills"],
+		"types": ["fetch_usage_costs"],
 		"lease_ttl_seconds": 60
 	}`)
 	require.Equal(t, http.StatusOK, claimed.Code, claimed.Body.String())
@@ -669,7 +671,7 @@ func TestSupplierRateSyncReadsProviderSession(t *testing.T) {
 	require.NotContains(t, synced.Body.String(), "secret-cookie")
 }
 
-func TestSupplierBillingSyncReadsProviderSession(t *testing.T) {
+func TestSupplierUsageCostSyncReadsProviderSession(t *testing.T) {
 	var seenAuth string
 	var seenCookie string
 	var seenStartedAt string
@@ -721,7 +723,7 @@ func TestSupplierBillingSyncReadsProviderSession(t *testing.T) {
 	}`)
 	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
 
-	synced := performJSON(t, router, http.MethodPost, "/suppliers/1/billing/sync", `{
+	synced := performJSON(t, router, http.MethodPost, "/suppliers/1/usage-costs/sync", `{
 		"started_at": "2026-06-20T00:00:00Z",
 		"ended_at": "2026-06-21T00:00:00Z"
 	}`)
@@ -738,6 +740,24 @@ func TestSupplierBillingSyncReadsProviderSession(t *testing.T) {
 	require.NotContains(t, synced.Body.String(), "secret-cookie")
 	require.NotContains(t, synced.Body.String(), "must-not-return")
 	require.Contains(t, synced.Body.String(), `"x-safe":"kept"`)
+}
+
+func TestSupplierCostSyncSubmitsAsyncJob(t *testing.T) {
+	router := newOperationsHandlerTestRouter()
+
+	rec := performJSON(t, router, http.MethodPost, "/suppliers/1/costs/sync", `{
+		"started_at": "2026-06-14T00:00:00Z",
+		"ended_at": "2026-06-21T00:00:00Z",
+		"include_funding_transactions": true,
+		"include_entitlement_transactions": true,
+		"include_usage_cost_lines": true,
+		"include_balance_snapshot": true
+	}`)
+
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"job_type":"sync_supplier_costs"`)
+	require.Contains(t, rec.Body.String(), `"mode":"async_job"`)
+	require.Contains(t, rec.Body.String(), `"poll_url":"/api/v1/admin-plus/supplier-provision-jobs/1"`)
 }
 
 func TestSupplierKeyProvisionCreatesProviderKeyLocalAccountAndBinding(t *testing.T) {
@@ -1115,12 +1135,21 @@ func newOperationsHandlerTestRouterWithDependencies(dashboardURL string, apiBase
 		sub2apiprovider.NewSessionProfileClient(http.DefaultClient),
 	)
 	sessionGroupClient := sub2apiprovider.NewSessionProfileClient(http.DefaultClient)
-	billingService := billingapp.NewServiceWithDependencies(
-		billingapp.NewMemoryRepository(),
+	usageCostService := usagecostsapp.NewServiceWithDependencies(
+		usagecostsapp.NewMemoryRepository(),
 		sessionSvc,
 		sessionGroupClient,
 	)
-	billingHandler := NewBillingHandler(billingService)
+	usageCostHandler := NewUsageCostHandler(usageCostService)
+	costService := costsapp.NewService(costsapp.NewMemoryRepository())
+	provisionJobService := provisionjobsapp.NewServiceWithCostSyncer(
+		newOperationsProvisionRepository(),
+		nil,
+		nil,
+		nil,
+		costService,
+	)
+	costHandler := NewCostHandlerWithProvisionJobs(costService, provisionJobService)
 	rateService := ratesapp.NewServiceWithDependencies(
 		newOperationsRateRepository(),
 		nil,
@@ -1195,12 +1224,19 @@ func newOperationsHandlerTestRouterWithDependencies(dashboardURL string, apiBase
 	router.GET("/suppliers/:id/groups", supplierGroupHandler.List)
 	router.POST("/suppliers/:id/groups/sync", supplierGroupHandler.Sync)
 	router.GET("/suppliers/:id/keys", supplierKeyHandler.List)
+	router.POST("/suppliers/:id/keys/ensure-all", supplierKeyHandler.EnsureAll)
 	router.POST("/suppliers/:id/keys/provision", supplierKeyHandler.Provision)
 	router.POST("/suppliers/:id/keys/:keyID/repair-binding", supplierKeyHandler.RepairBinding)
 	router.POST("/suppliers/:id/rates/sync", rateHandler.SyncSupplierRates)
-	router.POST("/suppliers/:id/billing/sync", billingHandler.SyncSupplierBilling)
-	router.POST("/billing/lines/import", billingHandler.ImportBillLines)
-	router.GET("/billing/lines", billingHandler.ListBillLines)
+	router.POST("/suppliers/:id/usage-costs/sync", usageCostHandler.SyncSupplierUsageCosts)
+	router.POST("/suppliers/:id/costs/sync", costHandler.SyncSupplierCosts)
+	router.GET("/suppliers/:id/costs/summary", costHandler.GetSupplierSummary)
+	router.GET("/suppliers/:id/funding-transactions", costHandler.ListFundingTransactions)
+	router.GET("/suppliers/:id/entitlement-transactions", costHandler.ListEntitlementTransactions)
+	router.GET("/suppliers/:id/cost-ledger", costHandler.ListLedgerEntries)
+	router.POST("/usage-costs/lines/import", usageCostHandler.ImportUsageCostLines)
+	router.GET("/usage-costs/lines", usageCostHandler.ListUsageCostLines)
+	router.GET("/costs/suppliers", costHandler.ListSupplierSummaries)
 	router.POST("/extension/tasks", extensionHandler.CreateTask)
 	router.POST("/extension/tasks/claim", extensionHandler.ClaimTask)
 	router.POST("/extension/session/capture-task", extensionHandler.CreateCaptureSessionTask)
@@ -1246,6 +1282,89 @@ type operationsIdempotencyRepository struct {
 	mu     sync.Mutex
 	nextID int64
 	data   map[string]*service.IdempotencyRecord
+}
+
+type operationsProvisionRepository struct {
+	nextID int64
+}
+
+func newOperationsProvisionRepository() *operationsProvisionRepository {
+	return &operationsProvisionRepository{nextID: 1}
+}
+
+func (r *operationsProvisionRepository) CreateJobWithSteps(_ context.Context, job *adminplusdomain.SupplierProvisionJob, steps []*adminplusdomain.SupplierProvisionStep, _ string) (*adminplusdomain.SupplierProvisionJob, bool, error) {
+	job.ID = r.nextID
+	r.nextID++
+	for index, step := range steps {
+		if step == nil {
+			continue
+		}
+		step.ID = job.ID + int64(index)
+		step.JobID = job.ID
+	}
+	stored := *job
+	stored.Steps = steps
+	return &stored, false, nil
+}
+
+func (r *operationsProvisionRepository) GetJob(context.Context, int64) (*adminplusdomain.SupplierProvisionJob, error) {
+	return nil, nil
+}
+
+func (r *operationsProvisionRepository) ListJobs(context.Context, provisionjobsapp.ListFilter) ([]*adminplusdomain.SupplierProvisionJob, error) {
+	return nil, nil
+}
+
+func (r *operationsProvisionRepository) ClaimNextJob(context.Context, string, time.Time, time.Duration) (*adminplusdomain.SupplierProvisionJob, error) {
+	return nil, nil
+}
+
+func (r *operationsProvisionRepository) MarkJobRunning(context.Context, int64, string, time.Time) error {
+	return nil
+}
+
+func (r *operationsProvisionRepository) MarkJobSucceeded(context.Context, int64, map[string]any, time.Time) error {
+	return nil
+}
+
+func (r *operationsProvisionRepository) MarkJobFailed(context.Context, int64, adminplusdomain.SupplierProvisionStatus, string, string, time.Time, time.Time) error {
+	return nil
+}
+
+func (r *operationsProvisionRepository) ListRunnableSteps(context.Context, int64, time.Time) ([]*adminplusdomain.SupplierProvisionStep, error) {
+	return nil, nil
+}
+
+func (r *operationsProvisionRepository) ListJobSteps(context.Context, int64) ([]*adminplusdomain.SupplierProvisionStep, error) {
+	return nil, nil
+}
+
+func (r *operationsProvisionRepository) MarkStepRunning(context.Context, int64, string, time.Time) error {
+	return nil
+}
+
+func (r *operationsProvisionRepository) MarkStepSucceeded(context.Context, int64, map[string]any, time.Time) error {
+	return nil
+}
+
+func (r *operationsProvisionRepository) MarkStepFailed(context.Context, int64, adminplusdomain.SupplierProvisionStatus, string, string, time.Time, time.Time) error {
+	return nil
+}
+
+func (r *operationsProvisionRepository) RecordAttempt(context.Context, provisionjobsapp.Attempt) error {
+	return nil
+}
+
+func (r *operationsProvisionRepository) ListPendingOutboxEvents(context.Context, int, time.Time) ([]provisionjobsapp.OutboxEvent, error) {
+	return nil, nil
+}
+
+func (r *operationsProvisionRepository) MarkOutboxPublished(context.Context, string, time.Time) error {
+	return nil
+}
+
+func (r *operationsProvisionRepository) MarkOutboxFailed(context.Context, string, time.Time, error) error {
+	return nil
 }
 
 func newOperationsIdempotencyRepository() *operationsIdempotencyRepository {
@@ -1392,6 +1511,7 @@ func cloneOperationsIdempotencyRecord(in *service.IdempotencyRecord) *service.Id
 type operationsLocalAccountCreator struct {
 	createErr error
 	accounts  map[int64]*service.Account
+	groups    []service.Group
 }
 
 func (c *operationsLocalAccountCreator) CreateAccount(_ context.Context, input *service.CreateAccountInput) (*service.Account, error) {
@@ -1404,6 +1524,7 @@ func (c *operationsLocalAccountCreator) CreateAccount(_ context.Context, input *
 		Platform:    input.Platform,
 		Type:        input.Type,
 		Credentials: input.Credentials,
+		GroupIDs:    append([]int64(nil), input.GroupIDs...),
 	}
 	if c.accounts == nil {
 		c.accounts = make(map[int64]*service.Account)
@@ -1420,6 +1541,39 @@ func (c *operationsLocalAccountCreator) GetAccount(_ context.Context, id int64) 
 		}
 	}
 	return nil, errors.New("account not found")
+}
+
+func (c *operationsLocalAccountCreator) UpdateAccount(_ context.Context, id int64, input *service.UpdateAccountInput) (*service.Account, error) {
+	if c.accounts == nil {
+		return nil, errors.New("account not found")
+	}
+	account, ok := c.accounts[id]
+	if !ok {
+		return nil, errors.New("account not found")
+	}
+	if input.GroupIDs != nil {
+		account.GroupIDs = append([]int64(nil), (*input.GroupIDs)...)
+	}
+	cp := *account
+	return &cp, nil
+}
+
+func (c *operationsLocalAccountCreator) CreateGroup(_ context.Context, input *service.CreateGroupInput) (*service.Group, error) {
+	group := service.Group{
+		ID:             int64(2001 + len(c.groups)),
+		Name:           input.Name,
+		Platform:       input.Platform,
+		RateMultiplier: input.RateMultiplier,
+		Status:         "active",
+	}
+	c.groups = append(c.groups, group)
+	return &group, nil
+}
+
+func (c *operationsLocalAccountCreator) GetAllGroupsIncludingInactive(_ context.Context) ([]service.Group, error) {
+	out := make([]service.Group, len(c.groups))
+	copy(out, c.groups)
+	return out, nil
 }
 
 func newOperationsRateRepository() *operationsRateRepository {

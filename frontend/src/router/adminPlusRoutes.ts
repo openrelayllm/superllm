@@ -53,12 +53,7 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/ops',
-    name: 'AdminOps',
-    component: () => import('@/views/admin/ops/OpsDashboard.vue'),
-    meta: adminMeta('Ops Monitoring', {
-      titleKey: 'admin.ops.title',
-      descriptionKey: 'admin.ops.description'
-    })
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/suppliers',
@@ -80,39 +75,29 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/collection/plugin-tasks',
-    name: 'AdminPlusPluginTasks',
-    component: () => import('@/views/admin/operations/SchedulerView.vue'),
-    meta: adminMeta('插件任务')
+    redirect: redirectWithQuery('/admin/collection/sessions')
   },
   {
     path: '/admin/collection/sessions',
     name: 'AdminPlusCollectionSessions',
-    component: () => import('@/views/admin/operations/SuppliersView.vue'),
+    component: () => import('@/views/admin/operations/ExtensionTasksView.vue'),
     meta: adminMeta('采集会话')
   },
   {
     path: '/admin/monitoring/rates',
-    name: 'AdminPlusRates',
-    component: () => import('@/views/admin/operations/RatesView.vue'),
-    meta: adminMeta('费率')
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/monitoring/balances',
-    name: 'AdminPlusBalances',
-    component: () => import('@/views/admin/operations/BalancesView.vue'),
-    meta: adminMeta('余额')
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/monitoring/health',
-    name: 'AdminPlusHealth',
-    component: () => import('@/views/admin/operations/HealthView.vue'),
-    meta: adminMeta('健康探测')
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/monitoring/account-runtime',
-    name: 'AdminPlusAccountRuntime',
-    component: () => import('@/views/admin/operations/AccountRuntimeView.vue'),
-    meta: adminMeta('并发运行态')
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/monitoring/announcements',
@@ -121,10 +106,16 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     meta: adminMeta('公告')
   },
   {
-    path: '/admin/finance/billing',
-    name: 'AdminPlusSupplierBilling',
-    component: () => import('@/views/admin/operations/BillingReconciliationView.vue'),
-    meta: adminMeta('供应商账单')
+    path: '/admin/finance/costs',
+    name: 'AdminPlusSupplierCosts',
+    component: () => import('@/views/admin/operations/SupplierCostsView.vue'),
+    meta: adminMeta('成本对账')
+  },
+  {
+    path: '/admin/finance/usage-costs',
+    name: 'AdminPlusSupplierUsageCosts',
+    component: () => import('@/views/admin/operations/SupplierUsageCostsView.vue'),
+    meta: adminMeta('用量消耗')
   },
   {
     path: '/admin/finance/local-usage',
@@ -133,28 +124,16 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     meta: adminMeta('本地用量')
   },
   {
-    path: '/admin/finance/reconciliation',
-    name: 'AdminPlusReconciliation',
-    component: () => import('@/views/admin/operations/BillingReconciliationView.vue'),
-    meta: adminMeta('对账结果')
-  },
-  {
     path: '/admin/automation/actions',
-    name: 'AdminPlusActions',
-    component: () => import('@/views/admin/operations/ActionRecommendationsView.vue'),
-    meta: adminMeta('动作建议')
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/automation/notifications',
-    name: 'AdminPlusNotifications',
-    component: () => import('@/views/admin/operations/NotificationsView.vue'),
-    meta: adminMeta('通知记录')
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/automation/audits',
-    name: 'AdminPlusExecutionAudits',
-    component: () => import('@/views/admin/operations/ActionRecommendationsView.vue'),
-    meta: adminMeta('执行审计')
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/operations',
@@ -170,19 +149,19 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/operations/account-runtime',
-    redirect: redirectWithQuery('/admin/monitoring/account-runtime')
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/operations/rates',
-    redirect: redirectWithQuery('/admin/monitoring/rates')
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/operations/balances',
-    redirect: redirectWithQuery('/admin/monitoring/balances')
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/operations/health',
-    redirect: redirectWithQuery('/admin/monitoring/health')
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/operations/announcements',
@@ -194,19 +173,19 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/operations/extension-tasks',
-    redirect: redirectWithQuery('/admin/collection/plugin-tasks')
+    redirect: redirectWithQuery('/admin/collection/sessions')
   },
   {
     path: '/admin/operations/billing',
-    redirect: redirectWithQuery('/admin/finance/reconciliation')
+    redirect: redirectWithQuery('/admin/finance/costs')
   },
   {
     path: '/admin/operations/actions',
-    redirect: redirectWithQuery('/admin/automation/actions')
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/operations/notifications',
-    redirect: redirectWithQuery('/admin/automation/notifications')
+    redirect: redirectWithQuery('/admin/suppliers')
   },
   {
     path: '/admin/settings',
