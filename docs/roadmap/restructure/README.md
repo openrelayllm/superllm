@@ -317,7 +317,7 @@ P3 之后：
 - [x] 将 `keys/provision` 改为提交 `provision_group_key` job。
 - [x] 将 `keys/ensure-all` 改为提交 `provision_all_group_keys` job。
 - [x] 将本地 Sub2API 落地语义收口到 `Sub2APIGateway` 边界，由 Worker 侧编排调用。
-- [x] 新增可配置 `Sub2APIHTTPGateway`。配置 `ADMIN_PLUS_SUB2API_ADMIN_BASE_URL` 和 `ADMIN_PLUS_SUB2API_ADMIN_API_KEY` 后，通过真实 Sub2API Admin API ensure group/account；未配置时仅本地开发回退同进程 `AdminService`。
+- [x] 新增可配置 `Sub2APIHTTPGateway`。配置 `ADMIN_PLUS_SUB2API_ADMIN_BASE_URL` 和 `ADMIN_PLUS_SUB2API_ADMIN_API_KEY` 后，通过真实 Sub2API Admin API ensure group/account；未配置或配置非法时默认 fail-fast，只有显式设置 `ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY=true` 才允许本地开发回退同进程 `AdminService`。
 - [x] 将 `provision_all_group_keys` 从单 step `EnsureAll` 拆成每分组 `ensure_third_party_key` step，支持部分成功和分组级重试。
 - [x] 供应商分组弹窗重构为步骤式任务面板，任务状态在弹窗内轮询展示。
 
@@ -333,7 +333,7 @@ P4/P5 最后收口：
 - `GET /api/v1/admin-plus/suppliers/:id/session`：查询供应商会话脱敏状态，只返回摘要和是否已加密保存，不回显 token/cookie。
 - `POST /api/v1/admin-plus/suppliers/:id/session/probe`：基于已保存统一会话访问同源 Sub2API 供应商用户侧 `/api/v1/user/profile`，读取当前下游用户余额并写入余额快照。
 - `POST /api/v1/admin-plus/suppliers/:id/rates/sync`：基于已保存统一会话访问同源 Sub2API 供应商用户侧费率/渠道接口，归一化后写入 `admin_plus_rate_snapshots` 和变更事件。
-- `POST /api/v1/admin-plus/suppliers/:id/keys/provision`：管理员确认后提交 `provision_group_key` job，返回 `202 Accepted + job_id`；Provision Worker 基于已保存会话创建第三方 Key，再通过 `Sub2APIGateway` ensure 本地 Sub2API group/account，并写入 `admin_plus_supplier_keys` 和 `admin_plus_supplier_accounts` 绑定。生产配置 `Sub2APIHTTPGateway` 后走真实 Sub2API Admin API，未配置时仅本地开发回退同进程 `AdminService`。
+- `POST /api/v1/admin-plus/suppliers/:id/keys/provision`：管理员确认后提交 `provision_group_key` job，返回 `202 Accepted + job_id`；Provision Worker 基于已保存会话创建第三方 Key，再通过 `Sub2APIGateway` ensure 本地 Sub2API group/account，并写入 `admin_plus_supplier_keys` 和 `admin_plus_supplier_accounts` 绑定投影。生产配置 `Sub2APIHTTPGateway` 后走真实 Sub2API Admin API；未配置或配置非法时任务显式失败，不再回退同进程 `AdminService` 生成假绑定。仅本地开发可显式启用 `ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY=true`。
 - `POST /api/v1/admin-plus/suppliers/:id/keys/provision` 已接入业务幂等：HTTP `Idempotency-Key` 写入 job hash；同一供应商分组的未终态 step 会复用已有 job；同一供应商分组还通过数据库唯一索引限制只能存在一个 `provisioning` / `bound` / `manual_secret_required` Key。
 - `POST /api/v1/admin-plus/suppliers/:id/groups/sync`：提交 `sync_groups` job，返回 `202 Accepted + job_id`；Provision Worker 执行分组同步并写入投影。
 - `POST /api/v1/admin-plus/suppliers/:id/keys/ensure-all`：提交 `provision_all_group_keys` job，返回 `202 Accepted + job_id`；提交时按 active 供应商分组展开 `ensure_third_party_key` step，Worker 分组级执行和重试。
@@ -364,7 +364,7 @@ P4/P5 最后收口：
 
 - 真实供应商公告端点联调、健康/并发事实采集生产账号验证和失败可观测完善；健康和账号运行态不再恢复为独立页面入口。
 - 第三方 Key 真实供应商联调、失败告警和操作审计。
-- Gateway Adapter 重构：`Sub2APIGateway` 边界和可配置 HTTP Adapter 已落地；剩余工作是真实 E2E 验证、生产配置守卫，以及禁止生产路径回退同进程 `AdminService`。
+- Gateway Adapter 重构：`Sub2APIGateway` 边界、可配置 HTTP Adapter 和生产 fail-fast 守卫已落地；剩余工作是真实 E2E 验证，以及对历史 embedded fallback 产生的 Admin Plus 投影做一次 reconcile。
 - Saga 细粒度重构：`provision_all_group_keys` 已拆成每分组 step；下一阶段继续把单分组执行器拆成 `ensure_third_party_key`、`ensure_sub2api_group`、`ensure_sub2api_account`、`upsert_admin_plus_binding` 等显式 step。Redis consumer group 已用于 Worker 唤醒和 ack，业务去重仍必须依赖 DB claim、终态状态和外部幂等。
 - 账单同步与调度中心的周期触发、真实供应商联调和异常告警。
 

@@ -7,7 +7,7 @@
 
 > 财务对账事实源说明：完整双边账务、成本台账、收入台账、利润对账、异常处理和后台 PRD 以 [`../billing/README.md`](../billing/README.md) 为准。本文只保留供应商账号链路中必须知道的成本上下文，例如供应商父级需要能采集充值订单、兑换记录、usage 使用记录和余额快照。
 >
-> 账号开通异步治理：分组同步、第三方 Key 创建、真实 Sub2API 分组/账号落地和绑定投影的异步 job / outbox / worker / Saga 方案见 [`ASYNC_PROVISIONING.md`](ASYNC_PROVISIONING.md)。当前第一阶段已落地 Postgres 任务事实源、Redis Stream consumer group 唤醒、DB claim Worker、任务查询 API、分组弹窗步骤式 UI、可配置 `Sub2APIHTTPGateway`，并已将全量开通拆成每个供应商分组一个 `ensure_third_party_key` step。生产需配置 `ADMIN_PLUS_SUB2API_ADMIN_BASE_URL` 与 `ADMIN_PLUS_SUB2API_ADMIN_API_KEY` 才走真实 Sub2API Admin API；未配置时仅作为本地开发兼容回退到同进程 `AdminService`。
+> 账号开通异步治理：分组同步、第三方 Key 创建、真实 Sub2API 分组/账号落地和绑定投影的异步 job / outbox / worker / Saga 方案见 [`ASYNC_PROVISIONING.md`](ASYNC_PROVISIONING.md)。当前第一阶段已落地 Postgres 任务事实源、Redis Stream consumer group 唤醒、DB claim Worker、任务查询 API、分组弹窗步骤式 UI、可配置 `Sub2APIHTTPGateway`，并已将全量开通拆成每个供应商分组一个 `ensure_third_party_key` step。生产需配置 `ADMIN_PLUS_SUB2API_ADMIN_BASE_URL` 与 `ADMIN_PLUS_SUB2API_ADMIN_API_KEY` 才走真实 Sub2API Admin API；未配置或配置非法时默认 fail-fast，不再静默回退同进程 `AdminService`。仅本地开发可显式设置 `ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY=true` 使用兼容回退。
 
 ## 1. 设计结论
 
@@ -33,6 +33,7 @@
 - MVP 中按“一组一个可调度 Key/本地账号绑定”收敛；未绑定分组不能作为切换候选。
 - Admin Plus 绑定关系只关联事实，不伪造第三方密钥，也不直接写本地 Sub2API 数据库。
 - 写本地 Sub2API 必须走本地 Sub2API Admin API；读取可以走 Admin API、只读 DB 或只读 Redis。
+- Admin Plus 绑定关系只是运营投影；真实 Sub2API `/admin/accounts` 不可见时，不能判定为开通成功。
 - 分组同步、Key 开通和本地落地必须异步化；HTTP 请求只提交任务并返回 `job_id`，不再把跨供应商和本地网关的长事务放在请求线程里。
 - 供应商会话获取采用双通道：后端直登优先，Chrome 插件兜底。
 - 后端直登适用于无验证码、无 2FA、可稳定调用登录 API 的供应商；直登流程仍由 Provider Adapter 执行，不放到前端。

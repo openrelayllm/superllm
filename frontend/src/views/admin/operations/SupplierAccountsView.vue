@@ -143,7 +143,16 @@
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex min-w-[116px] items-center justify-end gap-1">
+            <div class="flex min-w-[156px] items-center justify-end gap-1">
+              <button
+                type="button"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-900/20 dark:hover:text-emerald-300"
+                title="测试渠道"
+                @click="openTestDialog(row)"
+              >
+                <Icon name="beaker" size="sm" />
+                <span class="text-xs">测试</span>
+              </button>
               <button
                 type="button"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 dark:hover:bg-primary-900/20 dark:hover:text-primary-400"
@@ -185,6 +194,12 @@
         />
       </template>
     </TablePageLayout>
+
+    <LocalAccountTestModal
+      :show="Boolean(testingAccount)"
+      :account="testingAccount"
+      @close="testingAccount = null"
+    />
   </AppLayout>
 </template>
 
@@ -198,6 +213,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import Icon from '@/components/icons/Icon.vue'
+import LocalAccountTestModal from '@/components/admin-plus/LocalAccountTestModal.vue'
 import type { Column } from '@/components/common/types'
 import type { GroupPlatform } from '@/types'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
@@ -224,6 +240,7 @@ const suppliers = ref<Supplier[]>([])
 const bindings = ref<SupplierAccount[]>([])
 const usageByAccountID = ref<Record<number, AccountUsageWindow>>({})
 const selectedSupplierID = ref(0)
+const testingAccount = ref<SupplierAccount | null>(null)
 
 interface UsageSummary {
   request_count: number
@@ -457,6 +474,10 @@ function goSupplierGroups(row: SupplierAccount) {
       open: 'groups'
     }
   })
+}
+
+function openTestDialog(row: SupplierAccount) {
+  testingAccount.value = row
 }
 
 async function loadSuppliers() {

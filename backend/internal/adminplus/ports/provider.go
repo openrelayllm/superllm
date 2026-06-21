@@ -86,6 +86,46 @@ type SessionProbeAdapter interface {
 	ProbeSub2APIUserProfile(ctx context.Context, in SessionProbeInput) (*SessionProbeResult, error)
 }
 
+type ChannelMonitorTimelinePoint struct {
+	Status        string `json:"status"`
+	LatencyMS     *int64 `json:"latency_ms,omitempty"`
+	PingLatencyMS *int64 `json:"ping_latency_ms,omitempty"`
+	CheckedAt     string `json:"checked_at"`
+}
+
+type ChannelMonitorExtraModel struct {
+	Model     string `json:"model"`
+	Status    string `json:"status"`
+	LatencyMS *int64 `json:"latency_ms,omitempty"`
+}
+
+type ChannelMonitorView struct {
+	ID                   int64                         `json:"id"`
+	Name                 string                        `json:"name"`
+	Provider             string                        `json:"provider"`
+	GroupName            string                        `json:"group_name"`
+	PrimaryModel         string                        `json:"primary_model"`
+	PrimaryStatus        string                        `json:"primary_status"`
+	PrimaryLatencyMS     *int64                        `json:"primary_latency_ms,omitempty"`
+	PrimaryPingLatencyMS *int64                        `json:"primary_ping_latency_ms,omitempty"`
+	Availability7D       float64                       `json:"availability_7d"`
+	ExtraModels          []ChannelMonitorExtraModel    `json:"extra_models"`
+	Timeline             []ChannelMonitorTimelinePoint `json:"timeline"`
+}
+
+type ReadChannelMonitorsResult struct {
+	SupplierID int64                `json:"supplier_id"`
+	SystemType string               `json:"system_type"`
+	Origin     string               `json:"origin"`
+	APIBaseURL string               `json:"api_base_url"`
+	Items      []ChannelMonitorView `json:"items"`
+	CapturedAt time.Time            `json:"captured_at"`
+}
+
+type SessionChannelMonitorAdapter interface {
+	ReadChannelMonitors(ctx context.Context, in SessionProbeInput) (*ReadChannelMonitorsResult, error)
+}
+
 type SessionLoginAdapter interface {
 	DirectLogin(ctx context.Context, in DirectLoginInput) (*DirectLoginResult, error)
 }

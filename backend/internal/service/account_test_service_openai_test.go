@@ -389,6 +389,61 @@ func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsP
 	require.NotContains(t, body, "当前测试接口仅支持 Responses API 路径")
 }
 
+func TestAccountTestService_OpenAIAPIKeyUnknownResponses503FallsBackToChatCompletions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	chatStream := strings.Join([]string{
+		`data: {"id":"chatcmpl_test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		newJSONResponse(http.StatusServiceUnavailable, `{"error":{"message":"Service temporarily unavailable","type":"api_error"}}`),
+		{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(chatStream)),
+		},
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          95,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example/v1",
+		},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.5", "hello", "")
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 2)
+	require.Len(t, upstream.bodies, 2)
+	require.Equal(t, "https://compat-upstream.example/v1/responses", upstream.requests[0].URL.String())
+	require.True(t, gjson.GetBytes(upstream.bodies[0], "input").Exists())
+	require.False(t, gjson.GetBytes(upstream.bodies[0], "messages").Exists())
+	require.Equal(t, "https://compat-upstream.example/v1/chat/completions", upstream.requests[1].URL.String())
+	require.Equal(t, "gpt-5.5", gjson.GetBytes(upstream.bodies[1], "model").String())
+	require.True(t, gjson.GetBytes(upstream.bodies[1], "stream").Bool())
+	require.Equal(t, "hello", gjson.GetBytes(upstream.bodies[1], "messages.0.content").String())
+	require.False(t, gjson.GetBytes(upstream.bodies[1], "input").Exists())
+	body := recorder.Body.String()
+	require.Contains(t, body, "Responses API 测试返回 503")
+	require.Contains(t, body, "pong")
+	require.Contains(t, body, "已通过 /v1/chat/completions 验证")
+	require.Contains(t, body, `"success":true`)
+	require.NotContains(t, body, "API returned 503")
+}
+
 func TestAccountTestService_OpenAIChatCompletionsPathReturns4xx(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()

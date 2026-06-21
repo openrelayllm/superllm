@@ -42,4 +42,4 @@ Admin Plus frontend
   backend: ${VITE_DEV_PROXY_TARGET}
 EOF
 
-pnpm --dir "${FRONTEND_DIR}" run dev -- --host "${FRONTEND_HOST}"
+exec pnpm --dir "${FRONTEND_DIR}" run dev -- --host "${FRONTEND_HOST}"

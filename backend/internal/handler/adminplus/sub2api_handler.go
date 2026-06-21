@@ -1,19 +1,67 @@
 package adminplus
 
 import (
+	"strconv"
 	"time"
 
 	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
 type Sub2APIHandler struct {
-	service *sub2apiapp.Service
+	service            *sub2apiapp.Service
+	accountTestService *service.AccountTestService
 }
 
 func NewSub2APIHandler(service *sub2apiapp.Service) *Sub2APIHandler {
 	return &Sub2APIHandler{service: service}
+}
+
+func NewSub2APIHandlerWithAccountTest(service *sub2apiapp.Service, accountTestService *service.AccountTestService) *Sub2APIHandler {
+	return &Sub2APIHandler{
+		service:            service,
+		accountTestService: accountTestService,
+	}
+}
+
+type testLocalAccountRequest struct {
+	ModelID string `json:"model_id"`
+	Prompt  string `json:"prompt"`
+	Mode    string `json:"mode"`
+}
+
+func (h *Sub2APIHandler) ListLocalAccountModels(c *gin.Context) {
+	accountID, ok := parseAccountIDParam(c)
+	if !ok {
+		return
+	}
+	if h.accountTestService == nil {
+		response.InternalError(c, "account test service is not configured")
+		return
+	}
+
+	models, err := h.accountTestService.GetAvailableModels(c.Request.Context(), accountID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, models)
+}
+
+func (h *Sub2APIHandler) TestLocalAccount(c *gin.Context) {
+	accountID, ok := parseAccountIDParam(c)
+	if !ok {
+		return
+	}
+	if h.accountTestService == nil {
+		response.InternalError(c, "account test service is not configured")
+		return
+	}
+
+	var req testLocalAccountRequest
+	_ = c.ShouldBindJSON(&req)
+	_ = h.accountTestService.TestAccountConnection(c, accountID, req.ModelID, req.Prompt, req.Mode)
 }
 
 func (h *Sub2APIHandler) ListLocalUsageLines(c *gin.Context) {
@@ -111,4 +159,13 @@ func valueOrZero(value *time.Time) time.Time {
 		return time.Time{}
 	}
 	return *value
+}
+
+func parseAccountIDParam(c *gin.Context) (int64, bool) {
+	accountID, err := strconv.ParseInt(c.Param("accountID"), 10, 64)
+	if err != nil || accountID <= 0 {
+		response.BadRequest(c, "invalid account id")
+		return 0, false
+	}
+	return accountID, true
 }

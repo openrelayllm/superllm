@@ -64,6 +64,24 @@ func TestEnsureBootstrapSecretsGenerateAndPersistJWTSecret(t *testing.T) {
 	require.Equal(t, cfg.JWT.Secret, stored.Value)
 }
 
+func TestEnsureBootstrapSecretsGenerateAndPersistTOTPEncryptionKey(t *testing.T) {
+	client := newSecuritySecretTestClient(t)
+	cfg := &config.Config{}
+
+	err := ensureBootstrapSecrets(context.Background(), client, cfg)
+	require.NoError(t, err)
+	require.NotEmpty(t, cfg.Totp.EncryptionKey)
+	require.False(t, cfg.Totp.EncryptionKeyConfigured)
+
+	decoded, err := hex.DecodeString(cfg.Totp.EncryptionKey)
+	require.NoError(t, err)
+	require.Len(t, decoded, 32)
+
+	stored, err := client.SecuritySecret.Query().Where(securitysecret.KeyEQ(securitySecretKeyTOTPEncryption)).Only(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, cfg.Totp.EncryptionKey, stored.Value)
+}
+
 func TestEnsureBootstrapSecretsLoadExistingJWTSecret(t *testing.T) {
 	client := newSecuritySecretTestClient(t)
 	_, err := client.SecuritySecret.Create().SetKey(securitySecretKeyJWT).SetValue("existing-jwt-secret-32bytes-long!!!!").Save(context.Background())
@@ -75,6 +93,26 @@ func TestEnsureBootstrapSecretsLoadExistingJWTSecret(t *testing.T) {
 	require.Equal(t, "existing-jwt-secret-32bytes-long!!!!", cfg.JWT.Secret)
 }
 
+func TestEnsureBootstrapSecretsLoadExistingTOTPEncryptionKey(t *testing.T) {
+	client := newSecuritySecretTestClient(t)
+	storedKey := strings.Repeat("ab", 32)
+	transientKey := strings.Repeat("cd", 32)
+	_, err := client.SecuritySecret.Create().SetKey(securitySecretKeyTOTPEncryption).SetValue(storedKey).Save(context.Background())
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		Totp: config.TotpConfig{
+			EncryptionKey:           transientKey,
+			EncryptionKeyConfigured: false,
+		},
+	}
+	err = ensureBootstrapSecrets(context.Background(), client, cfg)
+	require.NoError(t, err)
+	require.Equal(t, storedKey, cfg.Totp.EncryptionKey)
+	require.NotEqual(t, transientKey, cfg.Totp.EncryptionKey)
+	require.False(t, cfg.Totp.EncryptionKeyConfigured)
+}
+
 func TestEnsureBootstrapSecretsRejectInvalidStoredSecret(t *testing.T) {
 	client := newSecuritySecretTestClient(t)
 	_, err := client.SecuritySecret.Create().SetKey(securitySecretKeyJWT).SetValue("too-short").Save(context.Background())
@@ -84,6 +122,20 @@ func TestEnsureBootstrapSecretsRejectInvalidStoredSecret(t *testing.T) {
 	err = ensureBootstrapSecrets(context.Background(), client, cfg)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at least 32 bytes")
+}
+
+func TestEnsureBootstrapSecretsRejectInvalidStoredTOTPEncryptionKey(t *testing.T) {
+	client := newSecuritySecretTestClient(t)
+	_, err := client.SecuritySecret.Create().
+		SetKey(securitySecretKeyTOTPEncryption).
+		SetValue("not-hex-but-long-enough-32bytes!!").
+		Save(context.Background())
+	require.NoError(t, err)
+
+	cfg := &config.Config{}
+	err = ensureBootstrapSecrets(context.Background(), client, cfg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "hex encoded")
 }
 
 func TestEnsureBootstrapSecretsPersistConfiguredJWTSecret(t *testing.T) {
@@ -100,6 +152,26 @@ func TestEnsureBootstrapSecretsPersistConfiguredJWTSecret(t *testing.T) {
 	require.Equal(t, "configured-jwt-secret-32bytes-long!!", stored.Value)
 }
 
+func TestEnsureBootstrapSecretsPersistConfiguredTOTPEncryptionKey(t *testing.T) {
+	client := newSecuritySecretTestClient(t)
+	key := strings.Repeat("ef", 32)
+	cfg := &config.Config{
+		Totp: config.TotpConfig{
+			EncryptionKey:           key,
+			EncryptionKeyConfigured: true,
+		},
+	}
+
+	err := ensureBootstrapSecrets(context.Background(), client, cfg)
+	require.NoError(t, err)
+
+	stored, err := client.SecuritySecret.Query().Where(securitysecret.KeyEQ(securitySecretKeyTOTPEncryption)).Only(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, key, stored.Value)
+	require.Equal(t, key, cfg.Totp.EncryptionKey)
+	require.True(t, cfg.Totp.EncryptionKeyConfigured)
+}
+
 func TestEnsureBootstrapSecretsConfiguredSecretTooShort(t *testing.T) {
 	client := newSecuritySecretTestClient(t)
 	cfg := &config.Config{JWT: config.JWTConfig{Secret: "short"}}
@@ -107,6 +179,20 @@ func TestEnsureBootstrapSecretsConfiguredSecretTooShort(t *testing.T) {
 	err := ensureBootstrapSecrets(context.Background(), client, cfg)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at least 32 bytes")
+}
+
+func TestEnsureBootstrapSecretsConfiguredTOTPEncryptionKeyInvalid(t *testing.T) {
+	client := newSecuritySecretTestClient(t)
+	cfg := &config.Config{
+		Totp: config.TotpConfig{
+			EncryptionKey:           "not-hex-but-long-enough-32bytes!!",
+			EncryptionKeyConfigured: true,
+		},
+	}
+
+	err := ensureBootstrapSecrets(context.Background(), client, cfg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "hex encoded")
 }
 
 func TestEnsureBootstrapSecretsConfiguredSecretDuplicateIgnored(t *testing.T) {
@@ -125,6 +211,32 @@ func TestEnsureBootstrapSecretsConfiguredSecretDuplicateIgnored(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "existing-jwt-secret-32bytes-long!!!!", stored.Value)
 	require.Equal(t, "existing-jwt-secret-32bytes-long!!!!", cfg.JWT.Secret)
+}
+
+func TestEnsureBootstrapSecretsConfiguredTOTPEncryptionKeyDuplicateIgnored(t *testing.T) {
+	client := newSecuritySecretTestClient(t)
+	storedKey := strings.Repeat("12", 32)
+	configuredKey := strings.Repeat("34", 32)
+	_, err := client.SecuritySecret.Create().
+		SetKey(securitySecretKeyTOTPEncryption).
+		SetValue(storedKey).
+		Save(context.Background())
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		Totp: config.TotpConfig{
+			EncryptionKey:           configuredKey,
+			EncryptionKeyConfigured: true,
+		},
+	}
+	err = ensureBootstrapSecrets(context.Background(), client, cfg)
+	require.NoError(t, err)
+
+	stored, err := client.SecuritySecret.Query().Where(securitysecret.KeyEQ(securitySecretKeyTOTPEncryption)).Only(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, storedKey, stored.Value)
+	require.Equal(t, storedKey, cfg.Totp.EncryptionKey)
+	require.True(t, cfg.Totp.EncryptionKeyConfigured)
 }
 
 func TestGetOrCreateGeneratedSecuritySecretTrimmedExistingValue(t *testing.T) {

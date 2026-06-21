@@ -20,7 +20,7 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
-const defaultUserAgent = "sub2api-admin-plus-provider-adapter/0.1"
+const browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 
 type rateEndpointCandidate struct {
 	path   string
@@ -93,8 +93,7 @@ func (c *SessionProfileClient) DirectLogin(ctx context.Context, in ports.DirectL
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", defaultUserAgent)
+	applyBrowserCompatHeaders(req)
 	origin := firstNonEmpty(in.Origin, originFromRawURL(apiBaseURL))
 	if origin != "" {
 		req.Header.Set("Origin", origin)
@@ -234,6 +233,33 @@ func (c *SessionProfileClient) ProbeSub2APIUserProfile(ctx context.Context, in p
 	}, nil
 }
 
+func (c *SessionProfileClient) ReadChannelMonitors(ctx context.Context, in ports.SessionProbeInput) (*ports.ReadChannelMonitorsResult, error) {
+	if c == nil || c.httpClient == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", "provider adapter is not configured")
+	}
+	apiBaseURL := firstNonEmpty(in.APIBaseURL, stringValueAt(in.Bundle, "context", "api_base_url"), stringValue(in.Bundle, "api_base_url"), in.Origin)
+	endpoint, err := buildSub2APIUserEndpointURL(apiBaseURL, "/channel-monitors")
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doSessionJSON(ctx, http.MethodGet, endpoint, in.Bundle, true)
+	if err != nil {
+		return nil, err
+	}
+	items, err := parseChannelMonitorViews(body)
+	if err != nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_CHANNEL_MONITORS_RESPONSE_INVALID", "supplier channel monitor response is invalid").WithCause(err)
+	}
+	return &ports.ReadChannelMonitorsResult{
+		SupplierID: in.SupplierID,
+		SystemType: "sub2api",
+		Origin:     in.Origin,
+		APIBaseURL: apiBaseURL,
+		Items:      items,
+		CapturedAt: c.now().UTC(),
+	}, nil
+}
+
 func buildSub2APIUserProfileURL(apiBaseURL string) (string, error) {
 	return buildSub2APIUserEndpointURL(apiBaseURL, "/user/profile")
 }
@@ -247,8 +273,7 @@ func (c *SessionProfileClient) fetchLoginAgreementRevision(ctx context.Context, 
 	if err != nil {
 		return "", nil, err
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", defaultUserAgent)
+	applyBrowserCompatHeaders(req)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_SETTINGS_FAILED", "failed to request supplier public settings").WithCause(err)
@@ -259,11 +284,20 @@ func (c *SessionProfileClient) fetchLoginAgreementRevision(ctx context.Context, 
 		return "", nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_SETTINGS_BAD_STATUS", "supplier public settings endpoint returned non-success status")
+		return "", nil, classifyDirectLoginUpstreamFailure("SUPPLIER_DIRECT_LOGIN_SETTINGS_BAD_STATUS", resp.StatusCode, data)
 	}
 	body, ok := unwrapDataObject(data)
 	if !ok {
 		return "", nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_SETTINGS_INVALID", "supplier public settings response is invalid")
+	}
+	if boolFromAny(firstExisting(body, "turnstile_enabled", "turnstileEnabled")) {
+		return "", nil, infraerrors.New(http.StatusConflict, "LOGIN_CAPTCHA_REQUIRED", "supplier direct login requires captcha; use browser extension fallback")
+	}
+	if boolFromAny(firstExisting(body, "totp_enabled", "totpEnabled", "mfa_enabled", "mfaEnabled")) {
+		return "", nil, infraerrors.New(http.StatusConflict, "LOGIN_MFA_REQUIRED", "supplier direct login requires 2FA; use browser extension fallback")
+	}
+	if boolFromAny(firstExisting(body, "backend_mode_enabled", "backendModeEnabled")) {
+		return "", nil, infraerrors.New(http.StatusConflict, "SUPPLIER_DIRECT_LOGIN_ADMIN_REQUIRED", "supplier backend mode requires an admin account for direct login")
 	}
 	return firstNonEmpty(stringFromAny(body["login_agreement_revision"]), stringFromAny(body["loginAgreementRevision"])), map[string]any{
 		"settings_endpoint": endpoint,
@@ -329,6 +363,10 @@ func parseSub2APILoginResponse(data []byte) (string, *time.Time, map[string]any,
 func classifyDirectLoginFailure(statusCode int, body []byte) error {
 	lower := strings.ToLower(string(body))
 	switch {
+	case isCloudflareOriginFailure(statusCode, lower):
+		return infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_UPSTREAM_ORIGIN_ERROR", "supplier site returned a Cloudflare or origin server error")
+	case looksLikeHTMLResponse(lower):
+		return infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_UPSTREAM_HTML", "supplier login endpoint returned an HTML response")
 	case strings.Contains(lower, "captcha") || strings.Contains(lower, "turnstile") || strings.Contains(lower, "recaptcha"):
 		return infraerrors.New(http.StatusConflict, "LOGIN_CAPTCHA_REQUIRED", "supplier direct login requires captcha; use browser extension fallback")
 	case strings.Contains(lower, "2fa") || strings.Contains(lower, "totp") || strings.Contains(lower, "mfa"):
@@ -342,6 +380,32 @@ func classifyDirectLoginFailure(statusCode int, body []byte) error {
 	default:
 		return infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_BAD_STATUS", "supplier login endpoint returned non-success status")
 	}
+}
+
+func classifyDirectLoginUpstreamFailure(defaultReason string, statusCode int, body []byte) error {
+	lower := strings.ToLower(string(body))
+	if isCloudflareOriginFailure(statusCode, lower) {
+		return infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_UPSTREAM_ORIGIN_ERROR", "supplier site returned a Cloudflare or origin server error")
+	}
+	if looksLikeHTMLResponse(lower) {
+		return infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_UPSTREAM_HTML", "supplier endpoint returned an HTML response")
+	}
+	return infraerrors.New(http.StatusBadGateway, defaultReason, "supplier endpoint returned non-success status")
+}
+
+func isCloudflareOriginFailure(statusCode int, lowerBody string) bool {
+	if statusCode == 520 || statusCode == 521 || statusCode == 522 || statusCode == 523 || statusCode == 524 {
+		return true
+	}
+	return strings.Contains(lowerBody, "cloudflare") &&
+		(strings.Contains(lowerBody, "origin web server") ||
+			strings.Contains(lowerBody, "invalid or incomplete response") ||
+			strings.Contains(lowerBody, "error 520"))
+}
+
+func looksLikeHTMLResponse(lowerBody string) bool {
+	trimmed := strings.TrimSpace(lowerBody)
+	return strings.HasPrefix(trimmed, "<!doctype html") || strings.HasPrefix(trimmed, "<html")
 }
 
 func buildSub2APIUserEndpointURL(apiBaseURL string, endpointPath string) (string, error) {
@@ -806,8 +870,21 @@ func applySessionHeaders(req *http.Request, bundle map[string]any) {
 		req.Header.Set("X-CSRF-Token", csrf)
 		req.Header.Set("X-XSRF-Token", csrf)
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", defaultUserAgent)
+	applyBrowserCompatHeaders(req)
+	if userAgent := firstNonEmpty(stringValue(requiredHeaders, "user-agent"), stringValue(requiredHeaders, "User-Agent")); userAgent != "" {
+		req.Header.Set("User-Agent", userAgent)
+	}
+}
+
+func applyBrowserCompatHeaders(req *http.Request) {
+	if req == nil {
+		return
+	}
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("User-Agent", browserUserAgent)
 }
 
 func cookieHeaderFromBundle(bundle map[string]any) string {
@@ -933,6 +1010,97 @@ func unwrapDataArray(data []byte) ([]any, error) {
 		}
 	}
 	return []any{}, nil
+}
+
+func parseChannelMonitorViews(data []byte) ([]ports.ChannelMonitorView, error) {
+	values, err := unwrapDataArray(data)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]ports.ChannelMonitorView, 0, len(values))
+	for _, value := range values {
+		raw, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		item := ports.ChannelMonitorView{
+			ID:                   int64FromAny(raw["id"]),
+			Name:                 firstNonEmpty(stringFromAny(raw["name"]), stringFromAny(raw["title"])),
+			Provider:             firstNonEmpty(stringFromAny(raw["provider"]), stringFromAny(raw["platform"])),
+			GroupName:            firstNonEmpty(stringFromAny(raw["group_name"]), stringFromAny(raw["groupName"])),
+			PrimaryModel:         firstNonEmpty(stringFromAny(raw["primary_model"]), stringFromAny(raw["primaryModel"]), stringFromAny(raw["model"])),
+			PrimaryStatus:        normalizeMonitorStatus(firstNonEmpty(stringFromAny(raw["primary_status"]), stringFromAny(raw["primaryStatus"]), stringFromAny(raw["status"]))),
+			PrimaryLatencyMS:     optionalInt64FromAny(firstExisting(raw, "primary_latency_ms", "primaryLatencyMs", "latency_ms", "latencyMs")),
+			PrimaryPingLatencyMS: optionalInt64FromAny(firstExisting(raw, "primary_ping_latency_ms", "primaryPingLatencyMs", "ping_latency_ms", "pingLatencyMs")),
+			Availability7D:       float64FromAny(firstExisting(raw, "availability_7d", "availability7d", "availability")),
+			ExtraModels:          parseChannelMonitorExtraModels(firstExisting(raw, "extra_models", "extraModels")),
+			Timeline:             parseChannelMonitorTimeline(firstExisting(raw, "timeline", "history", "buckets")),
+		}
+		if item.Name == "" {
+			item.Name = item.PrimaryModel
+		}
+		if item.PrimaryStatus == "" {
+			item.PrimaryStatus = "unknown"
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func parseChannelMonitorExtraModels(value any) []ports.ChannelMonitorExtraModel {
+	values, ok := value.([]any)
+	if !ok {
+		return []ports.ChannelMonitorExtraModel{}
+	}
+	items := make([]ports.ChannelMonitorExtraModel, 0, len(values))
+	for _, value := range values {
+		raw, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		items = append(items, ports.ChannelMonitorExtraModel{
+			Model:     firstNonEmpty(stringFromAny(raw["model"]), stringFromAny(raw["name"])),
+			Status:    normalizeMonitorStatus(firstNonEmpty(stringFromAny(raw["status"]), stringFromAny(raw["latest_status"]), stringFromAny(raw["latestStatus"]))),
+			LatencyMS: optionalInt64FromAny(firstExisting(raw, "latency_ms", "latencyMs", "latest_latency_ms", "latestLatencyMs")),
+		})
+	}
+	return items
+}
+
+func parseChannelMonitorTimeline(value any) []ports.ChannelMonitorTimelinePoint {
+	values, ok := value.([]any)
+	if !ok {
+		return []ports.ChannelMonitorTimelinePoint{}
+	}
+	items := make([]ports.ChannelMonitorTimelinePoint, 0, len(values))
+	for _, value := range values {
+		raw, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		items = append(items, ports.ChannelMonitorTimelinePoint{
+			Status:        normalizeMonitorStatus(stringFromAny(raw["status"])),
+			LatencyMS:     optionalInt64FromAny(firstExisting(raw, "latency_ms", "latencyMs")),
+			PingLatencyMS: optionalInt64FromAny(firstExisting(raw, "ping_latency_ms", "pingLatencyMs")),
+			CheckedAt:     firstNonEmpty(stringFromAny(raw["checked_at"]), stringFromAny(raw["checkedAt"])),
+		})
+	}
+	return items
+}
+
+func normalizeMonitorStatus(raw string) string {
+	status := strings.ToLower(strings.TrimSpace(raw))
+	if status == "" {
+		return ""
+	}
+	switch status {
+	case "ok", "normal", "healthy", "success":
+		return "operational"
+	case "down", "failed", "error", "timeout":
+		return "failed"
+	default:
+		return status
+	}
 }
 
 func parseSub2APIGroupRates(data []byte) map[string]float64 {
@@ -2309,6 +2477,29 @@ func int64FromAny(value any) int64 {
 		return n
 	default:
 		return 0
+	}
+}
+
+func optionalInt64FromAny(value any) *int64 {
+	if value == nil {
+		return nil
+	}
+	switch value.(type) {
+	case int, int64, float64, json.Number:
+		n := int64FromAny(value)
+		return &n
+	case string:
+		text := strings.TrimSpace(stringFromAny(value))
+		if text == "" {
+			return nil
+		}
+		n, err := strconv.ParseInt(text, 10, 64)
+		if err != nil {
+			return nil
+		}
+		return &n
+	default:
+		return nil
 	}
 }
 

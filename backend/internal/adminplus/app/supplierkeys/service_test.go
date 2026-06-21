@@ -158,6 +158,57 @@ func TestServiceProvisionRejectsGroupWithExistingBoundKeyBeforeProviderCall(t *t
 	require.Empty(t, keyAdapter.calls)
 }
 
+func TestServiceEnsureAllFailsBeforeProviderKeyWhenSub2APIGatewayUnavailable(t *testing.T) {
+	repo := NewMemoryRepository()
+	repo.PutSupplier(&adminplusdomain.Supplier{
+		ID:            7,
+		Name:          "Relay",
+		Type:          adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus: adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:  adminplusdomain.SupplierHealthStatusNormal,
+		APIBaseURL:    "https://relay.example.com",
+	})
+	repo.PutGroup(&adminplusdomain.SupplierGroup{
+		ID:              10,
+		SupplierID:      7,
+		ExternalGroupID: "88",
+		Name:            "Low Cost",
+		ProviderFamily:  "openai",
+		Status:          adminplusdomain.SupplierGroupStatusActive,
+	})
+	keyAdapter := &stubKeyAdapter{
+		result: &ports.ProviderKeyResult{
+			SupplierID:      7,
+			ExternalGroupID: "88",
+			ExternalKeyID:   "99",
+			Name:            "ops-key",
+			Secret:          "sk-provider-secret",
+		},
+	}
+	svc := NewService(repo, &stubSessionReader{}, keyAdapter, NewFailingSub2APIGateway(nil))
+
+	result, err := svc.EnsureAll(context.Background(), EnsureAllInput{
+		SupplierID:          7,
+		LocalAccountBaseURL: "https://relay.example.com/v1",
+		RuntimeStatus:       adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:        adminplusdomain.SupplierHealthStatusNormal,
+		BalanceCurrency:     "USD",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 1, result.Total)
+	require.Equal(t, 1, result.Failed)
+	require.Len(t, result.Items, 1)
+	require.Equal(t, "failed", result.Items[0].Action)
+	require.Equal(t, "LOCAL_SUB2API_GROUP_LIST_FAILED", result.Items[0].ErrorCode)
+	require.Contains(t, result.Items[0].ErrorMessage, "failed to list local Sub2API groups")
+	require.Empty(t, keyAdapter.calls)
+	keys, listErr := repo.List(context.Background(), ListFilter{SupplierID: 7})
+	require.NoError(t, listErr)
+	require.Empty(t, keys)
+}
+
 func TestServiceEnsureAllBindsExistingKeyAccountToLocalGroup(t *testing.T) {
 	repo := NewMemoryRepository()
 	repo.PutSupplier(&adminplusdomain.Supplier{

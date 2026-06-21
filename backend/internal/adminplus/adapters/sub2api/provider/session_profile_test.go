@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,7 +22,9 @@ func TestSessionProfileClientProbeSub2APIUserProfile(t *testing.T) {
 		require.Equal(t, "https://relay.example.com", r.Header.Get("Origin"))
 		require.Equal(t, "https://relay.example.com/dashboard", r.Header.Get("Referer"))
 		require.Equal(t, "csrf-token", r.Header.Get("X-CSRF-Token"))
-		require.Equal(t, "application/json", r.Header.Get("Accept"))
+		require.Contains(t, r.Header.Get("Accept"), "application/json")
+		require.Contains(t, r.Header.Get("User-Agent"), "Mozilla/5.0")
+		require.NotContains(t, r.Header.Get("User-Agent"), "sub2api-admin-plus")
 
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -114,6 +117,10 @@ func TestSessionProfileClientDirectLogin(t *testing.T) {
 		case "/api/v1/auth/login":
 			require.Equal(t, http.MethodPost, r.Method)
 			require.Equal(t, "application/json", r.Header.Get("Content-Type"))
+			require.Contains(t, r.Header.Get("User-Agent"), "Mozilla/5.0")
+			require.NotContains(t, r.Header.Get("User-Agent"), "sub2api-admin-plus")
+			require.Contains(t, r.Header.Get("Accept"), "application/json")
+			require.Contains(t, r.Header.Get("Accept-Language"), "zh-CN")
 			require.Equal(t, serverURL, r.Header.Get("Origin"))
 			require.Equal(t, serverURL+"/", r.Header.Get("Referer"))
 			var payload map[string]any
@@ -156,6 +163,123 @@ func TestSessionProfileClientDirectLogin(t *testing.T) {
 	require.NotNil(t, result.ExpiresAt)
 }
 
+func TestSessionProfileClientDirectLoginUsesBrowserUAWhenLegacyAdapterUAIsRejected(t *testing.T) {
+	var sawBrowserSettings bool
+	var sawBrowserLogin bool
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userAgent := r.Header.Get("User-Agent")
+		if strings.Contains(userAgent, "sub2api-admin-plus-provider-adapter") || !strings.Contains(userAgent, "Mozilla/5.0") {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(520)
+			_, _ = w.Write([]byte(`<!doctype html><html><body>The origin web server returned an invalid or incomplete response to Cloudflare.</body></html>`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/settings/public":
+			require.Equal(t, http.MethodGet, r.Method)
+			sawBrowserSettings = true
+			_, _ = w.Write([]byte(`{"data":{"login_agreement_revision":"rev-ua"}}`))
+		case "/api/v1/auth/login":
+			require.Equal(t, http.MethodPost, r.Method)
+			require.Equal(t, serverURL, r.Header.Get("Origin"))
+			require.Equal(t, serverURL+"/", r.Header.Get("Referer"))
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			require.Equal(t, "rev-ua", payload["login_agreement_revision"])
+			sawBrowserLogin = true
+			_, _ = w.Write([]byte(`{"data":{"access_token":"browser-ua-access-token","expires_in":3600}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	legacyReq, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/settings/public", nil)
+	require.NoError(t, err)
+	legacyReq.Header.Set("User-Agent", "sub2api-admin-plus-provider-adapter/0.1")
+	legacyResp, err := server.Client().Do(legacyReq)
+	require.NoError(t, err)
+	defer func() { _ = legacyResp.Body.Close() }()
+	require.Equal(t, 520, legacyResp.StatusCode)
+
+	client := NewSessionProfileClient(server.Client())
+	result, err := client.DirectLogin(context.Background(), ports.DirectLoginInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Username:   "ops@example.com",
+		Password:   "secret",
+	})
+
+	require.NoError(t, err)
+	require.True(t, sawBrowserSettings)
+	require.True(t, sawBrowserLogin)
+	require.Equal(t, "browser-ua-access-token", result.SessionBundle["access_token"])
+}
+
+func TestSessionProfileClientReadChannelMonitors(t *testing.T) {
+	var sawMonitors bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/v1/channel-monitors", r.URL.Path)
+		require.Equal(t, "Bearer browser-access-token", r.Header.Get("Authorization"))
+		require.Contains(t, r.Header.Get("Accept"), "application/json")
+		sawMonitors = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": {
+				"items": [
+					{
+						"id": 11,
+						"name": "openai池状态",
+						"provider": "openai",
+						"group_name": "vip站长",
+						"primary_model": "gpt-5.5",
+						"primary_status": "operational",
+						"primary_latency_ms": 1329,
+						"primary_ping_latency_ms": 1,
+						"availability_7d": 85.64,
+						"extra_models": [{"model":"gpt-5.1","status":"operational","latency_ms":1200}],
+						"timeline": [{"status":"operational","latency_ms":1329,"ping_latency_ms":1,"checked_at":"2026-06-21T10:00:00Z"}]
+					}
+				]
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewSessionProfileClient(server.Client())
+	result, err := client.ReadChannelMonitors(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Bundle: map[string]any{
+			"access_token": "browser-access-token",
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, sawMonitors)
+	require.Equal(t, int64(7), result.SupplierID)
+	require.Equal(t, "sub2api", result.SystemType)
+	require.Len(t, result.Items, 1)
+	item := result.Items[0]
+	require.Equal(t, int64(11), item.ID)
+	require.Equal(t, "openai池状态", item.Name)
+	require.Equal(t, "openai", item.Provider)
+	require.Equal(t, "vip站长", item.GroupName)
+	require.Equal(t, "gpt-5.5", item.PrimaryModel)
+	require.Equal(t, "operational", item.PrimaryStatus)
+	require.NotNil(t, item.PrimaryLatencyMS)
+	require.Equal(t, int64(1329), *item.PrimaryLatencyMS)
+	require.InDelta(t, 85.64, item.Availability7D, 0.001)
+	require.Len(t, item.ExtraModels, 1)
+	require.Len(t, item.Timeline, 1)
+}
+
 func TestSessionProfileClientDirectLoginClassifiesCaptcha(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -182,6 +306,92 @@ func TestSessionProfileClientDirectLoginClassifiesCaptcha(t *testing.T) {
 
 	require.Error(t, err)
 	require.Equal(t, "LOGIN_CAPTCHA_REQUIRED", infraerrors.Reason(err))
+}
+
+func TestSessionProfileClientDirectLoginPreflightsTurnstile(t *testing.T) {
+	var sawLogin bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/settings/public":
+			_, _ = w.Write([]byte(`{"data":{"turnstile_enabled":true}}`))
+		case "/api/v1/auth/login":
+			sawLogin = true
+			_, _ = w.Write([]byte(`{"data":{"access_token":"unexpected"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSessionProfileClient(server.Client())
+	_, err := client.DirectLogin(context.Background(), ports.DirectLoginInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Username:   "ops@example.com",
+		Password:   "secret",
+	})
+
+	require.Error(t, err)
+	require.False(t, sawLogin)
+	require.Equal(t, "LOGIN_CAPTCHA_REQUIRED", infraerrors.Reason(err))
+}
+
+func TestSessionProfileClientDirectLoginClassifiesCloudflareOriginError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/settings/public":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		case "/api/v1/auth/login":
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(520)
+			_, _ = w.Write([]byte(`<!doctype html><html><body>The origin web server returned an invalid or incomplete response to Cloudflare.</body></html>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSessionProfileClient(server.Client())
+	_, err := client.DirectLogin(context.Background(), ports.DirectLoginInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Username:   "ops@example.com",
+		Password:   "secret",
+	})
+
+	require.Error(t, err)
+	require.Equal(t, "SUPPLIER_DIRECT_LOGIN_UPSTREAM_ORIGIN_ERROR", infraerrors.Reason(err))
+	require.NotContains(t, infraerrors.Message(err), "Cloudflare.")
+}
+
+func TestSessionProfileClientDirectLoginClassifiesSettingsHTML(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/settings/public":
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`<!doctype html><html><body>Bad gateway</body></html>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSessionProfileClient(server.Client())
+	_, err := client.DirectLogin(context.Background(), ports.DirectLoginInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Username:   "ops@example.com",
+		Password:   "secret",
+	})
+
+	require.Error(t, err)
+	require.Equal(t, "SUPPLIER_DIRECT_LOGIN_UPSTREAM_HTML", infraerrors.Reason(err))
 }
 
 func TestSessionProfileClientCreateKey(t *testing.T) {

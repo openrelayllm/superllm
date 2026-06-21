@@ -128,7 +128,7 @@ var ProviderSet = wire.NewSet(
 	adminplushandler.NewSessionHandler,
 	adminplushandler.NewSchedulerHandler,
 	adminplushandler.NewActionHandler,
-	adminplushandler.NewSub2APIHandler,
+	adminplushandler.NewSub2APIHandlerWithAccountTest,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,

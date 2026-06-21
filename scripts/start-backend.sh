@@ -64,4 +64,4 @@ Admin Plus backend
 EOF
 
 cd "${BACKEND_DIR}"
-go run ./cmd/server
+exec go run ./cmd/server

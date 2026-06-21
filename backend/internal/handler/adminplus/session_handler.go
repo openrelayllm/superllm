@@ -127,6 +127,18 @@ func (h *SessionHandler) Probe(c *gin.Context) {
 	response.Success(c, gin.H{"probe": probe})
 }
 
+func (h *SessionHandler) ChannelMonitors(c *gin.Context) {
+	supplierID, ok := parseSupplierID(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.ReadChannelMonitors(c.Request.Context(), supplierID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *SessionHandler) Login(c *gin.Context) {
 	supplierID, ok := parseSupplierID(c)
 	if !ok {

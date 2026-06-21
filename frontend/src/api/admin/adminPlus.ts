@@ -152,6 +152,44 @@ export interface ProbeSupplierSessionResponse {
   balance_event?: BalanceEvent | null
 }
 
+export type SupplierMonitorStatus = 'operational' | 'degraded' | 'failed' | 'error' | string
+
+export interface SupplierChannelMonitorTimelinePoint {
+  status: SupplierMonitorStatus
+  latency_ms?: number | null
+  ping_latency_ms?: number | null
+  checked_at: string
+}
+
+export interface SupplierChannelMonitorExtraModel {
+  model: string
+  status: SupplierMonitorStatus
+  latency_ms?: number | null
+}
+
+export interface SupplierChannelMonitorView {
+  id: number
+  name: string
+  provider: string
+  group_name: string
+  primary_model: string
+  primary_status: SupplierMonitorStatus
+  primary_latency_ms?: number | null
+  primary_ping_latency_ms?: number | null
+  availability_7d: number
+  extra_models: SupplierChannelMonitorExtraModel[]
+  timeline: SupplierChannelMonitorTimelinePoint[]
+}
+
+export interface SupplierChannelMonitorListResponse {
+  supplier_id: number
+  system_type: string
+  origin: string
+  api_base_url?: string
+  items: SupplierChannelMonitorView[]
+  captured_at: string
+}
+
 export interface LoginSupplierSessionPayload {
   origin?: string
   api_base_url?: string
@@ -216,6 +254,19 @@ export interface LocalSub2APIAccount {
   concurrency: number
   priority: number
   rate_multiplier: number
+}
+
+export interface LocalAccountTestModel {
+  id: string
+  type: string
+  display_name: string
+  created_at?: string
+}
+
+export interface LocalAccountTestPayload {
+  model_id: string
+  prompt?: string
+  mode?: string
 }
 
 export interface SupplierAccount {
@@ -897,6 +948,11 @@ export async function probeSupplierSession(id: number, payload?: {
   return data
 }
 
+export async function listSupplierChannelMonitors(id: number): Promise<SupplierChannelMonitorListResponse> {
+  const { data } = await apiClient.get<SupplierChannelMonitorListResponse>(`/admin-plus/suppliers/${id}/channel-monitors`)
+  return data
+}
+
 export async function getSupplierCurrentBalance(id: number, params?: { refresh?: boolean; low_balance_threshold_cents?: number }): Promise<SupplierCurrentBalance> {
   const { data } = await apiClient.get<SupplierCurrentBalance>(`/admin-plus/suppliers/${id}/balance/current`, { params })
   return data
@@ -970,6 +1026,16 @@ export async function listSupplierProvisionJobs(params?: { supplier_id?: number;
 export async function listLocalSub2APIAccounts(params?: { q?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalSub2APIAccount>> {
   const { data } = await apiClient.get<AdminPlusListResponse<LocalSub2APIAccount>>('/admin-plus/sub2api/accounts', { params })
   return data
+}
+
+export async function listLocalAccountTestModels(accountId: number): Promise<LocalAccountTestModel[]> {
+  const { data } = await apiClient.get<LocalAccountTestModel[]>(`/admin-plus/sub2api/accounts/${accountId}/models`)
+  return data
+}
+
+export function localAccountTestURL(accountId: number): string {
+  const baseURL = apiClient.defaults.baseURL || '/api/v1'
+  return `${String(baseURL).replace(/\/+$/, '')}/admin-plus/sub2api/accounts/${accountId}/test`
 }
 
 export async function listLocalUsageLines(params?: { account_id?: number; model?: string; from?: string; to?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalUsageLine>> {
@@ -1237,6 +1303,7 @@ export const adminPlusAPI = {
   getSupplierSession,
   loginSupplierSession,
   probeSupplierSession,
+  listSupplierChannelMonitors,
   upsertSupplierBrowserSession,
   listSupplierGroups,
   syncSupplierGroups,
@@ -1245,6 +1312,8 @@ export const adminPlusAPI = {
   provisionSupplierKey,
   repairSupplierKeyBinding,
   listLocalSub2APIAccounts,
+  listLocalAccountTestModels,
+  localAccountTestURL,
   listLocalUsageLines,
   listLocalUsageSummary,
   listSupplierAccounts,

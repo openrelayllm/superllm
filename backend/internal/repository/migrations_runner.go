@@ -81,6 +81,7 @@ var migrationChecksumCompatibilityRules = map[string]migrationChecksumCompatibil
 	"159_admin_plus_extension_session_capture.sql":            newMigrationChecksumCompatibilityRule("5953b3d13b305d13e483cfe0e510365d7c51736236631d7b0f43e551cd570271", "c3c7013a3ddc239c51fe25e3284215a5b961a69ad68367e8c648c392b45ef5ab", "478288be6abedd63982c3ae7548359d5d2b817bc76b43e4a68ee0168a62a004f", "77e8273ddc7096504c0c5159dd652dd8fef7cd18e38dedfc97cc44819050cb8f", "add4d590fba88b92602441e4f0afc5c14b912550dfe55606c1b3e85fdb25834d", "9de6c863903d7e1fc2a373b9139d18e85f3ead346268dc6c9518700c3e3444d4"),
 	"161_admin_plus_supplier_bill_line_details.sql":           newMigrationChecksumCompatibilityRule("ee173db2c0ca7e64aa3826250f9a8bf52599b84846fafbb7695d67b0d904f701", "bf0da7bc24aa878fdc5e8390b95cf5b902a2c2a24277bcabd8c51b087f1112fe"),
 	"167_admin_plus_extension_task_fetch_promotions.sql":      newMigrationChecksumCompatibilityRule("9de6c863903d7e1fc2a373b9139d18e85f3ead346268dc6c9518700c3e3444d4", "77e8273ddc7096504c0c5159dd652dd8fef7cd18e38dedfc97cc44819050cb8f", "5953b3d13b305d13e483cfe0e510365d7c51736236631d7b0f43e551cd570271"),
+	"169_admin_plus_usage_cost_lines_compat.sql":              newMigrationChecksumCompatibilityRule("ddac0409aa304545d42845dcfcf775a91709bf128c193b907c5db06e8e546681", "b2993e7d06fdba5efd85f2738ef0b3521befa4c75e4c9f2ad27d697b2ec9c581"),
 }
 
 // ApplyMigrations 将嵌入的 SQL 迁移文件应用到指定的数据库。

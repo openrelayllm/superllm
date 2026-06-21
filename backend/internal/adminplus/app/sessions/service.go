@@ -65,6 +65,7 @@ type Service struct {
 	suppliers   SupplierLookup
 	credentials SupplierCredentialLookup
 	prober      ports.SessionProbeAdapter
+	monitors    ports.SessionChannelMonitorAdapter
 	login       ports.SessionLoginAdapter
 	now         func() time.Time
 }
@@ -92,6 +93,13 @@ func NewServiceWithDependencies(repo Repository, cipher Cipher, suppliers Suppli
 		service.login = login[0]
 	}
 	return service
+}
+
+func (s *Service) WithChannelMonitorReader(reader ports.SessionChannelMonitorAdapter) *Service {
+	if s != nil {
+		s.monitors = reader
+	}
+	return s
 }
 
 func (s *Service) Upsert(ctx context.Context, in UpsertInput) (*adminplusdomain.SupplierBrowserSession, error) {
@@ -311,6 +319,20 @@ func (s *Service) ProbeSub2APIUserProfile(ctx context.Context, supplierID int64)
 		return nil, err
 	}
 	return s.prober.ProbeSub2APIUserProfile(ctx, input)
+}
+
+func (s *Service) ReadChannelMonitors(ctx context.Context, supplierID int64) (*ports.ReadChannelMonitorsResult, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("supplier browser session service is not configured")
+	}
+	if s.monitors == nil {
+		return nil, internalError("supplier channel monitor adapter is not configured")
+	}
+	input, err := s.DecryptedProbeInput(ctx, supplierID)
+	if err != nil {
+		return nil, err
+	}
+	return s.monitors.ReadChannelMonitors(ctx, input)
 }
 
 func (s *Service) validateSessionScope(ctx context.Context, supplierID int64, origin string, apiBaseURL string, bundle map[string]any) error {

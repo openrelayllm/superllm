@@ -271,14 +271,10 @@
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex min-w-[420px] justify-end gap-2">
+            <div class="flex min-w-[280px] justify-end gap-2">
               <button type="button" class="btn btn-secondary btn-sm" title="编辑" @click="openEditDialog(row)">
                 <Icon name="edit" size="sm" />
                 编辑
-              </button>
-              <button type="button" class="btn btn-secondary btn-sm" title="状态" @click="openStatusDialog(row)">
-                <Icon name="checkCircle" size="sm" />
-                状态
               </button>
               <button
                 type="button"
@@ -290,16 +286,17 @@
                 <Icon name="login" size="sm" :class="{ 'animate-spin': rowLoginSupplierID === row.id }" />
                 一键登录
               </button>
-              <button type="button" class="btn btn-secondary btn-sm" title="供应商会话" @click="openSessionDialog(row)">
-                <Icon name="shield" size="sm" />
-                会话
-              </button>
-              <button type="button" class="btn btn-secondary btn-sm" title="供应商分组" @click="openGroupsDialog(row)">
-                <Icon name="database" size="sm" />
-                分组
-              </button>
-              <button type="button" class="btn btn-danger btn-sm" title="删除" @click="openDeleteDialog(row)">
-                <Icon name="trash" size="sm" />
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm"
+                :aria-expanded="rowActionsMenuSupplier?.id === row.id"
+                aria-haspopup="menu"
+                data-supplier-row-actions-trigger
+                title="更多操作"
+                @click.stop="toggleRowActionsMenu(row, $event)"
+              >
+                <Icon name="more" size="sm" />
+                更多
               </button>
             </div>
           </template>
@@ -326,6 +323,51 @@
         />
       </template>
     </TablePageLayout>
+
+    <Teleport to="body">
+      <div
+        v-if="rowActionsMenuSupplier"
+        data-supplier-row-actions-menu
+        class="fixed z-[1200] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800"
+        :style="rowActionsMenuStyle"
+        role="menu"
+        @click.stop
+      >
+        <div class="p-2">
+          <button class="row-action-menu-item" role="menuitem" @click="openRowStatusDialog">
+            <span class="row-action-menu-icon bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
+              <Icon name="checkCircle" size="sm" />
+            </span>
+            <span>状态</span>
+          </button>
+          <button class="row-action-menu-item" role="menuitem" @click="openRowSessionDialog">
+            <span class="row-action-menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
+              <Icon name="shield" size="sm" />
+            </span>
+            <span>会话</span>
+          </button>
+          <button class="row-action-menu-item" role="menuitem" @click="openRowGroupsDialog">
+            <span class="row-action-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
+              <Icon name="database" size="sm" />
+            </span>
+            <span>分组</span>
+          </button>
+          <button class="row-action-menu-item" role="menuitem" @click="openRowChannelStatusDialog">
+            <span class="row-action-menu-icon bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300">
+              <Icon name="chart" size="sm" />
+            </span>
+            <span>渠道状态</span>
+          </button>
+          <div class="my-2 border-t border-gray-100 dark:border-gray-700"></div>
+          <button class="row-action-menu-item text-red-600 dark:text-red-300" role="menuitem" @click="openRowDeleteDialog">
+            <span class="row-action-menu-icon bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300">
+              <Icon name="trash" size="sm" />
+            </span>
+            <span>删除</span>
+          </button>
+        </div>
+      </div>
+    </Teleport>
 
     <BaseDialog :show="editorOpen" :title="editingSupplier ? '编辑供应商' : '添加供应商'" width="wide" @close="closeEditor">
       <form id="supplier-editor-form" class="space-y-5" @submit.prevent="submitSupplier">
@@ -611,6 +653,111 @@
       </template>
     </BaseDialog>
 
+    <BaseDialog :show="channelStatusDialogOpen" :title="channelStatusSupplier ? `供应商渠道状态 - ${channelStatusSupplier.name}` : '供应商渠道状态'" width="full" @close="closeChannelStatusDialog">
+      <div class="min-h-[560px] max-w-full overflow-hidden rounded-b-2xl bg-gradient-to-br from-emerald-50/60 via-white to-sky-50/40 px-5 py-5 dark:from-dark-900 dark:via-dark-900 dark:to-dark-800 sm:px-6">
+        <section class="pb-5">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="min-w-0 text-xs text-gray-500 dark:text-dark-400">
+              <div class="truncate" :title="channelMonitorAPIBaseURL || channelMonitorOrigin || '-'">
+                {{ channelMonitorAPIBaseURL || channelMonitorOrigin || '供应商 API 未读取' }}
+              </div>
+              <div class="mt-1">更新于 {{ formatDateTime(channelMonitorCapturedAt) }}</div>
+            </div>
+
+            <div class="flex min-w-0 flex-wrap items-center justify-end gap-3">
+              <div role="tablist" class="inline-flex rounded-xl border border-gray-200/60 bg-gray-100 p-0.5 text-xs dark:border-dark-700/60 dark:bg-dark-800">
+                <button
+                  v-for="option in channelStatusWindowOptions"
+                  :key="option.value"
+                  type="button"
+                  role="tab"
+                  :aria-selected="channelStatusWindow === option.value"
+                  class="rounded-lg px-3 py-1 transition-colors disabled:cursor-not-allowed disabled:opacity-45"
+                  :class="channelStatusWindow === option.value ? 'bg-white font-semibold text-gray-900 shadow-sm dark:bg-dark-700 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+                  :disabled="option.disabled"
+                  :title="option.disabled ? '供应商明细接口接入后启用' : option.label"
+                  @click="channelStatusWindow = option.value"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
+
+              <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-wider" :class="channelStatusOverallChipClass">
+                <span class="mr-1.5 h-1.5 w-1.5 rounded-full animate-pulse" :class="channelStatusOverallDotClass"></span>
+                {{ channelStatusOverallLabel }}
+              </span>
+
+              <button
+                type="button"
+                class="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-gray-200"
+                :disabled="channelStatusLoading || !channelStatusSupplier"
+                title="刷新"
+                @click="loadChannelStatus"
+              >
+                <Icon name="refresh" size="md" :class="{ 'animate-spin': channelStatusLoading }" />
+              </button>
+
+              <button
+                type="button"
+                class="inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300 dark:hover:bg-dark-700"
+                :class="{ 'opacity-60': !channelStatusAutoRefresh }"
+                @click="toggleChannelStatusAutoRefresh"
+              >
+                <Icon name="refresh" size="xs" />
+                自动刷新: {{ channelStatusCountdown }}s
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <div v-if="channelStatusError" class="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+          {{ channelStatusError }}
+        </div>
+
+        <div v-if="channelStatusLoading && channelMonitorItems.length === 0" class="grid gap-5 [grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr))]">
+          <div
+            v-for="index in 6"
+            :key="index"
+            class="min-h-[280px] animate-pulse rounded-2xl border border-gray-200/80 bg-white/70 p-5 dark:border-dark-700/70 dark:bg-dark-800/60"
+          >
+            <div class="flex items-start gap-3">
+              <div class="h-9 w-9 rounded-xl bg-gray-200 dark:bg-dark-700"></div>
+              <div class="flex-1 space-y-2">
+                <div class="h-4 w-2/3 rounded bg-gray-200 dark:bg-dark-700"></div>
+                <div class="h-3 w-1/2 rounded bg-gray-200 dark:bg-dark-700"></div>
+              </div>
+              <div class="h-6 w-16 rounded-full bg-gray-200 dark:bg-dark-700"></div>
+            </div>
+            <div class="mt-5 grid grid-cols-2 gap-2">
+              <div class="h-16 rounded-xl bg-gray-100 dark:bg-dark-900/40"></div>
+              <div class="h-16 rounded-xl bg-gray-100 dark:bg-dark-900/40"></div>
+            </div>
+            <div class="mt-6 h-5 w-full rounded bg-gray-100 dark:bg-dark-900/40"></div>
+          </div>
+        </div>
+
+        <EmptyState
+          v-else-if="channelMonitorItems.length === 0 && !channelStatusError"
+          title="暂无渠道状态"
+          description="请确认供应商已启用渠道监控，并且当前供应商会话有权限读取 /api/v1/channel-monitors。"
+        />
+
+        <div v-else class="grid gap-5 [grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr))]">
+          <SupplierChannelMonitorCard
+            v-for="item in channelMonitorItems"
+            :key="item.id"
+            :item="item"
+            :window="channelStatusWindow"
+            :countdown-seconds="channelStatusCountdown"
+          />
+        </div>
+      </div>
+
+      <template #footer>
+        <button type="button" class="btn btn-secondary" @click="closeChannelStatusDialog">关闭</button>
+      </template>
+    </BaseDialog>
+
     <BaseDialog :show="groupsDialogOpen" :title="groupsSupplier ? `供应商分组 - ${groupsSupplier.name}` : '供应商分组'" width="wide" @close="closeGroupsDialog">
       <div class="space-y-4">
         <div class="flex flex-wrap items-end justify-between gap-3">
@@ -769,24 +916,26 @@
           <template #cell-group_actions="{ row }">
             <div class="flex min-w-[190px] justify-end gap-2">
               <button
+                v-if="groupAction(row).kind === 'provision'"
                 type="button"
                 class="btn btn-secondary btn-sm"
-                :disabled="Boolean(groupKey(row)) || row.status !== 'active'"
-                :title="groupKey(row) ? '该分组已有 Key 记录' : '开通第三方 Key 并同步创建本地账号'"
+                :disabled="groupAction(row).disabled"
+                :title="groupAction(row).title"
                 @click="openProvisionDialog(row)"
               >
-                <Icon name="key" size="sm" />
-                开通
+                <Icon :name="groupAction(row).icon" size="sm" />
+                {{ groupAction(row).label }}
               </button>
               <button
-                v-if="canRepairKey(groupKey(row))"
+                v-if="groupAction(row).kind === 'repair_sub2api_landing'"
                 type="button"
                 class="btn btn-secondary btn-sm"
-                title="绑定已有本地 Sub2API 账号"
-                @click="openRepairDialog(groupKey(row))"
+                :disabled="groupAction(row).disabled"
+                :title="groupAction(row).title"
+                @click="openRepairDialog(groupKey(row)!)"
               >
-                <Icon name="link" size="sm" />
-                修复
+                <Icon :name="groupAction(row).icon" size="sm" />
+                {{ groupAction(row).label }}
               </button>
             </div>
           </template>
@@ -1041,12 +1190,14 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import Icon from '@/components/icons/Icon.vue'
+import SupplierChannelMonitorCard from '@/components/admin-plus/SupplierChannelMonitorCard.vue'
 import type { Column } from '@/components/common/types'
 import type { GroupPlatform } from '@/types'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorCode } from '@/utils/apiError'
+import { supplierGroupAction } from './supplierProvisionPresentation'
 import {
   createSupplier,
   deleteSupplier,
@@ -1054,6 +1205,7 @@ import {
   getSupplierProvisionJob,
   getSupplierCurrentBalance,
   getSupplierSession,
+  listSupplierChannelMonitors,
   listLocalSub2APIAccounts,
   listSupplierCostSnapshots,
   listSupplierKeys,
@@ -1069,6 +1221,7 @@ import {
   type LocalSub2APIAccount,
   type Supplier,
   type SupplierBrowserSession,
+  type SupplierChannelMonitorView,
   type SupplierCostSnapshot,
   type SupplierCurrentBalance,
   type SupplierGroup,
@@ -1081,6 +1234,7 @@ import {
   type SupplierProvisionStatus,
   type SupplierSessionProbeResult,
   type SupplierKind,
+  type SupplierMonitorStatus,
   type SupplierRuntimeStatus,
   type SupplierType
 } from '@/api/admin/adminPlus'
@@ -1097,6 +1251,7 @@ const repairSubmitting = ref(false)
 const editorOpen = ref(false)
 const statusDialogOpen = ref(false)
 const sessionDialogOpen = ref(false)
+const channelStatusDialogOpen = ref(false)
 const groupsDialogOpen = ref(false)
 const provisionDialogOpen = ref(false)
 const repairDialogOpen = ref(false)
@@ -1106,27 +1261,39 @@ const bulkStatusMode = ref(false)
 const bulkDeleteMode = ref(false)
 const editingSupplier = ref<Supplier | null>(null)
 const sessionSupplier = ref<Supplier | null>(null)
+const channelStatusSupplier = ref<Supplier | null>(null)
 const groupsSupplier = ref<Supplier | null>(null)
 const provisionGroup = ref<SupplierGroup | null>(null)
 const repairKey = ref<SupplierKey | null>(null)
 const deletingSupplier = ref<Supplier | null>(null)
+const rowActionsMenuSupplier = ref<Supplier | null>(null)
+const rowActionsMenuStyle = ref<Record<string, string>>({})
 const suppliers = ref<Supplier[]>([])
 const supplierGroups = ref<SupplierGroup[]>([])
 const supplierKeys = ref<SupplierKey[]>([])
 const supplierCostSnapshots = ref<Record<number, SupplierCostSnapshot | undefined>>({})
 const activeProvisionJob = ref<SupplierProvisionJob | null>(null)
 const localAccounts = ref<LocalSub2APIAccount[]>([])
+const channelMonitorItems = ref<SupplierChannelMonitorView[]>([])
 const sessionStore = reactive<Record<number, SupplierBrowserSession | undefined>>({})
 const currentBalanceStore = reactive<Record<number, SupplierCurrentBalance | undefined>>({})
 const sessionLoading = ref(false)
 const loggingInSession = ref(false)
 const probingSession = ref(false)
 const currentBalanceLoading = ref(false)
+const channelStatusLoading = ref(false)
 const groupsLoading = ref(false)
 const groupsSyncing = ref(false)
 const keysEnsuring = ref(false)
 const repairAccountsLoading = ref(false)
 const sessionLoadError = ref('')
+const channelStatusError = ref('')
+const channelMonitorCapturedAt = ref('')
+const channelMonitorOrigin = ref('')
+const channelMonitorAPIBaseURL = ref('')
+const channelStatusWindow = ref<'7d' | '15d' | '30d'>('7d')
+const channelStatusAutoRefresh = ref(true)
+const channelStatusCountdown = ref(16)
 const groupsError = ref('')
 const provisionError = ref('')
 const provisionJobError = ref('')
@@ -1134,6 +1301,11 @@ const repairError = ref('')
 const lastProbe = ref<SupplierSessionProbeResult | null>(null)
 const rowLoginSupplierID = ref<number | null>(null)
 let provisionJobTimer: ReturnType<typeof window.setTimeout> | undefined
+let channelStatusAutoRefreshTimer: ReturnType<typeof window.setInterval> | undefined
+
+const ROW_ACTIONS_MENU_WIDTH = 224
+const ROW_ACTIONS_MENU_HEIGHT = 248
+const ROW_ACTIONS_MENU_MARGIN = 8
 
 const filters = reactive({
   q: typeof route.query.q === 'string' ? route.query.q : '',
@@ -1375,6 +1547,35 @@ const capabilityBadges = computed(() => {
     { key: 'can_create_key', label: '创建 Key', enabled: Boolean(capabilities.can_create_key) },
     { key: 'can_read_usage_costs', label: '用量消耗', enabled: Boolean(capabilities.can_read_usage_costs) }
   ]
+})
+
+const channelStatusOverall = computed<SupplierMonitorStatus>(() => {
+  if (channelMonitorItems.value.length === 0) return 'operational'
+  if (channelMonitorItems.value.some((item) => item.primary_status === 'failed' || item.primary_status === 'error')) return 'failed'
+  if (channelMonitorItems.value.some((item) => item.primary_status !== 'operational')) return 'degraded'
+  return 'operational'
+})
+
+const channelStatusWindowOptions = computed<Array<{ value: '7d' | '15d' | '30d'; label: string; disabled: boolean }>>(() => [
+  { value: '7d', label: '7 天', disabled: false },
+  { value: '15d', label: '15 天', disabled: true },
+  { value: '30d', label: '30 天', disabled: true }
+])
+
+const channelStatusOverallLabel = computed(() => {
+  return channelStatusOverall.value === 'operational' ? 'OPERATIONAL' : 'DEGRADED'
+})
+
+const channelStatusOverallChipClass = computed(() => {
+  if (channelStatusOverall.value === 'operational') {
+    return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+  }
+  return 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+})
+
+const channelStatusOverallDotClass = computed(() => {
+  if (channelStatusOverall.value === 'operational') return 'bg-emerald-500'
+  return 'bg-amber-500'
 })
 
 const deleteConfirmMessage = computed(() => {
@@ -1664,8 +1865,8 @@ function groupKey(group: SupplierGroup): SupplierKey | undefined {
   return supplierKeysByGroupID.value.get(group.id)
 }
 
-function canRepairKey(key?: SupplierKey): key is SupplierKey {
-  return key?.status === 'failed' && ['LOCAL_ACCOUNT_CREATE_FAILED', 'SUPPLIER_ACCOUNT_BIND_FAILED'].includes(key.error_code || '')
+function groupAction(group: SupplierGroup) {
+  return supplierGroupAction(group, groupKey(group))
 }
 
 function sessionBadgeText(supplierID: number): string {
@@ -1747,8 +1948,20 @@ function directLoginPreflightError(supplier: Supplier): string {
 
 function directLoginErrorMessage(error: unknown): string {
   const code = extractApiErrorCode(error)
+  if (code && ['SUPPLIER_DIRECT_LOGIN_UPSTREAM_ORIGIN_ERROR', 'SUPPLIER_DIRECT_LOGIN_UPSTREAM_HTML', 'SUPPLIER_DIRECT_LOGIN_SETTINGS_BAD_STATUS', 'SUPPLIER_DIRECT_LOGIN_BAD_STATUS'].includes(code)) {
+    return '供应商站点返回源站或前置层异常，后端直登失败；请稍后重试，或使用 Chrome 插件采集会话'
+  }
   if (code && ['LOGIN_CAPTCHA_REQUIRED', 'LOGIN_MFA_REQUIRED', 'BROWSER_FALLBACK_REQUIRED'].includes(code)) {
     return '供应商登录需要验证码、2FA 或浏览器上下文，请使用 Chrome 插件采集会话'
+  }
+  if (code === 'SUPPLIER_DIRECT_LOGIN_ADMIN_REQUIRED') {
+    return '供应商启用了后台模式，后端直登需要供应商管理员账号'
+  }
+  if (code === '429') {
+    return '供应商登录限流，请稍后重试'
+  }
+  if (code === 'SUPPLIER_BROWSER_CREDENTIAL_DECRYPT_FAILED') {
+    return '已保存的供应商登录凭据无法解密，请重新编辑并保存账号密码；修复版本保存后重启不会再次失效'
   }
   if (code && ['SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED', 'SUPPLIER_BROWSER_CREDENTIAL_REQUIRED', 'SUPPLIER_BROWSER_LOGIN_DISABLED'].includes(code)) {
     return '供应商未配置可用登录凭据，请先编辑供应商补齐账号密码或临时 Token'
@@ -1756,7 +1969,36 @@ function directLoginErrorMessage(error: unknown): string {
   if (code === 'SUPPLIER_DASHBOARD_URL_REQUIRED') {
     return '供应商未配置后台地址，请先编辑供应商补齐地址'
   }
+  const rawMessage = (error as { message?: string }).message || ''
+  const normalizedMessage = rawMessage.toLowerCase()
+  if (normalizedMessage.includes('cloudflare') || normalizedMessage.includes('origin web server') || normalizedMessage.includes('invalid or incomplete response')) {
+    return '供应商站点返回源站或前置层异常，后端直登失败；请稍后重试，或使用 Chrome 插件采集会话'
+  }
   return (error as { message?: string }).message || '后端直登失败'
+}
+
+function channelStatusErrorMessage(error: unknown): string {
+  const code = extractApiErrorCode(error)
+  const status = (error as { status?: number })?.status
+  if ((status === 404 || code === '404') && !((error as { reason?: string })?.reason)) {
+    return 'Admin Plus 后端服务还没有加载供应商渠道状态路由，请确认已发布并重启到包含 /api/v1/admin-plus/suppliers/:id/channel-monitors 的版本。'
+  }
+  if (code && ['SUPPLIER_SESSION_NOT_FOUND', 'SUPPLIER_SESSION_EXPIRED', 'SUPPLIER_SESSION_DECRYPT_FAILED'].includes(code)) {
+    return '当前供应商还没有可用会话，请先一键登录，或使用 Chrome 插件采集供应商会话后再读取渠道状态。'
+  }
+  if (code === 'SUPPLIER_SESSION_PERMISSION_DENIED') {
+    return '当前供应商会话无权限读取渠道状态，请重新一键登录或使用 Chrome 插件采集最新会话。'
+  }
+  if (code === 'SUPPLIER_SESSION_BASE_URL_REQUIRED') {
+    return '供应商未配置后台地址或 API Base URL，请先编辑供应商补齐地址。'
+  }
+  if (code && ['SUPPLIER_SESSION_API_BASE_URL_INVALID', 'SUPPLIER_SESSION_ORIGIN_INVALID', 'SUPPLIER_SESSION_URL_INVALID', 'SUPPLIER_SESSION_HOST_NOT_ALLOWED'].includes(code)) {
+    return '供应商会话地址与供应商配置不匹配，请检查后台地址和 API Base URL。'
+  }
+  if (code && ['SUPPLIER_SESSION_REQUEST_FAILED', 'SUPPLIER_SESSION_BAD_STATUS', 'SUPPLIER_CHANNEL_MONITORS_RESPONSE_INVALID'].includes(code)) {
+    return '供应商渠道状态接口返回异常，请确认该供应商已部署支持 /api/v1/channel-monitors 的 Sub2API 版本。'
+  }
+  return (error as { message?: string }).message || '加载供应商渠道状态失败'
 }
 
 function isSwitchable(supplier: Supplier): boolean {
@@ -1867,6 +2109,30 @@ async function reloadGroupSession() {
   }
 }
 
+async function loadChannelStatus() {
+  if (!channelStatusSupplier.value) return
+  if (channelStatusSupplier.value.type !== 'sub2api') {
+    channelStatusError.value = '当前仅支持读取 Sub2API 类型供应商的渠道状态。'
+    channelMonitorItems.value = []
+    return
+  }
+  channelStatusLoading.value = true
+  channelStatusError.value = ''
+  try {
+    const result = await listSupplierChannelMonitors(channelStatusSupplier.value.id)
+    channelMonitorItems.value = result.items || []
+    channelMonitorCapturedAt.value = result.captured_at || ''
+    channelMonitorOrigin.value = result.origin || ''
+    channelMonitorAPIBaseURL.value = result.api_base_url || ''
+    channelStatusCountdown.value = 16
+  } catch (error) {
+    channelMonitorItems.value = []
+    channelStatusError.value = channelStatusErrorMessage(error)
+  } finally {
+    channelStatusLoading.value = false
+  }
+}
+
 function reloadFirstPage() {
   pagination.page = 1
   void loadSuppliers()
@@ -1946,6 +2212,7 @@ function openCreateDialog() {
 }
 
 function openEditDialog(supplier: Supplier) {
+  closeRowActionsMenu()
   editingSupplier.value = supplier
   fillForm(supplier)
   editorOpen.value = true
@@ -1995,6 +2262,7 @@ async function submitSupplier() {
 }
 
 function openStatusDialog(supplier: Supplier) {
+  closeRowActionsMenu()
   bulkStatusMode.value = false
   statusForm.id = supplier.id
   statusForm.name = supplier.name
@@ -2004,6 +2272,7 @@ function openStatusDialog(supplier: Supplier) {
 }
 
 function openSessionDialog(supplier: Supplier) {
+  closeRowActionsMenu()
   sessionSupplier.value = supplier
   lastProbe.value = null
   sessionLoadError.value = ''
@@ -2011,7 +2280,54 @@ function openSessionDialog(supplier: Supplier) {
   void Promise.all([reloadCurrentSession(), reloadCurrentBalance(false)])
 }
 
+function openChannelStatusDialog(supplier: Supplier) {
+  closeRowActionsMenu()
+  channelStatusSupplier.value = supplier
+  channelMonitorItems.value = []
+  channelMonitorCapturedAt.value = ''
+  channelMonitorOrigin.value = ''
+  channelMonitorAPIBaseURL.value = ''
+  channelStatusError.value = ''
+  channelStatusWindow.value = '7d'
+  channelStatusCountdown.value = 16
+  channelStatusDialogOpen.value = true
+  startChannelStatusAutoRefresh()
+  void loadChannelStatus()
+}
+
+function closeChannelStatusDialog() {
+  channelStatusDialogOpen.value = false
+  stopChannelStatusAutoRefresh()
+}
+
+function toggleChannelStatusAutoRefresh() {
+  channelStatusAutoRefresh.value = !channelStatusAutoRefresh.value
+  if (channelStatusAutoRefresh.value) {
+    channelStatusCountdown.value = 16
+    startChannelStatusAutoRefresh()
+  }
+}
+
+function startChannelStatusAutoRefresh() {
+  stopChannelStatusAutoRefresh()
+  channelStatusAutoRefreshTimer = window.setInterval(() => {
+    if (!channelStatusDialogOpen.value || !channelStatusAutoRefresh.value) return
+    channelStatusCountdown.value = Math.max(0, channelStatusCountdown.value - 1)
+    if (channelStatusCountdown.value === 0 && !channelStatusLoading.value) {
+      void loadChannelStatus()
+    }
+  }, 1000)
+}
+
+function stopChannelStatusAutoRefresh() {
+  if (channelStatusAutoRefreshTimer) {
+    window.clearInterval(channelStatusAutoRefreshTimer)
+    channelStatusAutoRefreshTimer = undefined
+  }
+}
+
 function openGroupsDialog(supplier: Supplier) {
+  closeRowActionsMenu()
   stopProvisionJobPolling()
   groupsSupplier.value = supplier
   supplierGroups.value = []
@@ -2442,9 +2758,99 @@ async function submitStatus() {
 }
 
 function openDeleteDialog(supplier: Supplier) {
+  closeRowActionsMenu()
   bulkDeleteMode.value = false
   deletingSupplier.value = supplier
   deleteDialogOpen.value = true
+}
+
+function toggleRowActionsMenu(supplier: Supplier, event: MouseEvent) {
+  if (rowActionsMenuSupplier.value?.id === supplier.id) {
+    closeRowActionsMenu()
+    return
+  }
+  const target = event.currentTarget as HTMLElement | null
+  const rect = target?.getBoundingClientRect()
+  rowActionsMenuSupplier.value = supplier
+  rowActionsMenuStyle.value = positionRowActionsMenu(rect)
+}
+
+function positionRowActionsMenu(rect?: DOMRect): Record<string, string> {
+  if (!rect || typeof window === 'undefined') {
+    return {
+      top: '96px',
+      left: `${ROW_ACTIONS_MENU_MARGIN}px`,
+      width: `${ROW_ACTIONS_MENU_WIDTH}px`
+    }
+  }
+
+  const maxLeft = Math.max(ROW_ACTIONS_MENU_MARGIN, window.innerWidth - ROW_ACTIONS_MENU_WIDTH - ROW_ACTIONS_MENU_MARGIN)
+  const left = Math.min(Math.max(rect.right - ROW_ACTIONS_MENU_WIDTH, ROW_ACTIONS_MENU_MARGIN), maxLeft)
+  const belowTop = rect.bottom + ROW_ACTIONS_MENU_MARGIN
+  const aboveTop = rect.top - ROW_ACTIONS_MENU_HEIGHT - ROW_ACTIONS_MENU_MARGIN
+  const hasSpaceBelow = belowTop + ROW_ACTIONS_MENU_HEIGHT <= window.innerHeight - ROW_ACTIONS_MENU_MARGIN
+  const top = hasSpaceBelow ? belowTop : Math.max(ROW_ACTIONS_MENU_MARGIN, aboveTop)
+
+  return {
+    top: `${top}px`,
+    left: `${left}px`,
+    width: `${ROW_ACTIONS_MENU_WIDTH}px`
+  }
+}
+
+function closeRowActionsMenu() {
+  rowActionsMenuSupplier.value = null
+  rowActionsMenuStyle.value = {}
+}
+
+function handleRowActionsOutsideClick(event: MouseEvent) {
+  if (!rowActionsMenuSupplier.value) return
+  const target = event.target as HTMLElement | null
+  if (!target) return
+  if (target.closest('[data-supplier-row-actions-menu]') || target.closest('[data-supplier-row-actions-trigger]')) return
+  closeRowActionsMenu()
+}
+
+function mountRowActionsMenuListeners() {
+  document.addEventListener('click', handleRowActionsOutsideClick)
+  window.addEventListener('resize', closeRowActionsMenu)
+  window.addEventListener('scroll', closeRowActionsMenu, true)
+}
+
+function unmountRowActionsMenuListeners() {
+  document.removeEventListener('click', handleRowActionsOutsideClick)
+  window.removeEventListener('resize', closeRowActionsMenu)
+  window.removeEventListener('scroll', closeRowActionsMenu, true)
+}
+
+function openRowStatusDialog() {
+  const supplier = rowActionsMenuSupplier.value
+  if (!supplier) return
+  openStatusDialog(supplier)
+}
+
+function openRowSessionDialog() {
+  const supplier = rowActionsMenuSupplier.value
+  if (!supplier) return
+  openSessionDialog(supplier)
+}
+
+function openRowGroupsDialog() {
+  const supplier = rowActionsMenuSupplier.value
+  if (!supplier) return
+  openGroupsDialog(supplier)
+}
+
+function openRowChannelStatusDialog() {
+  const supplier = rowActionsMenuSupplier.value
+  if (!supplier) return
+  openChannelStatusDialog(supplier)
+}
+
+function openRowDeleteDialog() {
+  const supplier = rowActionsMenuSupplier.value
+  if (!supplier) return
+  openDeleteDialog(supplier)
 }
 
 function openBulkDeleteDialog() {
@@ -2496,8 +2902,18 @@ watch(
   }
 )
 
-onMounted(loadSuppliers)
-onBeforeUnmount(stopProvisionJobPolling)
+function cleanupTimers() {
+  stopProvisionJobPolling()
+  stopChannelStatusAutoRefresh()
+  closeRowActionsMenu()
+  unmountRowActionsMenuListeners()
+}
+
+onMounted(() => {
+  mountRowActionsMenuListeners()
+  void loadSuppliers()
+})
+onBeforeUnmount(cleanupTimers)
 </script>
 
 <style scoped>
@@ -2507,5 +2923,13 @@ onBeforeUnmount(stopProvisionJobPolling)
 
 .menu-icon {
   @apply flex h-8 w-8 items-center justify-center rounded-md;
+}
+
+.row-action-menu-item {
+  @apply flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700;
+}
+
+.row-action-menu-icon {
+  @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-md;
 }
 </style>

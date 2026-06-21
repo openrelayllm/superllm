@@ -197,4 +197,13 @@ func TestIsMigrationChecksumCompatible(t *testing.T) {
 		)
 		require.True(t, ok)
 	})
+
+	t.Run("169历史usage cost compat checksum可兼容当前版本", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"169_admin_plus_usage_cost_lines_compat.sql",
+			"b2993e7d06fdba5efd85f2738ef0b3521befa4c75e4c9f2ad27d697b2ec9c581",
+			"ddac0409aa304545d42845dcfcf775a91709bf128c193b907c5db06e8e546681",
+		)
+		require.True(t, ok)
+	})
 }

@@ -46,12 +46,15 @@ func RegisterAdminPlusRoutes(
 			suppliers.GET("/:id/session", h.AdminPlus.Session.Get)
 			suppliers.POST("/:id/session/login", h.AdminPlus.Session.Login)
 			suppliers.POST("/:id/session/probe", h.AdminPlus.Session.Probe)
+			suppliers.GET("/:id/channel-monitors", h.AdminPlus.Session.ChannelMonitors)
 			suppliers.POST("/:id/browser-sessions", h.AdminPlus.Session.Upsert)
 		}
 
 		sub2api := adminPlus.Group("/sub2api")
 		{
 			sub2api.GET("/accounts", h.AdminPlus.Supplier.ListLocalAccounts)
+			sub2api.GET("/accounts/:accountID/models", h.AdminPlus.Sub2API.ListLocalAccountModels)
+			sub2api.POST("/accounts/:accountID/test", h.AdminPlus.Sub2API.TestLocalAccount)
 			sub2api.GET("/account-runtime", h.AdminPlus.Sub2API.ListAccountRuntime)
 			sub2api.GET("/usage-lines", h.AdminPlus.Sub2API.ListLocalUsageLines)
 			sub2api.GET("/usage-summary", h.AdminPlus.Sub2API.ListLocalUsageSummaries)

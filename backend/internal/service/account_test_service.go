@@ -14,10 +14,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -48,6 +50,14 @@ type TestEvent struct {
 	Data     any    `json:"data,omitempty"`
 	Success  bool   `json:"success,omitempty"`
 	Error    string `json:"error,omitempty"`
+}
+
+// AccountTestModel is the normalized model shape used by the admin test UI.
+type AccountTestModel struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	DisplayName string `json:"display_name"`
+	CreatedAt   string `json:"created_at"`
 }
 
 const (
@@ -91,6 +101,137 @@ func NewAccountTestService(
 		cfg:                       cfg,
 		tlsFPProfileService:       tlsFPProfileService,
 	}
+}
+
+// GetAvailableModels returns selectable models for the account test dialog.
+func (s *AccountTestService) GetAvailableModels(ctx context.Context, accountID int64) ([]AccountTestModel, error) {
+	if s == nil || s.accountRepo == nil {
+		return nil, errors.New("account test service is not configured")
+	}
+
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+
+	switch {
+	case account.IsOpenAI():
+		defaults := accountTestModelsFromOpenAI(openai.DefaultModels)
+		if account.IsOpenAIPassthroughEnabled() {
+			return defaults, nil
+		}
+		return mappedAccountTestModels(account.GetModelMapping(), defaults), nil
+	case account.IsGemini():
+		defaults := accountTestModelsFromGemini(geminicli.DefaultModels)
+		if account.IsOAuth() {
+			return defaults, nil
+		}
+		return mappedAccountTestModels(account.GetModelMapping(), defaults), nil
+	case account.Platform == PlatformAntigravity:
+		return accountTestModelsFromAntigravity(antigravity.DefaultModels()), nil
+	default:
+		defaults := accountTestModelsFromClaude(claude.DefaultModels)
+		if account.IsOAuth() {
+			return defaults, nil
+		}
+		return mappedAccountTestModels(account.GetModelMapping(), defaults), nil
+	}
+}
+
+func accountTestModelsFromOpenAI(models []openai.Model) []AccountTestModel {
+	out := make([]AccountTestModel, 0, len(models))
+	for _, model := range models {
+		out = append(out, AccountTestModel{
+			ID:          model.ID,
+			Type:        defaultModelType(model.Type),
+			DisplayName: defaultDisplayName(model.ID, model.DisplayName),
+		})
+	}
+	return out
+}
+
+func accountTestModelsFromGemini(models []geminicli.Model) []AccountTestModel {
+	out := make([]AccountTestModel, 0, len(models))
+	for _, model := range models {
+		out = append(out, AccountTestModel{
+			ID:          model.ID,
+			Type:        defaultModelType(model.Type),
+			DisplayName: defaultDisplayName(model.ID, model.DisplayName),
+			CreatedAt:   model.CreatedAt,
+		})
+	}
+	return out
+}
+
+func accountTestModelsFromClaude(models []claude.Model) []AccountTestModel {
+	out := make([]AccountTestModel, 0, len(models))
+	for _, model := range models {
+		out = append(out, AccountTestModel{
+			ID:          model.ID,
+			Type:        defaultModelType(model.Type),
+			DisplayName: defaultDisplayName(model.ID, model.DisplayName),
+			CreatedAt:   model.CreatedAt,
+		})
+	}
+	return out
+}
+
+func accountTestModelsFromAntigravity(models []antigravity.ClaudeModel) []AccountTestModel {
+	out := make([]AccountTestModel, 0, len(models))
+	for _, model := range models {
+		out = append(out, AccountTestModel{
+			ID:          model.ID,
+			Type:        defaultModelType(model.Type),
+			DisplayName: defaultDisplayName(model.ID, model.DisplayName),
+			CreatedAt:   model.CreatedAt,
+		})
+	}
+	return out
+}
+
+func mappedAccountTestModels(mapping map[string]string, defaults []AccountTestModel) []AccountTestModel {
+	if len(mapping) == 0 {
+		return defaults
+	}
+
+	known := make(map[string]AccountTestModel, len(defaults))
+	for _, model := range defaults {
+		known[model.ID] = model
+	}
+
+	ids := make([]string, 0, len(mapping))
+	for id := range mapping {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	out := make([]AccountTestModel, 0, len(ids))
+	for _, id := range ids {
+		if model, ok := known[id]; ok {
+			out = append(out, model)
+			continue
+		}
+		out = append(out, AccountTestModel{
+			ID:          id,
+			Type:        "model",
+			DisplayName: id,
+		})
+	}
+	return out
+}
+
+func defaultModelType(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "model"
+	}
+	return value
+}
+
+func defaultDisplayName(id string, displayName string) string {
+	if strings.TrimSpace(displayName) != "" {
+		return displayName
+	}
+	return id
 }
 
 func (s *AccountTestService) validateUpstreamBaseURL(raw string) (string, error) {
@@ -527,6 +668,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	var apiURL string
 	var isOAuth bool
 	var chatgptAccountID string
+	var normalizedBaseURL string
 
 	if account.IsOAuth() {
 		isOAuth = true
@@ -550,7 +692,8 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if baseURL == "" {
 			baseURL = "https://api.openai.com"
 		}
-		normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+		var err error
+		normalizedBaseURL, err = s.validateUpstreamBaseURL(baseURL)
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
@@ -624,11 +767,28 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
+		if shouldFallbackOpenAITestResponsesToChatCompletions(account, resp.StatusCode) {
+			s.sendEvent(c, TestEvent{
+				Type: "status",
+				Text: fmt.Sprintf("Responses API 测试返回 %d，回落到 /v1/chat/completions", resp.StatusCode),
+			})
+			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
+		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
 	// Process SSE stream
 	return s.processOpenAIStream(c, resp.Body)
+}
+
+func shouldFallbackOpenAITestResponsesToChatCompletions(account *Account, statusCode int) bool {
+	if account == nil || account.Type != AccountTypeAPIKey {
+		return false
+	}
+	if openai_compat.ResolveResponsesSupport(account.Extra) != openai_compat.ResponsesSupportUnknown {
+		return false
+	}
+	return statusCode == http.StatusNotFound || statusCode == http.StatusMethodNotAllowed || statusCode >= http.StatusInternalServerError
 }
 
 // testOpenAIChatCompletionsConnection tests an OpenAI-compatible APIKey account
