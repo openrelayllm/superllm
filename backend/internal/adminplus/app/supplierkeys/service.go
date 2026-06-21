@@ -834,46 +834,6 @@ func (s *Service) ensureLocalGroup(ctx context.Context, supplier *adminplusdomai
 	return nil, false, infraerrors.New(http.StatusBadGateway, "LOCAL_SUB2API_GROUP_CREATE_FAILED", "failed to create local Sub2API group").WithCause(err)
 }
 
-func (s *Service) ensureLocalAccountGroup(ctx context.Context, localAccountID int64, localGroupID int64) (bool, error) {
-	if localAccountID <= 0 || localGroupID <= 0 {
-		return false, nil
-	}
-	localAccount, err := s.sub2apiGateway.GetAccount(ctx, localAccountID)
-	if err != nil {
-		return false, infraerrors.New(http.StatusBadGateway, "LOCAL_SUB2API_ACCOUNT_GET_FAILED", "failed to get local Sub2API account").WithCause(err)
-	}
-	return s.ensureLocalAccountGroupForAccount(ctx, localAccount, localGroupID)
-}
-
-func (s *Service) ensureLocalAccountGroupForAccount(ctx context.Context, localAccount *service.Account, localGroupID int64) (bool, error) {
-	bound, _, err := s.ensureLocalAccountStateForAccount(ctx, localAccount, localGroupID, "", nil, nil)
-	return bound, err
-}
-
-func (s *Service) ensureLocalAccountState(ctx context.Context, localAccountID int64, localGroupID int64, baseURL string, key *adminplusdomain.SupplierKey, group *adminplusdomain.SupplierGroup) (bool, *adminplusdomain.SupplierKey, error) {
-	if localAccountID <= 0 || localGroupID <= 0 {
-		return false, key, nil
-	}
-	localAccount, err := s.sub2apiGateway.GetAccount(ctx, localAccountID)
-	if err != nil {
-		return false, key, infraerrors.New(http.StatusBadGateway, "LOCAL_SUB2API_ACCOUNT_GET_FAILED", "failed to get local Sub2API account").WithCause(err)
-	}
-	bound, account, err := s.ensureLocalAccountStateForAccount(ctx, localAccount, localGroupID, baseURL, key, group)
-	if err != nil || key == nil || account == nil {
-		return bound, key, err
-	}
-	if account.Name == key.LocalAccountName &&
-		account.Platform == key.LocalAccountPlatform &&
-		account.Type == key.LocalAccountType {
-		return bound, key, nil
-	}
-	updated, err := s.repo.UpdateKeyAfterLocalBind(ctx, key.ID, account, key.Status, key.ErrorCode, key.ErrorMessage)
-	if err != nil {
-		return bound, key, err
-	}
-	return bound, updated, nil
-}
-
 func (s *Service) ensureLocalAccountStateForAccount(ctx context.Context, localAccount *service.Account, localGroupID int64, baseURL string, key *adminplusdomain.SupplierKey, group *adminplusdomain.SupplierGroup) (bool, *service.Account, error) {
 	return s.ensureLocalAccountStateForGroups(ctx, localAccount, []int64{localGroupID}, baseURL, key, group)
 }

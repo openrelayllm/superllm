@@ -84,6 +84,12 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     meta: adminMeta('采集会话')
   },
   {
+    path: '/admin/events/announcements',
+    name: 'AdminPlusAnnouncements',
+    component: () => import('@/views/admin/operations/AnnouncementsView.vue'),
+    meta: adminMeta('公告')
+  },
+  {
     path: '/admin/monitoring/rates',
     redirect: redirectWithQuery('/admin/suppliers')
   },
@@ -101,9 +107,7 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/monitoring/announcements',
-    name: 'AdminPlusAnnouncements',
-    component: () => import('@/views/admin/operations/AnnouncementsView.vue'),
-    meta: adminMeta('公告')
+    redirect: redirectWithQuery('/admin/events/announcements')
   },
   {
     path: '/admin/finance/costs',
@@ -165,7 +169,7 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/operations/announcements',
-    redirect: redirectWithQuery('/admin/monitoring/announcements')
+    redirect: redirectWithQuery('/admin/events/announcements')
   },
   {
     path: '/admin/operations/scheduler',

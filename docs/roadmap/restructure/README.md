@@ -220,8 +220,8 @@ flowchart TD
 - 分组弹窗改为步骤式任务面板：会话、同步分组、开通 Key/账号、真实 Sub2API 验证和初次采集按步骤展示。
 - 任务抽屉展示 job/step 进度、错误码、重试、人工修复和审计。
 - 账号/Key 绑定页只管失败修复、审计和历史绑定，不承担新增主流程。
-- 公告保留独立运营事件入口；费率、健康、并发、账号运行态和余额不再独立成页，只作为供应商管理、账号/Key 绑定、成本对账和事件事实字段展示。
-- `运维监控` 是 Sub2API 既有后台能力，不在 Admin Plus 重复注册 current 页面；`/admin/ops` 只保留 compat 重定向到 `/admin/suppliers`。
+- 公告保留独立运营事件入口，current 路径为 `/admin/events/announcements`；费率、健康、并发、账号运行态和余额不再独立成页，只作为供应商管理、账号/Key 绑定、成本对账和事件事实字段展示。
+- `运维监控` 是 Sub2API 既有后台能力，不在 Admin Plus 重复注册 current 页面；`/admin/ops` 和旧 `/admin/monitoring/*` 只保留 compat 重定向，不承载页面组件或新增业务逻辑。
 - `动作建议`、`通知记录`、`执行审计` 不再作为 current 页面入口；`/admin/automation/*` 和旧 `/admin/operations/actions|notifications` 只保留 compat 重定向到 `/admin/suppliers`，确认无外部书签依赖后删除路由。
 - 表单、弹窗、工具栏、分页、批量操作继续参考 Sub2API 后台现有交互。
 

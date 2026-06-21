@@ -706,20 +706,6 @@ func containsSensitiveMarker(value string) bool {
 	return false
 }
 
-func stepID(step *adminplusdomain.SupplierProvisionStep) int64 {
-	if step == nil {
-		return 0
-	}
-	return step.ID
-}
-
-func supplierGroupID(step *adminplusdomain.SupplierProvisionStep) int64 {
-	if step == nil {
-		return 0
-	}
-	return step.SupplierGroupID
-}
-
 func min(a, b int) int {
 	if a < b {
 		return a

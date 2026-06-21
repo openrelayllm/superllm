@@ -797,7 +797,7 @@ func outboxPayload(jobID int64, supplierID int64, jobType adminplusdomain.Suppli
 
 func activeStepLockID(supplierID int64, supplierGroupID int64, stepType adminplusdomain.SupplierProvisionStepType) int64 {
 	h := fnv.New64a()
-	_, _ = h.Write([]byte(fmt.Sprintf("supplier-provision:%d:%d:%s", supplierID, supplierGroupID, stepType)))
+	_, _ = fmt.Fprintf(h, "supplier-provision:%d:%d:%s", supplierID, supplierGroupID, stepType)
 	return int64(h.Sum64())
 }
 
