@@ -88,7 +88,7 @@ func (r *SQLRepository) FindActiveByGroup(ctx context.Context, supplierID int64,
 		LIMIT 1
 	`, supplierID, groupID)
 	item, err := scanSupplierKey(row)
-	if errors.Is(err, sql.ErrNoRows) {
+	if infraerrors.Reason(err) == "SUPPLIER_KEY_NOT_FOUND" {
 		return nil, nil
 	}
 	return item, err

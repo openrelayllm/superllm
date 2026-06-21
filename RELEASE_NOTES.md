@@ -1,37 +1,16 @@
 # Release Notes
 
-## v0.7.2 - 2026-06-21
-
-### 新增
-
-- 新增供应商浏览器会话主链路：Chrome 插件可识别供应商站点、上报会话包，Admin Plus 后端加密保存供应商浏览器会话并执行 Sub2API 用户资料/余额探测。
-- 新增 Sub2API 同源供应商后端直登能力，统一记录 `direct_login` / `browser_extension` / `manual_import` 会话来源，并在验证码、2FA 或强风控场景保留 Chrome 插件兜底路径。
-- 新增 Provider Adapter 端口和 Sub2API 会话 Profile Adapter，将供应商余额、分组能力和会话诊断从插件解析迁回后端。
-- 新增供应商站点匹配、未知站点候选创建、供应商编辑/删除、账号绑定编辑等 API，补齐供应商父级与账号/Key 子级的运营闭环。
-- 新增供应商账单明细字段，覆盖 API Key 名称、endpoint、请求类型、计费模式、reasoning、cache read tokens、总 tokens、首 token 延迟和总耗时。
-- 新增插件会话采集任务类型 `capture_supplier_session`，调度中心和插件任务链路可派发并摄取会话采集结果。
-- 新增供应商分组创建第三方 Key 并同步创建本地 Sub2API 账号的主路径，第三方 Key 明文只在内存链路中流转，不回显或落库。
-- 新增 `keys/provision` 幂等保护：支持 `Idempotency-Key` 结果重放，并限制同一供应商分组只能存在一个有效 Key。
-- 新增第三方 Key 开通失败后的手动修复绑定入口，可将已补建的本地 Sub2API 账号绑定回失败 Key。
-- 新增本地账号用量汇总 API 和账号/Key 审计视图的今日、近 30 天成本与 token 展示。
-- 新增 Admin Plus API E2E 清理脚本，默认只允许清理本地目标，避免误删生产数据。
-
-### 更新
-
-- 重构供应商、账号/Key、调度、插件任务、费率、余额、健康、优惠、账单、动作建议等运营页面，统一分页、筛选、刷新、空状态和错误态。
-- 更新账号/Key 绑定页面为只读审计视图，新增和绑定动作收敛到供应商管理页的分组弹窗。
-- 更新供应商管理页面，支持从站点候选创建供应商、维护浏览器登录能力和供应商运行状态。
-- 更新供应商管理页面的余额、切换状态和分组 Key 操作展示，失败 Key 可从分组列表直接进入修复。
-- 更新账单对账页面和后端服务，增强供应商账单与本地用量的差异归因、成本字段和对账汇总。
-- 更新 Chrome 插件职责边界：插件聚焦站点识别、连接授权、浏览器会话采集和上报；业务采集由后端 Provider Adapter 承担。
-- 更新 README、PRD、代码结构、支付/对账文档和路线图，收敛到供应商父级、分组、第三方 Key、本地 Sub2API 账号与绑定关系的最新事实源。
-- 更新供应商账号路线图，补充充值订单、兑换记录、成本台账和供应商成本对账口径。
-- 更新版本号到 `0.7.2`，并同步 DockerHub 手动发布默认标签。
+## v0.7.3 - 2026-06-21
 
 ### 修复
 
-- 修复 Railway 从 `0.6.0` 升级到 `0.7.x` 时，生产库中历史 `fetch_promotions` 插件任务导致迁移 `159_admin_plus_extension_session_capture.sql` 重建类型约束失败的问题。
-- 修复供应商余额、费率、健康、优惠和对账事件缺少账号/Key 子级上下文的问题，使事件可追溯到供应商父级和本地账号绑定。
-- 修复插件任务结果摄取的容错与诊断字段，避免会话采集失败被误标为业务采集成功。
-- 修复飞书/Lark 通知 payload 兼容性和测试覆盖，通知失败仍不回滚业务快照或事件。
-- 修复 Admin Plus 路由和侧边栏在新增运营页面后的可见性与权限测试覆盖。
+- 修复 Railway 从 `0.6.x` / `0.7.x` 升级时，生产库历史 `fetch_promotions` 插件任务不满足 `admin_plus_extension_tasks_type_check`，导致迁移 `159_admin_plus_extension_session_capture.sql` 失败的问题。
+- 更新迁移 checksum 兼容规则，让已记录旧版 `159_admin_plus_extension_session_capture.sql` checksum 的环境继续启动。
+- 新增 `167_admin_plus_extension_task_fetch_promotions.sql`，把已经跑过旧版 `159` 的环境也收敛到补齐后的任务类型约束。
+- 修复供应商分组没有已绑定 Key 时，供应商 Key 查询路径把 not-found 包装错误当作真实错误返回的问题。
+
+### 发布
+
+- 更新版本号到 `0.7.3`。
+- GitHub Release 继续只发布 Linux 产物：`linux_amd64`、`linux_arm64` 和 `checksums.txt`。
+- DockerHub 镜像继续由 GitHub Actions 发布，不依赖本地 Docker。
