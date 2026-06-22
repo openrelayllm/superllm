@@ -1,6 +1,8 @@
 package adminplus
 
 import (
+	newapiprovider "github.com/Wei-Shaw/sub2api/internal/adminplus/adapters/newapi/provider"
+	providerrouter "github.com/Wei-Shaw/sub2api/internal/adminplus/adapters/providerrouter"
 	sub2apiprovider "github.com/Wei-Shaw/sub2api/internal/adminplus/adapters/sub2api/provider"
 	actionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
 	announcementsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/announcements"
@@ -18,11 +20,25 @@ import (
 	supplierkeysapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/supplierkeys"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	usagecostsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	"github.com/google/wire"
 )
 
 var ProviderSet = wire.NewSet(
-	sub2apiprovider.ProviderSet,
+	sub2apiprovider.ProvideHTTPClient,
+	sub2apiprovider.NewSessionProfileClient,
+	newapiprovider.NewClient,
+	providerrouter.New,
+	wire.Bind(new(ports.SessionProbeAdapter), new(*providerrouter.Router)),
+	wire.Bind(new(ports.SessionLoginAdapter), new(*providerrouter.Router)),
+	wire.Bind(new(ports.SessionChannelMonitorAdapter), new(*providerrouter.Router)),
+	wire.Bind(new(ports.SessionGroupAdapter), new(*providerrouter.Router)),
+	wire.Bind(new(ports.SessionRateAdapter), new(*providerrouter.Router)),
+	wire.Bind(new(ports.SessionAnnouncementAdapter), new(*providerrouter.Router)),
+	wire.Bind(new(ports.SessionUsageCostAdapter), new(*providerrouter.Router)),
+	wire.Bind(new(ports.SessionFundingAdapter), new(*providerrouter.Router)),
+	wire.Bind(new(ports.SessionEntitlementAdapter), new(*providerrouter.Router)),
+	wire.Bind(new(ports.SessionKeyAdapter), new(*providerrouter.Router)),
 	actionsapp.ProviderSet,
 	balancesapp.ProviderSet,
 	usagecostsapp.ProviderSet,

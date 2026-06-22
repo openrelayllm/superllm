@@ -52,6 +52,9 @@ type captureSessionTaskRequest struct {
 	URL                   string         `json:"url"`
 	Origin                string         `json:"origin"`
 	Host                  string         `json:"host"`
+	Type                  string         `json:"type"`
+	SupplierType          string         `json:"supplier_type"`
+	ProviderType          string         `json:"provider_type"`
 	DashboardURL          string         `json:"dashboard_url"`
 	APIBaseURL            string         `json:"api_base_url"`
 	ThirdPartyRechargeURL string         `json:"third_party_recharge_url"`
@@ -145,6 +148,7 @@ func (h *ExtensionHandler) resolveCaptureSessionSupplier(c *gin.Context, req cap
 	sourceURL := firstNonEmpty(req.URL, req.DashboardURL, stringFromPayload(payload, "source_url"))
 	sourceHost := firstNonEmpty(req.Host, stringFromPayload(payload, "source_host"))
 	origin := firstNonEmpty(req.Origin, req.DashboardURL)
+	supplierType := normalizeCaptureSupplierType(firstNonEmpty(req.Type, req.SupplierType, req.ProviderType, stringFromPayload(payload, "supplier_type"), stringFromPayload(payload, "provider_type")))
 	thirdPartyRechargeURL := firstNonEmpty(req.ThirdPartyRechargeURL, stringFromPayload(payload, "third_party_recharge_url"))
 	localRechargeURL := firstNonEmpty(req.LocalRechargeURL, stringFromPayload(payload, "local_recharge_url"))
 	if sourceURL != "" {
@@ -162,10 +166,15 @@ func (h *ExtensionHandler) resolveCaptureSessionSupplier(c *gin.Context, req cap
 	if localRechargeURL != "" {
 		payload["local_recharge_url"] = localRechargeURL
 	}
+	if supplierType != "" {
+		payload["supplier_type"] = string(supplierType)
+		payload["provider_type"] = string(supplierType)
+	}
 	if req.SupplierID > 0 {
 		if h.suppliers != nil {
 			if _, err := h.suppliers.EnrichRechargeURLs(c.Request.Context(), req.SupplierID, suppliersapp.CreateFromSiteCandidateInput{
 				DashboardURL:          firstNonEmpty(req.DashboardURL, origin, sourceURL),
+				Type:                  supplierType,
 				APIBaseURL:            req.APIBaseURL,
 				ThirdPartyRechargeURL: thirdPartyRechargeURL,
 				LocalRechargeURL:      localRechargeURL,
@@ -192,6 +201,7 @@ func (h *ExtensionHandler) resolveCaptureSessionSupplier(c *gin.Context, req cap
 	if err == nil && len(match.Suppliers) == 1 {
 		supplier, enrichErr := h.suppliers.EnrichRechargeURLs(c.Request.Context(), match.Suppliers[0].ID, suppliersapp.CreateFromSiteCandidateInput{
 			DashboardURL:          firstNonEmpty(req.DashboardURL, origin, sourceURL),
+			Type:                  supplierType,
 			APIBaseURL:            req.APIBaseURL,
 			ThirdPartyRechargeURL: thirdPartyRechargeURL,
 			LocalRechargeURL:      localRechargeURL,
@@ -218,6 +228,7 @@ func (h *ExtensionHandler) resolveCaptureSessionSupplier(c *gin.Context, req cap
 	title, _ := req.PageContext["title"].(string)
 	ensured, err := h.suppliers.EnsureFromSiteCandidate(c.Request.Context(), suppliersapp.CreateFromSiteCandidateInput{
 		Name:                  req.Name,
+		Type:                  supplierType,
 		DashboardURL:          firstNonEmpty(req.DashboardURL, origin, sourceURL),
 		APIBaseURL:            req.APIBaseURL,
 		ThirdPartyRechargeURL: thirdPartyRechargeURL,
@@ -399,6 +410,22 @@ func stringFromPayload(in map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(value)
+}
+
+func normalizeCaptureSupplierType(value string) adminplusdomain.SupplierType {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "":
+		return ""
+	case "newapi", "new-api", "new_api":
+		return adminplusdomain.SupplierTypeNewAPI
+	default:
+		supplierType := adminplusdomain.NormalizeSupplierType(normalized)
+		if supplierType.Valid() {
+			return supplierType
+		}
+		return ""
+	}
 }
 
 func firstNonEmpty(values ...string) string {

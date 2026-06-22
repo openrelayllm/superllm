@@ -117,7 +117,7 @@ import type { SupplierChannelMonitorView, SupplierMonitorStatus } from '@/api/ad
 
 const props = defineProps<{
   item: SupplierChannelMonitorView
-  window: '7d' | '15d' | '30d'
+  window: 'pulse' | '7d' | '15d' | '30d'
   countdownSeconds: number
 }>()
 
@@ -152,6 +152,7 @@ const STATUS_COLOR: Record<string, string> = {
 }
 
 const windowLabel = computed(() => {
+  if (props.window === 'pulse') return '60 秒'
   if (props.window === '15d') return t('channelStatus.windowTab.15d')
   if (props.window === '30d') return t('channelStatus.windowTab.30d')
   return t('channelStatus.windowTab.7d')

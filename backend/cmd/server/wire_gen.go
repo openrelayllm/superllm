@@ -9,6 +9,8 @@ package main
 import (
 	"context"
 	"github.com/Wei-Shaw/sub2api/ent"
+	newapiprovider "github.com/Wei-Shaw/sub2api/internal/adminplus/adapters/newapi/provider"
+	providerrouter "github.com/Wei-Shaw/sub2api/internal/adminplus/adapters/providerrouter"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/adapters/sub2api/provider"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/announcements"
@@ -135,8 +137,10 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	cipher := sessions.UseCipher(secretEncryptor)
 	httpClient := provider.ProvideHTTPClient()
 	sessionProfileClient := provider.NewSessionProfileClient(httpClient)
-	sessionsService := sessions.ProvideService(sessionsSQLRepository, cipher, suppliersService, sessionProfileClient, sessionProfileClient, sessionProfileClient)
-	suppliergroupsService := suppliergroups.NewService(suppliergroupsSQLRepository, sessionsService, sessionProfileClient)
+	newAPIClient := newapiprovider.NewClient(httpClient)
+	router := providerrouter.New(sessionProfileClient, newAPIClient)
+	sessionsService := sessions.ProvideService(sessionsSQLRepository, cipher, suppliersService, router, router, router)
+	suppliergroupsService := suppliergroups.NewService(suppliergroupsSQLRepository, sessionsService, router)
 	supplierkeysSQLRepository := supplierkeys.NewSQLRepository(db)
 	redeemCodeRepository := repository.NewRedeemCodeRepository(client)
 	proxyExitInfoProber := repository.NewProxyExitInfoProber(configConfig)
@@ -187,21 +191,21 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	adminService := service.NewAdminService(userRepository, groupRepository, accountRepository, proxyRepository, apiKeyRepository, redeemCodeRepository, userGroupRateRepository, userRPMCache, billingCacheService, proxyExitInfoProber, proxyLatencyCache, apiKeyAuthCacheInvalidator, client, settingService, subscriptionService, userSubscriptionRepository, privacyClientFactory, openAIGatewayService)
 	sub2APIGateway := supplierkeys.UseSub2APIGateway(adminService, httpClient)
 	legacyAccountService := supplierkeys.UseLegacyAccountService(adminService)
-	supplierkeysService := supplierkeys.NewServiceWithLegacy(supplierkeysSQLRepository, sessionsService, sessionProfileClient, sub2APIGateway, legacyAccountService)
+	supplierkeysService := supplierkeys.NewServiceWithLegacy(supplierkeysSQLRepository, sessionsService, router, sub2APIGateway, legacyAccountService)
 	ratesSQLRepository := rates.NewSQLRepository(db)
 	notificationsSQLRepository := notifications.NewSQLRepository(db)
 	feishuNotifier := rates.NewFeishuNotifierFromEnv(notificationsSQLRepository)
-	ratesService := rates.NewServiceWithDependencies(ratesSQLRepository, feishuNotifier, sessionsService, sessionProfileClient)
+	ratesService := rates.NewServiceWithDependencies(ratesSQLRepository, feishuNotifier, sessionsService, router)
 	rateHandler := adminplus.NewRateHandler(ratesService)
 	balancesSQLRepository := balances.NewSQLRepository(db)
 	balancesFeishuNotifier := balances.NewFeishuNotifierFromEnv(notificationsSQLRepository)
 	adminPlusBalanceCache := repository.NewAdminPlusBalanceCache(redisClient)
-	balancesService := balances.NewServiceWithCurrentCache(balancesSQLRepository, balancesFeishuNotifier, sessionsService, sessionProfileClient, adminPlusBalanceCache)
+	balancesService := balances.NewServiceWithCurrentCache(balancesSQLRepository, balancesFeishuNotifier, sessionsService, router, adminPlusBalanceCache)
 	balanceHandler := adminplus.NewBalanceHandler(balancesService)
 	usageCostSQLRepository := usagecosts.NewSQLRepository(db)
-	usageCostService := usagecosts.NewServiceWithDependencies(usageCostSQLRepository, sessionsService, sessionProfileClient)
+	usageCostService := usagecosts.NewServiceWithDependencies(usageCostSQLRepository, sessionsService, router)
 	costsSQLRepository := costs.NewSQLRepository(db)
-	costsService := costs.NewServiceWithDependencies(costsSQLRepository, sessionsService, sessionProfileClient, sessionProfileClient, usageCostService, balancesService)
+	costsService := costs.NewServiceWithDependencies(costsSQLRepository, sessionsService, router, router, usageCostService, balancesService)
 	provisionjobsSQLRepository := provisionjobs.NewSQLRepository(db)
 	streamPublisher := provisionjobs.NewStreamPublisher(redisClient)
 	provisionjobsService := provisionjobs.NewServiceWithCostSyncer(provisionjobsSQLRepository, streamPublisher, suppliergroupsService, supplierkeysService, costsService)
@@ -210,7 +214,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	provisionJobHandler := adminplus.NewProvisionJobHandler(provisionjobsService)
 	announcementsSQLRepository := announcements.NewSQLRepository(db)
 	announcementsFeishuNotifier := announcements.NewFeishuNotifierFromEnv(notificationsSQLRepository)
-	announcementsService := announcements.NewServiceWithDependencies(announcementsSQLRepository, announcementsFeishuNotifier, sessionsService, sessionProfileClient)
+	announcementsService := announcements.NewServiceWithDependencies(announcementsSQLRepository, announcementsFeishuNotifier, sessionsService, router)
 	announcementHandler := adminplus.NewAnnouncementHandler(announcementsService)
 	healthSQLRepository := health.NewSQLRepository(db)
 	healthFeishuNotifier := health.NewFeishuNotifierFromEnv(notificationsSQLRepository)

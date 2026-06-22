@@ -216,6 +216,15 @@ func (r *SQLRepository) RefreshSnapshot(ctx context.Context, supplierID int64, c
 			FROM admin_plus_supplier_cost_ledger_entries
 			WHERE supplier_id = $1 AND currency = $2
 		),
+		auto_redeem_entitlement AS (
+			SELECT COALESCE(SUM(value_cents), 0) AS amount
+			FROM admin_plus_supplier_entitlement_transactions
+			WHERE supplier_id = $1
+				AND currency = $2
+				AND LOWER(source_family) = 'payment_auto_redeem'
+				AND LOWER(type) = 'balance'
+				AND LOWER(status) = 'used'
+		),
 		usage AS (
 			SELECT COALESCE(SUM(cost_cents), 0) AS usage_cost
 			FROM admin_plus_supplier_usage_cost_lines
@@ -232,13 +241,20 @@ func (r *SQLRepository) RefreshSnapshot(ctx context.Context, supplierID int64, c
 			SELECT
 				ledger.funding_amount,
 				ledger.funding_cash,
-				ledger.entitlement_amount,
+				ledger.entitlement_amount + GREATEST(auto_redeem_entitlement.amount - ledger.funding_amount, 0) AS entitlement_amount,
 				usage.usage_cost AS raw_usage_cost,
 				ledger.refund_amount,
 				ledger.adjustment_amount,
-				(ledger.funding_amount + ledger.entitlement_amount - ledger.refund_amount + ledger.adjustment_amount) AS balance_before_usage,
+				(
+					ledger.funding_amount
+					+ ledger.entitlement_amount
+					+ GREATEST(auto_redeem_entitlement.amount - ledger.funding_amount, 0)
+					- ledger.refund_amount
+					+ ledger.adjustment_amount
+				) AS balance_before_usage,
 				balance.balance_cents AS actual_balance
 			FROM ledger
+			CROSS JOIN auto_redeem_entitlement
 			CROSS JOIN usage
 			LEFT JOIN balance ON TRUE
 		),

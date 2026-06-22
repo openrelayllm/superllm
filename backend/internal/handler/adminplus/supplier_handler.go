@@ -153,6 +153,7 @@ func (h *SupplierHandler) CreateFromSiteCandidate(c *gin.Context) {
 	title, _ := req.PageContext["title"].(string)
 	supplier, err := h.service.CreateFromSiteCandidate(c.Request.Context(), suppliersapp.CreateFromSiteCandidateInput{
 		Name:                  req.Name,
+		Type:                  adminplusdomain.NormalizeSupplierType(req.Type),
 		DashboardURL:          req.DashboardURL,
 		APIBaseURL:            req.APIBaseURL,
 		ThirdPartyRechargeURL: req.ThirdPartyRechargeURL,

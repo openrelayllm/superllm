@@ -95,6 +95,7 @@ type UpdateSupplierStatusInput struct {
 
 type CreateFromSiteCandidateInput struct {
 	Name                  string
+	Type                  adminplusdomain.SupplierType
 	DashboardURL          string
 	APIBaseURL            string
 	ThirdPartyRechargeURL string
@@ -253,6 +254,7 @@ func (s *Service) CreateFromSiteCandidate(ctx context.Context, in CreateFromSite
 	if err != nil {
 		return nil, err
 	}
+	supplierType := normalizeCandidateSupplierType(in.Type)
 	name := strings.TrimSpace(firstNonEmpty(in.Name, in.Title, parsed.Host))
 	if len(name) > 80 {
 		name = name[:80]
@@ -260,7 +262,7 @@ func (s *Service) CreateFromSiteCandidate(ctx context.Context, in CreateFromSite
 	return s.Create(ctx, CreateSupplierInput{
 		Name:                  name,
 		Kind:                  adminplusdomain.SupplierKindRelay,
-		Type:                  adminplusdomain.SupplierTypeSub2API,
+		Type:                  supplierType,
 		RuntimeStatus:         adminplusdomain.SupplierRuntimeStatusMonitorOnly,
 		HealthStatus:          adminplusdomain.SupplierHealthStatusNormal,
 		DashboardURL:          siteOrigin,
@@ -269,7 +271,7 @@ func (s *Service) CreateFromSiteCandidate(ctx context.Context, in CreateFromSite
 		LocalRechargeURL:      in.LocalRechargeURL,
 		Notes:                 "created from Chrome extension site candidate",
 		BrowserLoginEnabled:   true,
-		BalanceCurrency:       "CNY",
+		BalanceCurrency:       defaultCurrencyForCandidateSupplier(supplierType),
 	})
 }
 
@@ -824,6 +826,25 @@ func normalizeOptionalURL(raw string, reason string) (string, error) {
 		return "", badRequest(reason, "supplier url must use http or https")
 	}
 	return v, nil
+}
+
+func normalizeCandidateSupplierType(value adminplusdomain.SupplierType) adminplusdomain.SupplierType {
+	normalized := strings.ToLower(strings.TrimSpace(string(value)))
+	switch normalized {
+	case "", "sub2api":
+		return adminplusdomain.SupplierTypeSub2API
+	case "newapi", "new-api", "new_api":
+		return adminplusdomain.SupplierTypeNewAPI
+	default:
+		return adminplusdomain.SupplierType(normalized)
+	}
+}
+
+func defaultCurrencyForCandidateSupplier(supplierType adminplusdomain.SupplierType) string {
+	if supplierType == adminplusdomain.SupplierTypeNewAPI {
+		return "QTA"
+	}
+	return "CNY"
 }
 
 func normalizeCandidateAPIBaseURL(raw string, fallback *url.URL) (string, error) {

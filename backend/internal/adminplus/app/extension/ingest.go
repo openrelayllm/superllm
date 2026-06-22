@@ -93,6 +93,7 @@ func (p *IngestProcessor) processSessionBundle(ctx context.Context, task *adminp
 	if len(bundle) == 0 {
 		return nil, nil
 	}
+	bundle = normalizeSessionBundle(bundle, task)
 	raw, err := json.Marshal(bundle)
 	if err != nil {
 		return nil, err
@@ -491,6 +492,7 @@ func sessionSummary(bundle map[string]any) map[string]any {
 	cookiesRaw, _ := bundle["cookies"].([]any)
 	context := mapValue(bundle, "context")
 	requiredHeaders := mapValue(bundle, "required_headers")
+	providerType := providerTypeFromBundle(bundle)
 	accessToken := firstNonEmptyString(
 		stringValue(bundle, "access_token"),
 		stringValue(bundle, "accessToken"),
@@ -515,6 +517,7 @@ func sessionSummary(bundle map[string]any) map[string]any {
 	}
 	return map[string]any{
 		"origin":               stringValue(bundle, "origin"),
+		"provider_type":        providerType,
 		"captured_at":          stringValue(bundle, "captured_at"),
 		"expires_at":           stringValue(bundle, "expires_at"),
 		"has_access_token":     accessToken != "",
@@ -528,6 +531,76 @@ func sessionSummary(bundle map[string]any) map[string]any {
 		"api_base_url":         stringValue(context, "api_base_url"),
 		"has_required_origin":  strings.TrimSpace(stringValue(requiredHeaders, "origin")) != "",
 		"has_required_referer": strings.TrimSpace(stringValue(requiredHeaders, "referer")) != "",
+		"has_new_api_user_header": firstNonEmptyString(
+			stringValue(requiredHeaders, "New-Api-User"),
+			stringValue(requiredHeaders, "New-API-User"),
+			stringValue(requiredHeaders, "new-api-user"),
+		) != "",
+	}
+}
+
+func normalizeSessionBundle(bundle map[string]any, task *adminplusdomain.ExtensionTask) map[string]any {
+	providerType := providerTypeFromBundle(bundle)
+	if providerType == "" && task != nil {
+		providerType = normalizeProviderType(firstNonEmptyString(
+			stringValue(task.Payload, "provider_type"),
+			stringValue(task.Payload, "supplier_type"),
+		))
+	}
+	if providerType != "new_api" {
+		return bundle
+	}
+	context := mapValue(bundle, "context")
+	if context == nil {
+		context = map[string]any{}
+		bundle["context"] = context
+	}
+	requiredHeaders := mapValue(bundle, "required_headers")
+	if requiredHeaders == nil {
+		requiredHeaders = map[string]any{}
+		bundle["required_headers"] = requiredHeaders
+	}
+	userID := firstNonEmptyString(
+		stringValue(requiredHeaders, "New-Api-User"),
+		stringValue(requiredHeaders, "New-API-User"),
+		stringValue(requiredHeaders, "new-api-user"),
+		stringValue(bundle, "auth_header_value"),
+		stringValue(context, "user_id"),
+		stringValue(context, "id"),
+	)
+	bundle["provider_type"] = "new_api"
+	bundle["system_type"] = "new_api"
+	bundle["auth_header_name"] = "New-Api-User"
+	bundle["auth_header_value"] = userID
+	context["provider_type"] = "new_api"
+	context["system_type"] = "new_api"
+	context["user_id"] = userID
+	if firstNonEmptyString(stringValue(context, "api_base_url")) == "" {
+		context["api_base_url"] = firstNonEmptyString(stringValue(bundle, "api_base_url"), stringValue(bundle, "origin"))
+	}
+	if userID != "" {
+		requiredHeaders["New-Api-User"] = userID
+	}
+	return bundle
+}
+
+func providerTypeFromBundle(bundle map[string]any) string {
+	context := mapValue(bundle, "context")
+	return normalizeProviderType(firstNonEmptyString(
+		stringValue(bundle, "provider_type"),
+		stringValue(bundle, "system_type"),
+		stringValue(context, "provider_type"),
+		stringValue(context, "system_type"),
+	))
+}
+
+func normalizeProviderType(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "newapi", "new-api":
+		return "new_api"
+	default:
+		return normalized
 	}
 }
 

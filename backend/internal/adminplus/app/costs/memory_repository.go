@@ -137,6 +137,7 @@ func (r *MemoryRepository) RefreshSnapshot(_ context.Context, supplierID int64, 
 	defer r.mu.Unlock()
 	currency = normalizeCurrency(currency)
 	var fundingAmount, fundingCash, entitlementAmount, refundAmount, adjustmentAmount int64
+	var autoRedeemEntitlementAmount int64
 	for _, entry := range r.ledger {
 		if entry.SupplierID != supplierID || normalizeCurrency(entry.Currency) != currency {
 			continue
@@ -152,6 +153,19 @@ func (r *MemoryRepository) RefreshSnapshot(_ context.Context, supplierID int64, 
 		case "manual_adjustment", "reversal":
 			adjustmentAmount += entry.AmountCents
 		}
+	}
+	for _, item := range r.entitlements {
+		if item.SupplierID != supplierID || normalizeCurrency(item.Currency) != currency {
+			continue
+		}
+		if strings.EqualFold(item.SourceFamily, "payment_auto_redeem") &&
+			strings.EqualFold(item.Type, "balance") &&
+			strings.EqualFold(item.Status, "used") {
+			autoRedeemEntitlementAmount += item.ValueCents
+		}
+	}
+	if autoRedeemFallback := autoRedeemEntitlementAmount - fundingAmount; autoRedeemFallback > 0 {
+		entitlementAmount += autoRedeemFallback
 	}
 	snapshot := &adminplusdomain.SupplierCostSnapshot{
 		ID:                          r.nextSnapshot,

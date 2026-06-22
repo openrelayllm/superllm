@@ -58,6 +58,7 @@ async function saveLastCaptureResult(result) {
       host: result.host || '',
       taskID: result.taskID || 0,
       summary: result.summary || {},
+      ingest: result.ingest || {},
       recordedAt: result.recordedAt || new Date().toISOString()
     }
   })
@@ -130,6 +131,9 @@ class AdminPlusClient {
         origin: payload.source_origin || '',
         dashboard_url: payload.dashboard_url || '',
         api_base_url: payload.api_base_url || '',
+        type: payload.supplier_type || payload.provider_type || '',
+        supplier_type: payload.supplier_type || payload.provider_type || '',
+        provider_type: payload.provider_type || payload.supplier_type || '',
         third_party_recharge_url: payload.third_party_recharge_url || '',
         local_recharge_url: payload.local_recharge_url || '',
         auto_create_supplier: payload.auto_create_supplier,
@@ -187,6 +191,10 @@ class AdminPlusClient {
         result
       }
     })
+  }
+
+  async supplierSession(supplierID) {
+    return this.request(`/api/v1/admin-plus/suppliers/${supplierID}/session`)
   }
 
   async fail(task, errorCode, errorMessage) {
@@ -509,6 +517,8 @@ async function captureSupplierSession(supplierID, autoCreate) {
     source_origin: identification.activeTab?.origin || '',
     dashboard_url: supplier.dashboard_url || activeTabURL,
     api_base_url: supplier.api_base_url || identification.activeTab?.origin || '',
+    supplier_type: supplier.type || providerTypeFromIdentification(identification),
+    provider_type: supplier.type || providerTypeFromIdentification(identification),
     third_party_recharge_url: thirdPartyRechargeURL,
     local_recharge_url: supplier.local_recharge_url || '',
     auto_create_supplier: Boolean(autoCreate),
@@ -521,7 +531,8 @@ async function captureSupplierSession(supplierID, autoCreate) {
     id: task.supplier_id,
     supplier_id: task.supplier_id,
     dashboard_url: supplier.dashboard_url || activeTabURL,
-    api_base_url: supplier.api_base_url || identification.activeTab?.origin || ''
+    api_base_url: supplier.api_base_url || identification.activeTab?.origin || '',
+    type: supplier.type || providerTypeFromIdentification(identification)
   }
   await client.heartbeat(task)
   const tab = await ensureSupplierTab(supplier.dashboard_url || identification.activeTab?.url)
@@ -539,15 +550,25 @@ async function captureSupplierSession(supplierID, autoCreate) {
       await recordCaptureResult('failed', '未找到可上报的 token 或 cookie', task, supplier, identification.activeTab)
       return { task, status: 'failed', result: failed }
     }
-    const completed = await client.complete(task, captureResult)
-    await recordCaptureResult('succeeded', '上报成功', completed, supplier, identification.activeTab, completed.result?.session_summary || captureResult.session_summary || {})
+    const completed = await completeCaptureTask(client, task, captureResult)
+    const ingest = completed.result?.ingest || {}
+    const partial = Boolean(ingest.balance_probe_error)
+    await recordCaptureResult(
+      partial ? 'partial' : 'succeeded',
+      partial ? '会话已保存，余额读取失败' : '上报成功',
+      completed,
+      supplier,
+      identification.activeTab,
+      completed.result?.session_summary || captureResult.session_summary || {},
+      ingest
+    )
     return {
       task: completed,
-      status: 'succeeded',
+      status: partial ? 'partial' : 'succeeded',
       supplier,
       result: {
         session_summary: completed.result?.session_summary || captureResult.session_summary || {},
-        ingest: completed.result?.ingest || {}
+        ingest
       }
     }
   } catch (error) {
@@ -557,7 +578,47 @@ async function captureSupplierSession(supplierID, autoCreate) {
   }
 }
 
-async function recordCaptureResult(status, message, task, supplier, activeTab, summary = {}) {
+async function completeCaptureTask(client, task, captureResult) {
+  try {
+    return await client.complete(task, captureResult)
+  } catch (error) {
+    if (!isNonBlockingProfileProbeError(error)) {
+      throw error
+    }
+    const session = await client.supplierSession(task.supplier_id).catch(() => null)
+    if (!capturedSessionMatchesTask(session, task)) {
+      throw error
+    }
+    return {
+      ...task,
+      status: 'succeeded',
+      result: {
+        session_summary: session.session_summary || captureResult.session_summary || {},
+        ingest: {
+          session_captured: true,
+          balance_probe_error: error.message || String(error)
+        }
+      }
+    }
+  }
+}
+
+function capturedSessionMatchesTask(session, task) {
+  return Boolean(
+    session?.has_encrypted_bundle &&
+    Number(session.source_extension_task_id || 0) === Number(task?.id || 0)
+  )
+}
+
+function isNonBlockingProfileProbeError(error) {
+  const reason = String(error?.reason || '')
+  const message = String(error?.message || error || '')
+  return reason === 'SUPPLIER_SESSION_PERMISSION_DENIED' ||
+    message.includes('supplier session cannot access user profile') ||
+    message.includes('cannot access user profile')
+}
+
+async function recordCaptureResult(status, message, task, supplier, activeTab, summary = {}, ingest = {}) {
   await saveLastCaptureResult({
     status,
     message,
@@ -565,6 +626,7 @@ async function recordCaptureResult(status, message, task, supplier, activeTab, s
     host: activeTab?.host || '',
     taskID: task?.id || 0,
     summary,
+    ingest,
     recordedAt: new Date().toISOString()
   })
   await setCaptureBadge(status)
@@ -572,9 +634,10 @@ async function recordCaptureResult(status, message, task, supplier, activeTab, s
 
 async function setCaptureBadge(status) {
   if (!chrome.action?.setBadgeText) return
+  const partial = status === 'partial'
   const ok = status === 'succeeded'
-  await chrome.action.setBadgeText({ text: ok ? 'OK' : 'ERR' })
-  await chrome.action.setBadgeBackgroundColor({ color: ok ? '#12b76a' : '#f04438' })
+  await chrome.action.setBadgeText({ text: ok ? 'OK' : partial ? 'WARN' : 'ERR' })
+  await chrome.action.setBadgeBackgroundColor({ color: ok ? '#12b76a' : partial ? '#f79009' : '#f04438' })
 }
 
 async function runCaptureInTab(tabId, task, supplier) {
@@ -592,17 +655,22 @@ async function runCaptureInTab(tabId, task, supplier) {
 
 async function enrichCaptureResult(result, supplier, fallbackURL) {
   const bundle = result?.session_bundle || {}
+  const tokens = bundle.tokens || {}
   const captureURL = bundle.url || fallbackURL || supplier.dashboard_url || ''
   const cookies = await collectCookies(captureURL)
   const mergedBundle = {
     ...bundle,
     supplier_id: bundle.supplier_id || supplier.id || supplier.supplier_id,
+    access_token: bundle.access_token || tokens.access_token || '',
+    refresh_token: bundle.refresh_token || tokens.refresh_token || '',
+    csrf_token: bundle.csrf_token || tokens.csrf_token || '',
     cookies,
     required_headers: {
       ...(bundle.required_headers || {}),
       cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
     }
   }
+  normalizeNewAPISessionBundle(mergedBundle, supplier, captureURL)
   return {
     ...result,
     session_bundle: mergedBundle,
@@ -620,6 +688,7 @@ async function discoverSupplierFromCurrentSite(client, identification) {
   }
   const supplier = await client.createDiscoveredSupplier({
     name: suggestedSupplierName(parsed, tab),
+    type: providerTypeFromIdentification(identification),
     dashboard_url: parsed.href,
     api_base_url: parsed.origin,
     third_party_recharge_url: inferThirdPartyRechargeURL(parsed.href),
@@ -640,10 +709,12 @@ function supplierFromCurrentSite(identification, autoCreate) {
     throw error
   }
   const tab = identification.activeTab || {}
+  const providerType = providerTypeFromIdentification(identification)
   return {
     id: 0,
     supplier_id: 0,
     name: tab.host || '当前供应商',
+    type: providerType,
     dashboard_url: tab.url || '',
     api_base_url: tab.origin || '',
     third_party_recharge_url: inferThirdPartyRechargeURL(tab.url || ''),
@@ -672,6 +743,9 @@ async function collectCookies(url) {
 
 function hasSessionEvidence(bundle) {
   const tokens = bundle?.tokens || {}
+  if (providerTypeFromBundle(bundle) === 'new_api') {
+    return Boolean((bundle?.cookies || []).length > 0 && newAPIUserHeader(bundle))
+  }
   return Boolean(tokens.access_token || tokens.refresh_token || tokens.csrf_token || (bundle?.cookies || []).length > 0)
 }
 
@@ -681,6 +755,7 @@ function summarizeSessionBundle(bundle) {
   const headers = bundle?.required_headers || {}
   return {
     origin: bundle?.origin || '',
+    provider_type: providerTypeFromBundle(bundle),
     captured_at: bundle?.captured_at || '',
     expires_at: bundle?.expires_at || '',
     has_access_token: Boolean(tokens.access_token),
@@ -688,13 +763,94 @@ function summarizeSessionBundle(bundle) {
     has_csrf_token: Boolean(tokens.csrf_token),
     cookie_count: (bundle?.cookies || []).length,
     api_base_url: context.api_base_url || '',
+    user_id: context.user_id || '',
     organization_id: context.organization_id || '',
     project_id: context.project_id || '',
     account_id: context.account_id || '',
     has_required_origin: Boolean(headers.origin),
     has_required_referer: Boolean(headers.referer),
-    has_required_cookie: Boolean(headers.cookie)
+    has_required_cookie: Boolean(headers.cookie),
+    has_new_api_user_header: Boolean(newAPIUserHeader(bundle))
   }
+}
+
+function normalizeNewAPISessionBundle(bundle, supplier, captureURL) {
+  const providerType = normalizeProviderType(
+    providerTypeFromBundle(bundle) ||
+    supplier?.type ||
+    supplier?.supplier_type ||
+    supplier?.provider_type
+  )
+  if (providerType !== 'new_api') return bundle
+
+  const context = bundle.context || {}
+  const headers = bundle.required_headers || {}
+  const userID = firstNonEmpty(
+    newAPIUserHeader(bundle),
+    bundle.auth_header_value,
+    context.user_id,
+    context.id
+  )
+
+  bundle.provider_type = 'new_api'
+  bundle.system_type = 'new_api'
+  bundle.auth_header_name = 'New-Api-User'
+  bundle.auth_header_value = userID
+  context.provider_type = 'new_api'
+  context.system_type = 'new_api'
+  context.user_id = userID
+  context.api_base_url = firstNonEmpty(context.api_base_url, bundle.api_base_url, supplier?.api_base_url, originFromURL(captureURL), bundle.origin)
+  headers.origin = firstNonEmpty(headers.origin, bundle.origin, originFromURL(captureURL))
+  headers.referer = firstNonEmpty(headers.referer, captureURL)
+  if (userID) {
+    headers['New-Api-User'] = userID
+  }
+  bundle.context = context
+  bundle.required_headers = headers
+  return bundle
+}
+
+function providerTypeFromIdentification(identification) {
+  return normalizeProviderType(
+    identification?.supplier?.type ||
+    identification?.supplierLogin?.summary?.provider_type ||
+    ''
+  )
+}
+
+function providerTypeFromBundle(bundle) {
+  const context = bundle?.context || {}
+  return normalizeProviderType(
+    bundle?.provider_type ||
+    bundle?.system_type ||
+    context.provider_type ||
+    context.system_type ||
+    ''
+  )
+}
+
+function normalizeProviderType(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'newapi' || normalized === 'new-api') return 'new_api'
+  return normalized
+}
+
+function newAPIUserHeader(bundle) {
+  const headers = bundle?.required_headers || {}
+  return firstNonEmpty(headers['New-Api-User'], headers['New-API-User'], headers['new-api-user'])
+}
+
+function originFromURL(value) {
+  const parsed = safeURL(value || '')
+  return parsed ? parsed.origin : ''
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const text = String(value || '').trim()
+    if (text) return text
+  }
+  return ''
 }
 
 async function ensureSupplierTab(url) {
@@ -734,7 +890,7 @@ async function injectContentScript(tabId) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ['src/content/sub2api.js']
+      files: ['src/content/newapi.js', 'src/content/sub2api.js']
     })
   } catch (error) {
     const wrapped = new Error('当前页面无法注入插件脚本，请刷新供应商页面后重试')

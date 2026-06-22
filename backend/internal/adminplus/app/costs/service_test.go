@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	"github.com/stretchr/testify/require"
@@ -129,6 +130,111 @@ func TestServiceSyncRecordsFundingEntitlementsAndIdempotentLedger(t *testing.T) 
 	require.Equal(t, "concurrency", concurrency.Type)
 	require.Equal(t, int64(0), concurrency.ValueCents)
 	require.Equal(t, float64(70), concurrency.RawValue)
+}
+
+func TestServiceSyncCountsAutoRedeemEntitlementsWhenFundingIsMissing(t *testing.T) {
+	repo := NewMemoryRepository()
+	now := time.Date(2026, 6, 22, 1, 30, 0, 0, time.UTC)
+	usedAt := now.Add(-30 * time.Minute)
+	session := &stubCostSessionReader{}
+	entitlements := &stubCostEntitlementReader{result: &ports.ReadEntitlementTransactionsResult{
+		SupplierID:   7,
+		ProviderType: "sub2api",
+		Items: []ports.ProviderEntitlementTransaction{
+			{
+				ExternalID:   "auto-redeem-20",
+				SourceFamily: "payment_auto_redeem",
+				Type:         "balance",
+				Status:       "used",
+				Currency:     "usd",
+				ValueCents:   2000,
+				RawValue:     20,
+				UsedAt:       &usedAt,
+			},
+			{
+				ExternalID:   "auto-redeem-30",
+				SourceFamily: "payment_auto_redeem",
+				Type:         "balance",
+				Status:       "used",
+				Currency:     "usd",
+				ValueCents:   3000,
+				RawValue:     30,
+				UsedAt:       &usedAt,
+			},
+			{
+				ExternalID:   "auto-redeem-concurrency",
+				SourceFamily: "manual_redeem",
+				Type:         "concurrency",
+				Status:       "used",
+				Currency:     "usd",
+				ValueCents:   7000,
+				RawValue:     70,
+				UsedAt:       &usedAt,
+			},
+		},
+	}}
+	svc := NewServiceWithDependencies(repo, session, nil, entitlements, nil, nil)
+	svc.now = func() time.Time { return now }
+
+	result, err := svc.Sync(context.Background(), SyncInput{
+		SupplierID:                     7,
+		IncludeEntitlementTransactions: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 3, result.EntitlementTransactions)
+	require.Equal(t, 0, result.LedgerEntries)
+	require.NotNil(t, result.Snapshot)
+	require.Equal(t, int64(0), result.Snapshot.CompletedFundingAmountCents)
+	require.Equal(t, int64(5000), result.Snapshot.EntitlementAmountCents)
+	require.Equal(t, int64(5000), result.Snapshot.ExpectedBalanceCents)
+}
+
+func TestServiceSyncUsesProviderTypeFromSessionBundleForBalanceOnlyNewAPI(t *testing.T) {
+	repo := NewMemoryRepository()
+	now := time.Date(2026, 6, 22, 3, 30, 0, 0, time.UTC)
+	session := &stubCostSessionReader{input: ports.SessionProbeInput{
+		SupplierID: 7,
+		Origin:     "https://www.codexapis.com",
+		APIBaseURL: "https://www.codexapis.com",
+		Bundle: map[string]any{
+			"provider_type": "new_api",
+			"context": map[string]any{
+				"system_type": "new_api",
+			},
+		},
+	}}
+	balance := &stubCostBalanceSyncer{result: &balancesapp.SyncFromSessionResult{
+		SupplierID: 7,
+		SystemType: "new_api",
+		Origin:     "https://www.codexapis.com",
+		APIBaseURL: "https://www.codexapis.com",
+		SyncedAt:   now,
+		Snapshot: &adminplusdomain.BalanceSnapshot{
+			SupplierID:   7,
+			BalanceCents: 1234500,
+			Currency:     "QTA",
+			CapturedAt:   now,
+		},
+	}}
+	svc := NewServiceWithDependencies(repo, session, nil, nil, nil, balance)
+	svc.now = func() time.Time { return now }
+
+	result, err := svc.Sync(context.Background(), SyncInput{
+		SupplierID:                     7,
+		IncludeFundingTransactions:     false,
+		IncludeEntitlementTransactions: false,
+		IncludeUsageCostLines:          false,
+		IncludeBalanceSnapshot:         true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "new_api", result.ProviderType)
+	require.Equal(t, "new_api", result.SystemType)
+	require.Equal(t, "https://www.codexapis.com", result.APIBaseURL)
+	require.Equal(t, true, result.Capabilities["balance_snapshot"])
+	require.NotNil(t, result.Snapshot)
+	require.Equal(t, "QTA", result.Snapshot.Currency)
 }
 
 func TestServiceSyncTurnsRefundedFundingIntoDebit(t *testing.T) {
@@ -262,6 +368,16 @@ type stubCostEntitlementReader struct {
 func (r *stubCostEntitlementReader) ReadEntitlementTransactions(_ context.Context, _ ports.SessionProbeInput, request ports.ReadEntitlementTransactionsInput) (*ports.ReadEntitlementTransactionsResult, error) {
 	r.request = request
 	return r.result, nil
+}
+
+type stubCostBalanceSyncer struct {
+	result  *balancesapp.SyncFromSessionResult
+	request balancesapp.SyncFromSessionInput
+}
+
+func (s *stubCostBalanceSyncer) SyncFromSession(_ context.Context, in balancesapp.SyncFromSessionInput) (*balancesapp.SyncFromSessionResult, error) {
+	s.request = in
+	return s.result, nil
 }
 
 func findEntitlementByExternalID(t *testing.T, items []*adminplusdomain.SupplierEntitlementTransaction, externalID string) *adminplusdomain.SupplierEntitlementTransaction {

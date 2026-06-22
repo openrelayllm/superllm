@@ -215,6 +215,97 @@ func TestCompleteTaskEncryptsCapturedSessionBundle(t *testing.T) {
 	require.Contains(t, latest.SessionBundleCiphertext, "encrypted:")
 }
 
+func TestCompleteTaskNormalizesNewAPIBrowserSessionAndSyncsBalance(t *testing.T) {
+	sessionRepo := sessionsapp.NewMemoryRepository()
+	cipher := &recordingSessionCipher{}
+	sessionService := sessionsapp.NewService(sessionRepo, cipher)
+	probe := &recordingSessionProbe{balanceCents: 1234500}
+	processor := NewIngestProcessorWithCipher(
+		ratesapp.NewService(newIngestRateRepository()),
+		balancesapp.NewServiceWithDependencies(balancesapp.NewMemoryRepository(), nil, sessionService, probe),
+		announcementsapp.NewService(announcementsapp.NewMemoryRepository()),
+		healthapp.NewService(healthapp.NewMemoryRepository()),
+		usagecostsapp.NewService(usagecostsapp.NewMemoryRepository()),
+		sessionService,
+		cipher,
+	)
+	svc := NewServiceWithResultProcessor(NewMemoryRepository(), processor)
+	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return now }
+	svc.newToken = func() (string, error) { return "lease-token", nil }
+
+	task, err := svc.CreateLeasedTask(context.Background(), CreateLeasedTaskInput{
+		SupplierID: 42,
+		Type:       adminplusdomain.ExtensionTaskTypeCaptureSession,
+		DeviceID:   "chrome-1",
+		Payload: map[string]any{
+			"provider_type": "new-api",
+		},
+		LeaseTTL: time.Minute,
+	})
+	require.NoError(t, err)
+
+	completed, err := svc.CompleteTask(context.Background(), CompleteTaskInput{
+		TaskID:     task.ID,
+		DeviceID:   "chrome-1",
+		LeaseToken: "lease-token",
+		Result: map[string]any{
+			"source": "chrome",
+			"session_bundle": map[string]any{
+				"origin":      "https://www.codexapis.com",
+				"captured_at": "2026-06-20T10:00:00Z",
+				"cookies": []any{
+					map[string]any{"name": "session", "value": "secret-cookie"},
+				},
+				"context": map[string]any{
+					"api_base_url": "https://www.codexapis.com",
+					"user_id":      "42",
+				},
+				"required_headers": map[string]any{
+					"origin":  "https://www.codexapis.com",
+					"referer": "https://www.codexapis.com/console",
+				},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, adminplusdomain.ExtensionTaskStatusSucceeded, completed.Status)
+	require.NotContains(t, completed.Result, "session_bundle")
+	summary, ok := completed.Result["session_summary"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "new_api", summary["provider_type"])
+	require.Equal(t, "42", summary["user_id"])
+	require.Equal(t, true, summary["has_new_api_user_header"])
+	require.Equal(t, 1, summary["cookie_count"])
+
+	ingest, ok := completed.Result["ingest"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, true, ingest["session_captured"])
+	require.Equal(t, int64(1234500), ingest["balance_cents"])
+	require.Equal(t, "QTA", ingest["balance_currency"])
+	require.Equal(t, 1, probe.calls)
+	require.Equal(t, int64(42), probe.lastInput.SupplierID)
+	require.Equal(t, "https://www.codexapis.com", probe.lastInput.APIBaseURL)
+	require.Equal(t, "new_api", probe.lastInput.Bundle["provider_type"])
+	require.Equal(t, "new_api", probe.lastInput.Bundle["system_type"])
+
+	headers, ok := probe.lastInput.Bundle["required_headers"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "42", headers["New-Api-User"])
+
+	latest, err := sessionRepo.Get(context.Background(), 42)
+	require.NoError(t, err)
+	require.Equal(t, "https://www.codexapis.com", latest.APIBaseURL)
+	require.Equal(t, int64(task.ID), latest.SourceExtensionTaskID)
+
+	var savedBundle map[string]any
+	require.NoError(t, json.Unmarshal([]byte(cipher.plaintext), &savedBundle))
+	require.Equal(t, "new_api", savedBundle["provider_type"])
+	require.Equal(t, "New-Api-User", savedBundle["auth_header_name"])
+	require.Equal(t, "42", savedBundle["auth_header_value"])
+}
+
 func TestCompleteTaskKeepsCapturedSessionWhenBalanceProbeFails(t *testing.T) {
 	sessionRepo := sessionsapp.NewMemoryRepository()
 	sessionService := sessionsapp.NewService(sessionRepo, stubSessionCipher{})
@@ -292,6 +383,19 @@ func (stubSessionCipher) Decrypt(ciphertext string) (string, error) {
 	return `{}`, nil
 }
 
+type recordingSessionCipher struct {
+	plaintext string
+}
+
+func (c *recordingSessionCipher) Encrypt(plaintext string) (string, error) {
+	c.plaintext = plaintext
+	return "encrypted:recorded", nil
+}
+
+func (c *recordingSessionCipher) Decrypt(ciphertext string) (string, error) {
+	return c.plaintext, nil
+}
+
 type failingSessionProbeAdapter struct {
 	err   error
 	calls int
@@ -300,6 +404,32 @@ type failingSessionProbeAdapter struct {
 func (a *failingSessionProbeAdapter) ProbeSub2APIUserProfile(_ context.Context, _ ports.SessionProbeInput) (*ports.SessionProbeResult, error) {
 	a.calls++
 	return nil, a.err
+}
+
+type recordingSessionProbe struct {
+	calls        int
+	lastInput    ports.SessionProbeInput
+	balanceCents int64
+}
+
+func (p *recordingSessionProbe) ProbeSub2APIUserProfile(_ context.Context, in ports.SessionProbeInput) (*ports.SessionProbeResult, error) {
+	p.calls++
+	p.lastInput = in
+	return &ports.SessionProbeResult{
+		SupplierID:      in.SupplierID,
+		Status:          "ok",
+		SystemType:      "new_api",
+		Origin:          in.Origin,
+		APIBaseURL:      in.APIBaseURL,
+		BalanceCents:    &p.balanceCents,
+		BalanceCurrency: "QTA",
+		Profile: &ports.UserProfileSnapshot{
+			ID:       42,
+			Username: "wutongci",
+			Balance:  12345,
+		},
+		ProbedAt: time.Date(2026, 6, 20, 10, 0, 5, 0, time.UTC),
+	}, nil
 }
 
 type ingestRateRepository struct {

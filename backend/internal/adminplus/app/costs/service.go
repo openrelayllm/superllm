@@ -130,7 +130,7 @@ func (s *Service) Sync(ctx context.Context, in SyncInput) (*SyncResult, error) {
 	}
 	result := &SyncResult{
 		SupplierID:   in.SupplierID,
-		ProviderType: "sub2api",
+		ProviderType: providerTypeFromSessionBundle(probeInput.Bundle),
 		SyncedAt:     s.now().UTC(),
 		Capabilities: map[string]bool{},
 		Diagnostics:  map[string]string{},
@@ -462,10 +462,40 @@ func normalizeCurrency(value string) string {
 
 func normalizeProviderType(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
-	if value == "" {
+	switch value {
+	case "":
 		return "sub2api"
+	case "newapi", "new-api":
+		return "new_api"
+	default:
+		return value
 	}
+}
+
+func providerTypeFromSessionBundle(bundle map[string]any) string {
+	contextValue := mapStringValue(bundle, "context")
+	return normalizeProviderType(firstNonEmpty(
+		stringValue(bundle, "provider_type"),
+		stringValue(bundle, "system_type"),
+		stringValue(contextValue, "provider_type"),
+		stringValue(contextValue, "system_type"),
+	))
+}
+
+func mapStringValue(in map[string]any, key string) map[string]any {
+	if in == nil {
+		return nil
+	}
+	value, _ := in[key].(map[string]any)
 	return value
+}
+
+func stringValue(in map[string]any, key string) string {
+	if in == nil {
+		return ""
+	}
+	value, _ := in[key].(string)
+	return strings.TrimSpace(value)
 }
 
 func normalizeStatus(value string) string {

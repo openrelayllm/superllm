@@ -29,7 +29,7 @@
     if (isLoginLikePage()) {
       return fail('SUPPLIER_LOGIN_REQUIRED', '请先在当前供应商页面完成登录，再执行一键上报')
     }
-    const bundle = collectSessionBundle(supplier)
+    const bundle = await collectSessionBundle(supplier)
     return ok({
       source: 'chrome',
       captured_at: new Date().toISOString(),
@@ -43,11 +43,11 @@
     })
   }
 
-  function detectLogin() {
+  async function detectLogin() {
     if (isLoginLikePage()) {
       return { status: 'logged_out' }
     }
-    const bundle = collectSessionBundle({})
+    const bundle = await collectSessionBundle({})
     if (hasSessionEvidence(bundle)) {
       return { status: 'logged_in', summary: summarizeBundle(bundle) }
     }
@@ -58,16 +58,19 @@
     return Boolean(document.querySelector('input[type="password"]') || /login|signin|auth/i.test(location.pathname))
   }
 
-  function collectSessionBundle(supplier) {
+  async function collectSessionBundle(supplier) {
     const storage = collectStorage()
     const tokens = extractTokens(storage)
     const context = extractContext(storage, supplier)
-    return {
+    const bundle = {
       supplier_id: supplier?.id || supplier?.supplier_id,
       origin: location.origin,
       url: location.href,
       captured_at: new Date().toISOString(),
       expires_at: inferExpiresAt(storage),
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      csrf_token: tokens.csrf_token,
       tokens,
       cookies: [],
       context,
@@ -77,6 +80,10 @@
       },
       storage_keys: Object.keys(storage).slice(0, 80)
     }
+    if (window.AdminPlusNewAPI?.enrichSessionBundle) {
+      await window.AdminPlusNewAPI.enrichSessionBundle({ bundle, storage, supplier })
+    }
+    return bundle
   }
 
   function collectStorage() {
@@ -184,12 +191,16 @@
   }
 
   function hasSessionEvidence(bundle) {
+    if (window.AdminPlusNewAPI?.hasSessionEvidence?.(bundle)) {
+      return true
+    }
     return Boolean(bundle.tokens.access_token || bundle.tokens.refresh_token || bundle.tokens.csrf_token)
   }
 
   function summarizeBundle(bundle) {
     return {
       origin: bundle.origin,
+      provider_type: bundle.provider_type || '',
       captured_at: bundle.captured_at,
       expires_at: bundle.expires_at,
       has_access_token: Boolean(bundle.tokens.access_token),
@@ -197,9 +208,11 @@
       has_csrf_token: Boolean(bundle.tokens.csrf_token),
       cookie_count: bundle.cookies.length,
       api_base_url: bundle.context.api_base_url,
+      user_id: bundle.context.user_id,
       organization_id: bundle.context.organization_id,
       project_id: bundle.context.project_id,
-      account_id: bundle.context.account_id
+      account_id: bundle.context.account_id,
+      has_new_api_user_header: Boolean(bundle.required_headers?.['New-Api-User'])
     }
   }
 

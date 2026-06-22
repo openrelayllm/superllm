@@ -27,6 +27,7 @@
 | `roadmap/restructure/README.md` | 下一阶段重新梳理顺序、插件并行协作、阶段验收和清理计划 | 当前事实源 |
 | `roadmap/Chrome/README.md` | Chrome 插件作为供应商浏览器会话获取器的路线图 | 当前事实源 |
 | `roadmap/accounts/README.md` | 供应商分组、第三方密钥、本地 Sub2API 账号创建与绑定流程 | 当前事实源 |
+| `roadmap/newapi/README.md` | New API 供应商登录、会话、当前用户信息和后续适配能力路线图 | 当前事实源 |
 | `legal/admin-compliance.zh.md` | 中文合规责任说明 | 保留 |
 | `legal/admin-compliance.en.md` | 英文合规责任说明 | 保留 |
 | `PAYMENT.md` | Sub2API 原支付系统英文文档 | 上游遗留参考，不是 Admin Plus MVP 范围 |

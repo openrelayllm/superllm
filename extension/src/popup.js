@@ -225,9 +225,10 @@ function renderLastCaptureResult() {
     return
   }
   const succeeded = lastCaptureResult.status === 'succeeded'
-  lastResultPanel.className = `result ${succeeded ? 'succeeded' : 'failed'}`
-  lastResultBadge.textContent = succeeded ? '成功' : '失败'
-  lastResultTitle.textContent = lastCaptureResult.message || (succeeded ? '最近上报成功' : '最近上报失败')
+  const partial = lastCaptureResult.status === 'partial' || Boolean(lastCaptureResult.ingest?.balance_probe_error)
+  lastResultPanel.className = `result ${partial ? 'partial' : succeeded ? 'succeeded' : 'failed'}`
+  lastResultBadge.textContent = partial ? '已保存' : succeeded ? '成功' : '失败'
+  lastResultTitle.textContent = lastCaptureResult.message || (partial ? '会话已保存，余额读取失败' : succeeded ? '最近上报成功' : '最近上报失败')
   lastResultMeta.textContent = formatLastResultMeta(lastCaptureResult)
 }
 

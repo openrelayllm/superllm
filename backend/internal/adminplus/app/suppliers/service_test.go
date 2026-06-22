@@ -229,6 +229,28 @@ func TestServiceEnsureFromSiteCandidateCreatesSub2APISupplier(t *testing.T) {
 	require.Equal(t, result.Supplier.ID, matched.Supplier.ID)
 }
 
+func TestServiceEnsureFromSiteCandidateCreatesNewAPISupplier(t *testing.T) {
+	svc := NewService(NewMemoryRepository())
+
+	result, err := svc.EnsureFromSiteCandidate(context.Background(), CreateFromSiteCandidateInput{
+		Name:         "Codex APIs",
+		Type:         adminplusdomain.SupplierTypeNewAPI,
+		DashboardURL: "https://www.codexapis.com/console",
+		APIBaseURL:   "https://www.codexapis.com",
+		SourceHost:   "www.codexapis.com",
+		SourceURL:    "https://www.codexapis.com/console",
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.Created)
+	require.False(t, result.Matched)
+	require.Equal(t, adminplusdomain.SupplierKindRelay, result.Supplier.Kind)
+	require.Equal(t, adminplusdomain.SupplierTypeNewAPI, result.Supplier.Type)
+	require.Equal(t, adminplusdomain.SupplierRuntimeStatusMonitorOnly, result.Supplier.RuntimeStatus)
+	require.Equal(t, "https://www.codexapis.com", result.Supplier.APIBaseURL)
+	require.Equal(t, "QTA", result.Supplier.BalanceCurrency)
+}
+
 func TestServiceEnsureFromSiteCandidateInfersThirdPartyRechargeURL(t *testing.T) {
 	svc := NewService(NewMemoryRepository())
 

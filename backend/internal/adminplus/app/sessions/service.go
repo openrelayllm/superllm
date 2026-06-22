@@ -171,8 +171,8 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 	if err != nil {
 		return nil, err
 	}
-	if supplier.Type != adminplusdomain.SupplierTypeSub2API {
-		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_DIRECT_LOGIN_UNSUPPORTED", "supplier direct login is only implemented for Sub2API suppliers")
+	if supplier.Type != adminplusdomain.SupplierTypeSub2API && supplier.Type != adminplusdomain.SupplierTypeNewAPI {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_DIRECT_LOGIN_UNSUPPORTED", "supplier direct login is only implemented for Sub2API and New API suppliers")
 	}
 	username := strings.TrimSpace(in.Username)
 	password := strings.TrimSpace(in.Password)
@@ -196,6 +196,9 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 	if token == "" && (username == "" || password == "") {
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED", "supplier username and password or access token is required")
 	}
+	loginContext := cloneMap(in.LoginContext)
+	loginContext["provider_type"] = string(supplier.Type)
+	loginContext["supplier_type"] = string(supplier.Type)
 	loginResult, err := s.login.DirectLogin(ctx, ports.DirectLoginInput{
 		SupplierID:   in.SupplierID,
 		Origin:       origin,
@@ -203,7 +206,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 		Username:     username,
 		Password:     password,
 		Token:        token,
-		LoginContext: cloneMap(in.LoginContext),
+		LoginContext: loginContext,
 	})
 	if err != nil {
 		return nil, err
@@ -249,23 +252,33 @@ func sessionSummaryFromBundle(bundle map[string]any) map[string]any {
 	if cookieCount == 0 && firstNonEmpty(stringValue(requiredHeaders, "cookie"), stringValue(bundle, "cookie"), stringValue(bundle, "cookies")) != "" {
 		cookieCount = 1
 	}
+	providerType := firstNonEmpty(stringValue(bundle, "provider_type"), stringValue(context, "provider_type"))
+	systemType := firstNonEmpty(stringValue(bundle, "system_type"), stringValue(context, "system_type"), providerType)
+	newAPIUserHeader := firstNonEmpty(
+		stringValue(requiredHeaders, "New-Api-User"),
+		stringValue(requiredHeaders, "new-api-user"),
+		stringValue(bundle, "auth_header_value"),
+	)
 	return map[string]any{
-		"origin":               stringValue(bundle, "origin"),
-		"session_source":       stringValue(bundle, "session_source"),
-		"captured_at":          stringValue(bundle, "captured_at"),
-		"expires_at":           stringValue(bundle, "expires_at"),
-		"has_access_token":     firstNonEmpty(stringValue(bundle, "access_token"), stringValue(bundle, "accessToken"), stringValue(tokens, "access_token"), stringValue(tokens, "accessToken")) != "",
-		"has_refresh_token":    firstNonEmpty(stringValue(bundle, "refresh_token"), stringValue(bundle, "refreshToken"), stringValue(tokens, "refresh_token"), stringValue(tokens, "refreshToken")) != "",
-		"has_csrf_token":       firstNonEmpty(stringValue(bundle, "csrf_token"), stringValue(bundle, "csrfToken"), stringValue(tokens, "csrf_token"), stringValue(tokens, "csrfToken")) != "",
-		"cookie_count":         cookieCount,
-		"user_id":              stringValue(context, "user_id"),
-		"organization_id":      stringValue(context, "organization_id"),
-		"project_id":           stringValue(context, "project_id"),
-		"account_id":           stringValue(context, "account_id"),
-		"api_base_url":         stringValue(context, "api_base_url"),
-		"login_method":         stringValue(context, "login_method"),
-		"has_required_origin":  stringValue(requiredHeaders, "origin") != "",
-		"has_required_referer": stringValue(requiredHeaders, "referer") != "",
+		"origin":                  stringValue(bundle, "origin"),
+		"provider_type":           providerType,
+		"system_type":             systemType,
+		"session_source":          stringValue(bundle, "session_source"),
+		"captured_at":             stringValue(bundle, "captured_at"),
+		"expires_at":              stringValue(bundle, "expires_at"),
+		"has_access_token":        firstNonEmpty(stringValue(bundle, "access_token"), stringValue(bundle, "accessToken"), stringValue(tokens, "access_token"), stringValue(tokens, "accessToken")) != "",
+		"has_refresh_token":       firstNonEmpty(stringValue(bundle, "refresh_token"), stringValue(bundle, "refreshToken"), stringValue(tokens, "refresh_token"), stringValue(tokens, "refreshToken")) != "",
+		"has_csrf_token":          firstNonEmpty(stringValue(bundle, "csrf_token"), stringValue(bundle, "csrfToken"), stringValue(tokens, "csrf_token"), stringValue(tokens, "csrfToken")) != "",
+		"has_new_api_user_header": newAPIUserHeader != "" || strings.EqualFold(stringValue(bundle, "auth_header_name"), "New-Api-User"),
+		"cookie_count":            cookieCount,
+		"user_id":                 stringValue(context, "user_id"),
+		"organization_id":         stringValue(context, "organization_id"),
+		"project_id":              stringValue(context, "project_id"),
+		"account_id":              stringValue(context, "account_id"),
+		"api_base_url":            stringValue(context, "api_base_url"),
+		"login_method":            stringValue(context, "login_method"),
+		"has_required_origin":     stringValue(requiredHeaders, "origin") != "",
+		"has_required_referer":    stringValue(requiredHeaders, "referer") != "",
 	}
 }
 

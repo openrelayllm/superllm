@@ -64,6 +64,62 @@ func TestServiceLoginStoresDirectLoginSession(t *testing.T) {
 	require.Equal(t, "https://relay.example.com/api/v1", input.APIBaseURL)
 }
 
+func TestServiceLoginSupportsNewAPI(t *testing.T) {
+	repo := NewMemoryRepository()
+	supplier := &sessionTestSupplierLookup{supplier: &adminplusdomain.Supplier{
+		ID:           9,
+		Name:         "New API",
+		Type:         adminplusdomain.SupplierTypeNewAPI,
+		DashboardURL: "https://newapi.example.com",
+		APIBaseURL:   "https://newapi.example.com",
+	}}
+	capturedAt := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
+	login := &sessionTestLoginAdapter{result: &ports.DirectLoginResult{
+		SupplierID: 9,
+		Origin:     "https://newapi.example.com",
+		APIBaseURL: "https://newapi.example.com",
+		SessionBundle: map[string]any{
+			"provider_type":  "new_api",
+			"origin":         "https://newapi.example.com",
+			"api_base_url":   "https://newapi.example.com",
+			"session_source": "direct_login",
+			"cookies": []any{
+				map[string]any{"name": "session", "value": "signed-session"},
+			},
+			"required_headers": map[string]any{
+				"New-Api-User": "42",
+			},
+			"context": map[string]any{
+				"api_base_url":   "https://newapi.example.com",
+				"login_method":   "direct_login",
+				"session_source": "direct_login",
+				"provider_type":  "new_api",
+				"user_id":        "42",
+			},
+		},
+		CapturedAt: capturedAt,
+	}}
+	svc := NewServiceWithDependencies(repo, sessionTestCipher{}, supplier, nil, login)
+
+	result, err := svc.Login(context.Background(), LoginInput{
+		SupplierID: 9,
+		Username:   "ops@example.com",
+		Password:   "secret",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, adminplusdomain.SupplierSessionSourceDirectLogin, result.Session.SessionSource)
+	require.Equal(t, "https://newapi.example.com", result.Session.Origin)
+	require.Equal(t, "new_api", result.Session.SessionSummary["provider_type"])
+	require.Equal(t, "new_api", result.Session.SessionSummary["system_type"])
+	require.Equal(t, true, result.Session.SessionSummary["has_new_api_user_header"])
+	require.Equal(t, 1, result.Session.SessionSummary["cookie_count"])
+	require.Equal(t, "42", result.Session.SessionSummary["user_id"])
+	require.Equal(t, "new_api", login.input.LoginContext["provider_type"])
+	require.Equal(t, "new_api", login.input.LoginContext["supplier_type"])
+	require.NotContains(t, result.Session.SessionBundleCiphertext, "signed-session")
+}
+
 func TestServiceDecryptedProbeInputReportsDecryptFailure(t *testing.T) {
 	repo := NewMemoryRepository()
 	supplier := &sessionTestSupplierLookup{supplier: &adminplusdomain.Supplier{
@@ -121,9 +177,11 @@ func (s *sessionTestSupplierLookup) GetBrowserCredential(_ context.Context, id i
 type sessionTestLoginAdapter struct {
 	result *ports.DirectLoginResult
 	err    error
+	input  ports.DirectLoginInput
 }
 
-func (a *sessionTestLoginAdapter) DirectLogin(_ context.Context, _ ports.DirectLoginInput) (*ports.DirectLoginResult, error) {
+func (a *sessionTestLoginAdapter) DirectLogin(_ context.Context, in ports.DirectLoginInput) (*ports.DirectLoginResult, error) {
+	a.input = in
 	return a.result, a.err
 }
 

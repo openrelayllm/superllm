@@ -219,7 +219,7 @@ func (c *SessionProfileClient) ProbeSub2APIUserProfile(ctx context.Context, in p
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, infraerrors.New(resp.StatusCode, "SUPPLIER_SESSION_PERMISSION_DENIED", "supplier session cannot access user profile")
+		return nil, infraerrors.New(resp.StatusCode, "SUPPLIER_SESSION_PERMISSION_DENIED", supplierPermissionDeniedMessage("supplier session cannot access user profile", data))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_SESSION_PROBE_BAD_STATUS", "supplier profile endpoint returned non-success status")
@@ -435,6 +435,55 @@ func isCloudflareOriginFailure(statusCode int, lowerBody string) bool {
 func looksLikeHTMLResponse(lowerBody string) bool {
 	trimmed := strings.TrimSpace(lowerBody)
 	return strings.HasPrefix(trimmed, "<!doctype html") || strings.HasPrefix(trimmed, "<html")
+}
+
+func supplierPermissionDeniedMessage(base string, data []byte) string {
+	detail := supplierErrorDetail(data)
+	if detail == "" {
+		return base
+	}
+	return base + ": " + detail
+}
+
+func supplierErrorDetail(data []byte) string {
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err == nil {
+		code := firstNonEmpty(
+			stringFromAny(root["code"]),
+			stringFromAny(root["error"]),
+			stringFromAny(root["reason"]),
+		)
+		message := firstNonEmpty(
+			stringFromAny(root["message"]),
+			stringFromAny(root["error_description"]),
+			stringFromAny(root["detail"]),
+		)
+		return truncateSupplierErrorDetail(strings.TrimSpace(strings.Join(nonEmptyParts(code, message), ": ")))
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" || looksLikeHTMLResponse(strings.ToLower(text)) {
+		return ""
+	}
+	return truncateSupplierErrorDetail(text)
+}
+
+func nonEmptyParts(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func truncateSupplierErrorDetail(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if len(value) <= 180 {
+		return value
+	}
+	return value[:180]
 }
 
 func buildSub2APIUserEndpointURL(apiBaseURL string, endpointPath string) (string, error) {
@@ -857,9 +906,9 @@ func (c *SessionProfileClient) doSessionJSONBody(ctx context.Context, method str
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		if strict {
-			return nil, infraerrors.New(resp.StatusCode, "SUPPLIER_SESSION_PERMISSION_DENIED", "supplier session cannot access requested endpoint")
+			return nil, infraerrors.New(resp.StatusCode, "SUPPLIER_SESSION_PERMISSION_DENIED", supplierPermissionDeniedMessage("supplier session cannot access requested endpoint", data))
 		}
-		return nil, infraerrors.New(resp.StatusCode, "SUPPLIER_SESSION_PERMISSION_DENIED", "supplier session cannot access requested endpoint")
+		return nil, infraerrors.New(resp.StatusCode, "SUPPLIER_SESSION_PERMISSION_DENIED", supplierPermissionDeniedMessage("supplier session cannot access requested endpoint", data))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if strict {

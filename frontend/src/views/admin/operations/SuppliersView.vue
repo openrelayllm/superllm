@@ -79,6 +79,12 @@
                     </span>
                     <span>批量调整状态</span>
                   </button>
+                  <button class="menu-item" :disabled="selectedCount === 0 || bulkBalanceRefreshing" @click="refreshSelectedBalances">
+                    <span class="menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
+                      <Icon name="sync" size="sm" :class="{ 'animate-spin': bulkBalanceRefreshing }" />
+                    </span>
+                    <span>{{ bulkBalanceRefreshing ? '更新额度中...' : '批量更新额度' }}</span>
+                  </button>
                   <button class="menu-item text-red-600 dark:text-red-300" :disabled="selectedCount === 0" @click="openBulkDeleteDialog">
                     <span class="menu-icon bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300">
                       <Icon name="trash" size="sm" />
@@ -115,6 +121,10 @@
             <button type="button" class="btn btn-secondary btn-sm" @click="selectVisible">全选当前页</button>
             <button type="button" class="btn btn-secondary btn-sm" @click="clearSelection">清除选择</button>
             <button type="button" class="btn btn-secondary btn-sm" @click="openBulkStatusDialog">批量状态</button>
+            <button type="button" class="btn btn-secondary btn-sm" :disabled="bulkBalanceRefreshing" @click="refreshSelectedBalances">
+              <Icon name="sync" size="xs" :class="{ 'animate-spin': bulkBalanceRefreshing }" />
+              {{ bulkBalanceRefreshing ? '更新中' : '批量更新额度' }}
+            </button>
             <button type="button" class="btn btn-danger btn-sm" @click="openBulkDeleteDialog">批量删除</button>
           </div>
         </div>
@@ -594,6 +604,8 @@
               <span class="badge" :class="summaryBoolClass('has_refresh_token')">Refresh Token</span>
               <span class="badge" :class="summaryBoolClass('has_csrf_token')">CSRF</span>
               <span class="badge badge-gray">Cookie {{ summaryCookieCount }}</span>
+              <span v-if="sessionSummaryString('provider_type')" class="badge badge-primary">Provider {{ sessionSummaryString('provider_type') }}</span>
+              <span v-if="currentSessionSummary.has_new_api_user_header" class="badge badge-success">New-Api-User</span>
               <span v-if="sessionSummaryString('organization_id')" class="badge badge-primary">Org {{ sessionSummaryString('organization_id') }}</span>
               <span v-if="sessionSummaryString('project_id')" class="badge badge-primary">Project {{ sessionSummaryString('project_id') }}</span>
             </div>
@@ -613,8 +625,8 @@
           <div class="grid gap-3 md:grid-cols-4">
             <div>
               <div class="text-xs text-gray-500 dark:text-dark-400">余额</div>
-              <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">
-                {{ formatMoney(currentBalanceValue?.balance_cents || 0, currentBalanceValue?.currency || 'USD') }}
+              <div class="mt-1 text-sm font-semibold" :class="currentBalanceAmountClass">
+                {{ currentBalanceAmountText }}
               </div>
             </div>
             <div>
@@ -776,7 +788,7 @@
         <EmptyState
           v-else-if="channelMonitorItems.length === 0 && !channelStatusError"
           title="暂无渠道状态"
-          description="请确认供应商已启用渠道监控，并且当前供应商会话有权限读取 /api/v1/channel-monitors。"
+          description="请确认供应商已启用渠道监控；Sub2API 需要 /api/v1/channel-monitors，New API 需要可访问的 Pulse 监控入口。"
         />
 
         <div v-else class="grid gap-5 [grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr))]">
@@ -1301,6 +1313,7 @@ const deleteDialogOpen = ref(false)
 const moreMenuOpen = ref(false)
 const bulkStatusMode = ref(false)
 const bulkDeleteMode = ref(false)
+const bulkBalanceRefreshing = ref(false)
 const editingSupplier = ref<Supplier | null>(null)
 const sessionSupplier = ref<Supplier | null>(null)
 const channelStatusSupplier = ref<Supplier | null>(null)
@@ -1323,6 +1336,7 @@ const sessionLoading = ref(false)
 const loggingInSession = ref(false)
 const probingSession = ref(false)
 const currentBalanceLoading = ref(false)
+const currentBalanceError = ref('')
 const channelStatusLoading = ref(false)
 const groupsLoading = ref(false)
 const groupsSyncing = ref(false)
@@ -1333,7 +1347,9 @@ const channelStatusError = ref('')
 const channelMonitorCapturedAt = ref('')
 const channelMonitorOrigin = ref('')
 const channelMonitorAPIBaseURL = ref('')
-const channelStatusWindow = ref<'7d' | '15d' | '30d'>('7d')
+type ChannelStatusWindow = 'pulse' | '7d' | '15d' | '30d'
+
+const channelStatusWindow = ref<ChannelStatusWindow>('7d')
 const channelStatusAutoRefresh = ref(true)
 const channelStatusCountdown = ref(16)
 const groupsError = ref('')
@@ -1482,10 +1498,17 @@ const currentBalanceValue = computed(() => {
   return supplierID ? currentBalanceStore[supplierID] : undefined
 })
 
+const currentBalanceFailureMessage = computed(() => {
+  const balance = currentBalanceValue.value
+  if (balance?.fallback) return normalizeBalanceErrorMessage(balance.refresh_error_message || currentBalanceError.value)
+  if (currentBalanceError.value) return normalizeBalanceErrorMessage(currentBalanceError.value)
+  return ''
+})
+
 const currentBalanceBadgeText = computed(() => {
   const balance = currentBalanceValue.value
+  if (currentBalanceFailureMessage.value) return '读取失败'
   if (!balance) return '未读取'
-  if (balance.fallback) return '兜底值'
   if (balance.expired) return '已过期'
   if (balance.stale) return '待刷新'
   return '最新'
@@ -1493,24 +1516,41 @@ const currentBalanceBadgeText = computed(() => {
 
 const currentBalanceBadgeClass = computed(() => {
   const balance = currentBalanceValue.value
-  if (!balance || balance.fallback || balance.expired) return 'badge-danger'
+  if (currentBalanceFailureMessage.value) return 'badge-danger'
+  if (!balance) return 'badge-gray'
+  if (balance.expired) return 'badge-danger'
   if (balance.stale) return 'badge-warning'
   return 'badge-success'
 })
 
 const currentBalanceCaption = computed(() => {
   const balance = currentBalanceValue.value
+  if (currentBalanceFailureMessage.value) return `余额读取失败：${currentBalanceFailureMessage.value}`
   if (!balance) return '打开后读取 Redis 当前值，必要时可手动刷新'
-  if (balance.fallback) return balance.refresh_error_message || '读取失败，暂按 0 处理'
   if (balance.stale) return '缓存已到刷新窗口，后台会重新获取'
   return '缓存有效，调度器会周期刷新'
 })
 
 const currentBalanceSourceLabel = computed(() => {
+  if (currentBalanceFailureMessage.value) return '未读取'
+  if (currentBalanceValue.value?.fallback) return '未读取'
   const source = currentBalanceValue.value?.source
   if (source === 'provider_session') return '供应商会话'
   if (source === 'fallback') return '兜底'
   return source || '-'
+})
+
+const currentBalanceAmountText = computed(() => {
+  const balance = currentBalanceValue.value
+  if (!balance) return currentBalanceFailureMessage.value ? '无法读取' : '-'
+  if (balance.fallback) return '无法读取'
+  return formatMoney(balance.balance_cents, balance.currency || 'USD')
+})
+
+const currentBalanceAmountClass = computed(() => {
+  return currentBalanceValue.value?.fallback || currentBalanceFailureMessage.value
+    ? 'text-red-600 dark:text-red-300'
+    : 'text-gray-900 dark:text-gray-100'
 })
 
 const currentGroupSession = computed(() => {
@@ -1600,11 +1640,18 @@ const channelStatusOverall = computed<SupplierMonitorStatus>(() => {
   return 'operational'
 })
 
-const channelStatusWindowOptions = computed<Array<{ value: '7d' | '15d' | '30d'; label: string; disabled: boolean }>>(() => [
-  { value: '7d', label: '7 天', disabled: false },
-  { value: '15d', label: '15 天', disabled: true },
-  { value: '30d', label: '30 天', disabled: true }
-])
+const channelStatusWindowOptions = computed<Array<{ value: ChannelStatusWindow; label: string; disabled: boolean }>>(() => {
+  if (channelStatusSupplier.value?.type === 'new_api') {
+    return [
+      { value: 'pulse', label: '60 秒', disabled: false }
+    ]
+  }
+  return [
+    { value: '7d', label: '7 天', disabled: false },
+    { value: '15d', label: '15 天', disabled: true },
+    { value: '30d', label: '30 天', disabled: true }
+  ]
+})
 
 const channelStatusOverallLabel = computed(() => {
   return channelStatusOverall.value === 'operational' ? 'OPERATIONAL' : 'DEGRADED'
@@ -1935,6 +1982,14 @@ function sessionHasAccessToken(session?: SupplierBrowserSession): boolean {
   return Boolean(session?.session_summary?.has_access_token)
 }
 
+function sessionHasNewAPIUserHeader(session?: SupplierBrowserSession): boolean {
+  return Boolean(session?.session_summary?.has_new_api_user_header)
+}
+
+function supportsDirectLogin(supplier: Supplier): boolean {
+  return supplier.type === 'sub2api' || supplier.type === 'new_api'
+}
+
 function hasConfiguredDirectLoginCredential(supplier: Supplier): boolean {
   return supplier.credential.browser_login_token_configured ||
     (supplier.credential.browser_login_username_configured && supplier.credential.browser_login_password_configured)
@@ -1950,6 +2005,11 @@ function shouldShowTokenBadge(supplier: Supplier): boolean {
 
 function credentialTokenBadgeText(supplier: Supplier): string {
   const session = sessionStore[supplier.id]
+  if (supplier.type === 'new_api') {
+    if (sessionHasNewAPIUserHeader(session) && session?.status === 'valid') return 'Header 有效'
+    if (sessionHasNewAPIUserHeader(session) && session?.status === 'expired') return 'Header 过期'
+    if (session?.session_summary) return 'Header 缺失'
+  }
   if (sessionHasAccessToken(session) && session?.status === 'valid') return 'Token 有效'
   if (sessionHasAccessToken(session) && session?.status === 'expired') return 'Token 过期'
   if (session?.session_summary) return 'Token 缺失'
@@ -1959,6 +2019,11 @@ function credentialTokenBadgeText(supplier: Supplier): string {
 
 function credentialTokenBadgeClass(supplier: Supplier): string {
   const session = sessionStore[supplier.id]
+  if (supplier.type === 'new_api') {
+    if (sessionHasNewAPIUserHeader(session) && session?.status === 'valid') return 'badge-success'
+    if (sessionHasNewAPIUserHeader(session) && session?.status === 'expired') return 'badge-warning'
+    if (session?.session_summary) return 'badge-danger'
+  }
   if (sessionHasAccessToken(session) && session?.status === 'valid') return 'badge-success'
   if (sessionHasAccessToken(session) && session?.status === 'expired') return 'badge-warning'
   if (session?.session_summary) return 'badge-danger'
@@ -1968,6 +2033,11 @@ function credentialTokenBadgeClass(supplier: Supplier): string {
 
 function credentialTokenBadgeTitle(supplier: Supplier): string {
   const session = sessionStore[supplier.id]
+  if (supplier.type === 'new_api') {
+    if (sessionHasNewAPIUserHeader(session) && session?.status === 'valid') return '当前 New API 会话摘要包含 New-Api-User，且会话未过期'
+    if (sessionHasNewAPIUserHeader(session) && session?.status === 'expired') return '当前 New API 会话摘要包含 New-Api-User，但会话已过期，请重新一键登录或使用 Chrome 插件'
+    if (session?.session_summary) return '当前 New API 会话摘要没有 New-Api-User，请重新一键登录或使用 Chrome 插件'
+  }
   if (sessionHasAccessToken(session) && session?.status === 'valid') return '当前会话摘要包含 Access Token，且会话未过期'
   if (sessionHasAccessToken(session) && session?.status === 'expired') return '当前会话摘要包含 Access Token，但会话已过期，请重新一键登录或使用 Chrome 插件'
   if (session?.session_summary) return '当前会话摘要没有 Access Token，请重新一键登录或使用 Chrome 插件'
@@ -1978,13 +2048,13 @@ function credentialTokenBadgeTitle(supplier: Supplier): string {
 function oneClickLoginTitle(supplier: Supplier): string {
   const preflightError = directLoginPreflightError(supplier)
   if (preflightError) return preflightError
-  if (supplier.type !== 'sub2api') return '当前后端直登仅支持 Sub2API 供应商'
   if (rowLoginSupplierID.value === supplier.id) return '正在登录'
+  if (supplier.type === 'new_api') return '使用已保存凭据后端直登 New API 并读取余额'
   return '使用已保存凭据后端直登并读取余额'
 }
 
 function directLoginPreflightError(supplier: Supplier): string {
-  if (supplier.type !== 'sub2api') return '当前一键登录仅支持 Sub2API 供应商'
+  if (!supportsDirectLogin(supplier)) return '当前一键登录仅支持 Sub2API 或 New API 供应商'
   if (!supplier.credential.browser_login_enabled) return '未启用登录凭据，请先编辑供应商启用并配置账号密码或临时 Token'
   if (!hasConfiguredDirectLoginCredential(supplier)) return '未配置登录账号密码或临时 Token，请先编辑供应商补齐凭据'
   if (!supplier.dashboard_url && !supplier.api_base_url) return '未配置后台地址或 API Base URL，请先编辑供应商补齐地址'
@@ -2022,6 +2092,33 @@ function directLoginErrorMessage(error: unknown): string {
   return (error as { message?: string }).message || '后端直登失败'
 }
 
+function isBalanceProbeError(error: unknown): boolean {
+  const code = extractApiErrorCode(error)
+  const message = errorMessage(error, '').toLowerCase()
+  return code === 'SUPPLIER_SESSION_PERMISSION_DENIED' ||
+    message.includes('supplier session cannot access user profile') ||
+    message.includes('cannot access user profile')
+}
+
+function normalizeBalanceErrorMessage(message?: string): string {
+  const raw = String(message || '').trim()
+  const lower = raw.toLowerCase()
+  if (lower.includes('authorization header is required')) {
+    return '供应商 profile 接口要求 Authorization，但保存的会话没有带上 access token；请在供应商仪表盘页重新上报'
+  }
+  if (lower.includes('invalid token') || lower.includes('invalid_auth_header')) {
+    return '保存的供应商 access token 已失效或格式不正确；请刷新供应商页面后重新上报'
+  }
+  if (lower.includes('supplier session cannot access user profile') || lower.includes('cannot access user profile')) {
+    return '供应商会话无法读取用户资料或余额，请重新采集具备 Profile 权限的会话'
+  }
+  return raw || '读取当前余额失败'
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return (error as { message?: string })?.message || fallback
+}
+
 function channelStatusErrorMessage(error: unknown): string {
   const code = extractApiErrorCode(error)
   const status = (error as { status?: number })?.status
@@ -2041,7 +2138,7 @@ function channelStatusErrorMessage(error: unknown): string {
     return '供应商会话地址与供应商配置不匹配，请检查后台地址和 API Base URL。'
   }
   if (code && ['SUPPLIER_SESSION_REQUEST_FAILED', 'SUPPLIER_SESSION_BAD_STATUS', 'SUPPLIER_CHANNEL_MONITORS_RESPONSE_INVALID'].includes(code)) {
-    return '供应商渠道状态接口返回异常，请确认该供应商已部署支持 /api/v1/channel-monitors 的 Sub2API 版本。'
+    return '供应商渠道状态接口返回异常，请确认 Sub2API 已部署 /api/v1/channel-monitors，或 New API 已配置可访问的 Pulse 监控入口。'
   }
   return (error as { message?: string }).message || '加载供应商渠道状态失败'
 }
@@ -2132,14 +2229,16 @@ async function reloadCurrentSession() {
 async function reloadCurrentBalance(refresh: boolean) {
   if (!sessionSupplier.value) return
   currentBalanceLoading.value = true
+  currentBalanceError.value = ''
   try {
     const balance = await getSupplierCurrentBalance(sessionSupplier.value.id, { refresh })
     currentBalanceStore[sessionSupplier.value.id] = balance
+    currentBalanceError.value = balance.fallback ? balance.refresh_error_message || '读取当前余额失败' : ''
     if (refresh) {
       await loadSuppliers()
     }
   } catch (error) {
-    appStore.showError((error as { message?: string }).message || '读取当前余额失败')
+    currentBalanceError.value = (error as { message?: string }).message || '读取当前余额失败'
   } finally {
     currentBalanceLoading.value = false
   }
@@ -2156,8 +2255,8 @@ async function reloadGroupSession() {
 
 async function loadChannelStatus() {
   if (!channelStatusSupplier.value) return
-  if (channelStatusSupplier.value.type !== 'sub2api') {
-    channelStatusError.value = '当前仅支持读取 Sub2API 类型供应商的渠道状态。'
+  if (channelStatusSupplier.value.type !== 'sub2api' && channelStatusSupplier.value.type !== 'new_api') {
+    channelStatusError.value = '当前仅支持读取 Sub2API 或 New API 类型供应商的渠道状态。'
     channelMonitorItems.value = []
     return
   }
@@ -2327,6 +2426,7 @@ function openSessionDialog(supplier: Supplier) {
   sessionSupplier.value = supplier
   lastProbe.value = null
   sessionLoadError.value = ''
+  currentBalanceError.value = ''
   sessionDialogOpen.value = true
   void Promise.all([reloadCurrentSession(), reloadCurrentBalance(false)])
 }
@@ -2339,7 +2439,7 @@ function openChannelStatusDialog(supplier: Supplier) {
   channelMonitorOrigin.value = ''
   channelMonitorAPIBaseURL.value = ''
   channelStatusError.value = ''
-  channelStatusWindow.value = '7d'
+  channelStatusWindow.value = supplier.type === 'new_api' ? 'pulse' : '7d'
   channelStatusCountdown.value = 16
   channelStatusDialogOpen.value = true
   startChannelStatusAutoRefresh()
@@ -2402,6 +2502,7 @@ async function probeCurrentSession() {
   if (!sessionSupplier.value) return
   probingSession.value = true
   sessionLoadError.value = ''
+  currentBalanceError.value = ''
   try {
     const result = await probeSupplierSession(sessionSupplier.value.id, {
       record_balance_snapshot: true
@@ -2410,6 +2511,10 @@ async function probeCurrentSession() {
     appStore.showSuccess('会话探测完成，已读取供应商余额')
     await Promise.all([reloadCurrentSession(), reloadCurrentBalance(false), loadSuppliers()])
   } catch (error) {
+    if (isBalanceProbeError(error)) {
+      currentBalanceError.value = normalizeBalanceErrorMessage(errorMessage(error, '会话可用，但余额读取失败'))
+      return
+    }
     sessionLoadError.value = (error as { message?: string }).message || '会话探测失败'
     appStore.showError(sessionLoadError.value)
   } finally {
@@ -2427,6 +2532,7 @@ async function loginCurrentSession() {
   }
   loggingInSession.value = true
   sessionLoadError.value = ''
+  currentBalanceError.value = ''
   try {
     await directLoginSupplier(sessionSupplier.value, {
       updateLastProbe: true,
@@ -2434,6 +2540,10 @@ async function loginCurrentSession() {
     })
     await Promise.all([reloadCurrentBalance(false), loadSuppliers()])
   } catch (error) {
+    if (isBalanceProbeError(error)) {
+      currentBalanceError.value = normalizeBalanceErrorMessage(errorMessage(error, '后端直登完成，但余额读取失败'))
+      return
+    }
     sessionLoadError.value = directLoginErrorMessage(error)
     appStore.showError(sessionLoadError.value)
   } finally {
@@ -2778,6 +2888,56 @@ function openBulkStatusDialog() {
   statusForm.runtime_status = first?.runtime_status || 'monitor_only'
   statusForm.health_status = first?.health_status || 'normal'
   statusDialogOpen.value = true
+}
+
+async function refreshSelectedBalances() {
+  if (selectedCount.value === 0 || bulkBalanceRefreshing.value) return
+  const targets = [...selectedRows.value]
+  if (targets.length === 0) {
+    appStore.showWarning('当前页没有可更新的已选供应商')
+    return
+  }
+
+  moreMenuOpen.value = false
+  bulkBalanceRefreshing.value = true
+  let success = 0
+  let failed = 0
+  const failures: string[] = []
+
+  try {
+    for (const supplier of targets) {
+      try {
+        const balance = await getSupplierCurrentBalance(supplier.id, { refresh: true })
+        currentBalanceStore[supplier.id] = balance
+        if (balance.fallback) {
+          failed++
+          failures.push(`${supplier.name}: ${normalizeBalanceErrorMessage(balance.refresh_error_message)}`)
+        } else {
+          success++
+        }
+      } catch (error) {
+        failed++
+        failures.push(`${supplier.name}: ${normalizeBalanceErrorMessage(errorMessage(error, '读取当前额度失败'))}`)
+      }
+    }
+
+    await loadSuppliers()
+    const failureText = failures.length > 0
+      ? `；${failures.slice(0, 3).join('；')}${failures.length > 3 ? ` 等 ${failures.length} 项` : ''}`
+      : ''
+
+    if (failed === 0) {
+      appStore.showSuccess(`批量更新额度完成：成功 ${success}`)
+      return
+    }
+    if (success > 0) {
+      appStore.showWarning(`批量更新额度完成：成功 ${success}，失败 ${failed}${failureText}`, 7000)
+      return
+    }
+    appStore.showError(`批量更新额度失败：失败 ${failed}${failureText}`, 8000)
+  } finally {
+    bulkBalanceRefreshing.value = false
+  }
 }
 
 async function submitStatus() {
