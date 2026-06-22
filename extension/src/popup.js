@@ -259,10 +259,10 @@ function isFreshCaptureResult(result, startedAt) {
 }
 
 function sendMessage(message) {
-  return chrome.runtime.sendMessage(message).then((response) => {
-    if (!response?.ok) throwMessage(response)
-    return response.result
-  })
+  if (typeof globalThis.adminPlusHandleMessage !== 'function') {
+    return Promise.reject(new Error('extension app is not loaded'))
+  }
+  return Promise.resolve(globalThis.adminPlusHandleMessage(message, { source: 'popup' }))
 }
 
 function throwMessage(response) {

@@ -1,3 +1,4 @@
+(() => {
 const CONFIG_KEY = 'adminPlusOperatorConfig'
 const LAST_CAPTURE_RESULT_KEY = 'adminPlusLastCaptureResult'
 const DEFAULT_CONFIG_PATH = 'config/default-config.json'
@@ -239,7 +240,7 @@ function parseJSON(text) {
 
 
 
-self.adminPlusHandleMessage = handleMessage
+globalThis.adminPlusHandleMessage = handleMessage
 
 const ADMIN_PLUS_PATH_HINTS = [
   '/admin',
@@ -867,3 +868,4 @@ function waitForTabComplete(tabId) {
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
+})()

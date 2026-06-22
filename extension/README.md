@@ -1,6 +1,6 @@
 # Sub2API Plus Session Capture
 
-这是 Admin Plus 的 Chrome MV3 会话获取器。插件只负责浏览器侧必须完成的能力：连接已登录的 Admin Plus、识别当前供应商网站、读取已登录会话，并把供应商会话包上报给后端采集器。
+这是 Admin Plus 的 Chrome MV3 会话获取器。插件只负责浏览器侧必须完成的能力：连接已登录的 Admin Plus、识别当前供应商网站、读取已登录会话，并把供应商会话包上报给后端采集器。当前实现由弹窗触发，不注册后台 service worker。
 
 插件不提供 Sub2API 管理员登录 UI，不展示或要求输入管理员 Token。
 
