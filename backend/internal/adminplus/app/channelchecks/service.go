@@ -2,6 +2,7 @@ package channelchecks
 
 import (
 	"context"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -21,6 +22,8 @@ const (
 	defaultFirstTokenSlowMS = int64(3000)
 	defaultTotalSlowMS      = int64(30000)
 )
+
+var openAIGroupKeywordPattern = regexp.MustCompile(`\b(pro|plus)\b`)
 
 type CheckInput struct {
 	SupplierID              int64
@@ -557,7 +560,8 @@ func snapshotProtocolKey(item *adminplusdomain.SupplierChannelCheckSnapshot) str
 		strings.Contains(haystack, "gpt") ||
 		strings.Contains(haystack, "chatgpt") ||
 		strings.Contains(haystack, "o3") ||
-		strings.Contains(haystack, "o4"):
+		strings.Contains(haystack, "o4") ||
+		openAIGroupKeywordPattern.MatchString(haystack):
 		return "openai"
 	default:
 		return "other"

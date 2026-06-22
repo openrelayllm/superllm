@@ -119,11 +119,12 @@ func TestServiceListBestReturnsBestChannelPerProtocol(t *testing.T) {
 	repo := newFakeChannelCheckRepository()
 	now := time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC)
 	repo.snapshots = []*adminplusdomain.SupplierChannelCheckSnapshot{
-		fakeSnapshot(1, 7, 101, "new_api", "gptpro", 0.2, true, now),
-		fakeSnapshot(2, 7, 102, "new_api", "gpt-4o", 0.5, true, now.Add(time.Second)),
-		fakeSnapshot(3, 7, 201, "new_api", "claude_kiro", 0.1, true, now.Add(2*time.Second)),
-		fakeSnapshot(4, 7, 301, "new_api", "gemini-flash", 0.3, true, now.Add(3*time.Second)),
-		fakeSnapshot(5, 8, 401, "new_api", "claude-sonnet", 0.4, true, now.Add(4*time.Second)),
+		fakeSnapshot(1, 7, 101, "new_api", "gptpro", 0.8, true, now),
+		fakeSnapshot(2, 7, 102, "new_api", "gpt-4o", 0.9, true, now.Add(time.Second)),
+		fakeSnapshot(3, 7, 103, "new_api", "plus", 0.6, true, now.Add(2*time.Second)),
+		fakeSnapshot(4, 7, 201, "new_api", "claude_kiro", 0.1, true, now.Add(3*time.Second)),
+		fakeSnapshot(5, 7, 301, "new_api", "gemini-flash", 0.3, true, now.Add(4*time.Second)),
+		fakeSnapshot(6, 8, 401, "new_api", "claude-sonnet", 0.4, true, now.Add(5*time.Second)),
 	}
 	svc := NewService(repo, nil, nil, nil)
 
@@ -131,7 +132,7 @@ func TestServiceListBestReturnsBestChannelPerProtocol(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, items, 3)
-	require.Equal(t, int64(101), items[0].SupplierGroupID)
+	require.Equal(t, int64(103), items[0].SupplierGroupID)
 	require.Equal(t, "openai", snapshotProtocolKey(items[0]))
 	require.Equal(t, int64(201), items[1].SupplierGroupID)
 	require.Equal(t, "claude", snapshotProtocolKey(items[1]))

@@ -13,8 +13,8 @@
     <span v-if="showLabel" :class="labelClass">
       <template v-if="hasCustomRate">
         <!-- 原倍率删除线 + 专属倍率高亮 -->
-        <span class="line-through opacity-50 mr-0.5">{{ rateMultiplier }}x</span>
-        <span class="font-bold">{{ userRateMultiplier }}x</span>
+        <span class="line-through opacity-50 mr-0.5">{{ formatBadgeMultiplier(rateMultiplier) }}</span>
+        <span class="font-bold">{{ formatBadgeMultiplier(userRateMultiplier) }}</span>
       </template>
       <template v-else>
         {{ labelText }}
@@ -78,7 +78,7 @@ const showLabel = computed(() => {
 
 // Label text
 const labelText = computed(() => {
-  const rateLabel = props.rateMultiplier !== undefined ? `${props.rateMultiplier}x` : ''
+  const rateLabel = formatBadgeMultiplier(props.rateMultiplier)
   if (isSubscription.value && !props.alwaysShowRate) {
     // 如果有剩余天数，显示天数
     if (props.daysRemaining !== null && props.daysRemaining !== undefined) {
@@ -92,6 +92,11 @@ const labelText = computed(() => {
   }
   return rateLabel
 })
+
+function formatBadgeMultiplier(value?: number | null): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return ''
+  return `${value.toFixed(4).replace(/\.?0+$/, '')}x`
+}
 
 // Label style based on type and days remaining
 const labelClass = computed(() => {
