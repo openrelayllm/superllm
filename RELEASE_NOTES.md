@@ -1,22 +1,22 @@
 # Release Notes
 
-## v0.9.6 - 2026-06-22
+## v0.9.7 - 2026-06-22
 
 ### 新增
 
-- 新增 New API 供应商后端适配器和 provider router，支持直登、会话探测、用户余额、分组读取和 Codex APIs speed/Pulse 渠道状态。
-- Chrome 扩展新增 New API 内容脚本，采集 Cookie、`New-Api-User` 和供应商类型，并支持从当前站点自动创建 New API 供应商。
-- 供应商页面补充 New API 渠道状态展示、会话摘要字段和当前余额读取反馈。
-- 文档新增 New API 路线图、会话契约、后端适配、Chrome 扩展和验收说明。
+- New API provider adapter 新增 Key provisioning：通过 `/api/token/search` 幂等查找、`POST /api/token/` 创建、`POST /api/token/:id/key` 读取明文 Key。
+- `supplierkeys` 服务支持 New API 供应商执行“补齐 Key/账号”，可为每个 active group 创建或复用第三方 Key，并同步创建本地 Sub2API account。
+- New API profile capability 新增 `can_create_key`，前后端可据此识别供应商支持 Key 补齐。
+- New API 路线图文档补充用户 Key 管理接口、内存链路约束和验收标准。
 
 ### 修复
 
-- 扩展会话上报在后端已保存会话但余额/profile 探测权限不足时显示“已保存”状态，并记录 `balance_probe_error`，避免误判为 token/cookie 上报失败。
-- New API 会话包保存前兜底归一化 `provider_type`、`system_type`、`New-Api-User` 和 API base URL，提升插件采集与后端余额同步的一致性。
-- 成本同步和会话摘要根据会话包识别真实 provider type，避免 New API 数据落入 Sub2API 口径。
+- Provider router 不再对 New API `CreateKey` 返回 capability missing，而是转发到 New API adapter。
+- New API Key 创建失败会映射为明确错误码，包括 session 失效、token 数量上限和额度参数错误。
+- New API token 响应快照会移除 `key`、`api_key`、`token`、`secret` 等敏感字段，避免明文凭据进入任务结果或日志口径。
 
 ### 发布
 
-- 更新版本号到 `0.9.6`。
+- 更新版本号到 `0.9.7`。
 - GitHub Release 继续只发布 Linux 产物：`linux_amd64`、`linux_arm64` 和 `checksums.txt`。
 - DockerHub 镜像继续由 GitHub Actions 发布，不依赖本地 Docker。

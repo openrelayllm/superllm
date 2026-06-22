@@ -145,6 +145,72 @@ func TestClientReadGroups(t *testing.T) {
 	require.ElementsMatch(t, []string{"default", "vip"}, []string{result.Groups[0].ExternalGroupID, result.Groups[1].ExternalGroupID})
 }
 
+func TestClientCreateKeyCreatesTokenSearchesAndReadsSecret(t *testing.T) {
+	var created bool
+	var searchCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		require.Equal(t, "9", r.Header.Get("New-Api-User"))
+		require.Equal(t, "session=abc", r.Header.Get("Cookie"))
+		switch r.URL.Path {
+		case "/api/token/search":
+			require.Equal(t, http.MethodGet, r.Method)
+			require.Equal(t, "AdminPlus-kiro", r.URL.Query().Get("keyword"))
+			searchCount++
+			if !created {
+				_, _ = w.Write([]byte(`{"success":true,"data":{"page":1,"page_size":100,"total":0,"items":[]}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"success":true,"data":{"page":1,"page_size":100,"total":1,"items":[{"id":701,"name":"AdminPlus-kiro","group":"kiro","status":1,"key":"abcd**********wxyz"}]}}`))
+		case "/api/token/":
+			require.Equal(t, http.MethodPost, r.Method)
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			require.Equal(t, "AdminPlus-kiro", payload["name"])
+			require.Equal(t, "kiro", payload["group"])
+			require.Equal(t, true, payload["unlimited_quota"])
+			require.Equal(t, false, payload["cross_group_retry"])
+			require.Equal(t, float64(-1), payload["expired_time"])
+			created = true
+			_, _ = w.Write([]byte(`{"success":true,"message":""}`))
+		case "/api/token/701/key":
+			require.Equal(t, http.MethodPost, r.Method)
+			_, _ = w.Write([]byte(`{"success":true,"data":{"key":"raw-new-api-secret"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.CreateKey(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Bundle: map[string]any{
+			"provider_type": "new_api",
+			"cookies": []any{
+				map[string]any{"name": "session", "value": "abc"},
+			},
+			"required_headers": map[string]any{"New-Api-User": "9"},
+		},
+	}, ports.CreateProviderKeyInput{
+		SupplierID:      7,
+		ExternalGroupID: "kiro",
+		Name:            "AdminPlus-kiro",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, searchCount)
+	require.Equal(t, int64(7), result.SupplierID)
+	require.Equal(t, "kiro", result.ExternalGroupID)
+	require.Equal(t, "701", result.ExternalKeyID)
+	require.Equal(t, "AdminPlus-kiro", result.Name)
+	require.Equal(t, "sk-raw-new-api-secret", result.Secret)
+	require.Equal(t, "active", result.Status)
+	require.NotContains(t, result.RawPayload, "key")
+}
+
 func TestClientReadChannelMonitorsFromPulse(t *testing.T) {
 	generatedAt := time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

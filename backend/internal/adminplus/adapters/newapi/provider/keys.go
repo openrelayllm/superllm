@@ -1,0 +1,272 @@
+package provider
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"math"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+)
+
+func (c *Client) CreateKey(ctx context.Context, in ports.SessionProbeInput, request ports.CreateProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	if c == nil || c.httpClient == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", "new api provider adapter is not configured")
+	}
+	apiBaseURL, _, err := normalizeBaseURLs(firstNonEmpty(in.APIBaseURL, stringValueAt(in.Bundle, "context", "api_base_url"), stringValue(in.Bundle, "api_base_url")), firstNonEmpty(in.Origin, stringValue(in.Bundle, "origin")))
+	if err != nil {
+		return nil, err
+	}
+	tokenEndpoint, err := buildEndpointURL(apiBaseURL, "/api/token/")
+	if err != nil {
+		return nil, err
+	}
+	if existing, err := c.findNewAPIProviderToken(ctx, tokenEndpoint, in.Bundle, request); err == nil && existing != nil {
+		return existing, nil
+	}
+	payload := newAPITokenCreatePayload(request, c.now().UTC())
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := c.doSessionJSONBody(ctx, http.MethodPost, tokenEndpoint, in.Bundle, body)
+	if err != nil {
+		return nil, err
+	}
+	envelope, err := decodeEnvelope(raw)
+	if err != nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_KEY_RESPONSE_INVALID", "new api token create response is invalid").WithCause(err)
+	}
+	if !envelope.Success {
+		return nil, classifyKeyBusinessFailure(envelope.Message)
+	}
+	created, err := c.findNewAPIProviderToken(ctx, tokenEndpoint, in.Bundle, request)
+	if err != nil {
+		return nil, err
+	}
+	if created == nil || strings.TrimSpace(created.Secret) == "" {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_KEY_RESPONSE_INVALID", "new api token create response did not expose created key")
+	}
+	return created, nil
+}
+
+func (c *Client) findNewAPIProviderToken(ctx context.Context, tokenEndpoint string, bundle map[string]any, request ports.CreateProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	name := newAPITokenName(request.Name)
+	if name == "" {
+		return nil, nil
+	}
+	query := url.Values{}
+	query.Set("keyword", name)
+	query.Set("p", "1")
+	query.Set("page_size", "100")
+	searchEndpoint := strings.TrimRight(tokenEndpoint, "/") + "/search?" + query.Encode()
+	raw, err := c.doSessionJSON(ctx, http.MethodGet, searchEndpoint, bundle)
+	if err != nil {
+		return nil, err
+	}
+	envelope, err := decodeEnvelope(raw)
+	if err != nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_KEY_RESPONSE_INVALID", "new api token search response is invalid").WithCause(err)
+	}
+	if !envelope.Success {
+		return nil, classifyKeyBusinessFailure(envelope.Message)
+	}
+	tokens := parseNewAPITokenList(envelope.Data)
+	for _, token := range tokens {
+		if !newAPITokenMatchesRequest(token, name, request.ExternalGroupID) {
+			continue
+		}
+		secret, err := c.readNewAPIProviderTokenKey(ctx, tokenEndpoint, bundle, token.ID)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(secret) == "" {
+			continue
+		}
+		return newAPIProviderKeyResult(request, token, secret, c.now().UTC()), nil
+	}
+	return nil, nil
+}
+
+func (c *Client) readNewAPIProviderTokenKey(ctx context.Context, tokenEndpoint string, bundle map[string]any, tokenID int64) (string, error) {
+	if tokenID <= 0 {
+		return "", nil
+	}
+	endpoint := strings.TrimRight(tokenEndpoint, "/") + "/" + strconv.FormatInt(tokenID, 10) + "/key"
+	raw, err := c.doSessionJSONBody(ctx, http.MethodPost, endpoint, bundle, []byte(`{}`))
+	if err != nil {
+		return "", err
+	}
+	envelope, err := decodeEnvelope(raw)
+	if err != nil {
+		return "", infraerrors.New(http.StatusBadGateway, "SUPPLIER_KEY_RESPONSE_INVALID", "new api token key response is invalid").WithCause(err)
+	}
+	if !envelope.Success {
+		return "", classifyKeyBusinessFailure(envelope.Message)
+	}
+	return normalizeNewAPISecret(stringFromAny(envelope.Data["key"])), nil
+}
+
+func (c *Client) doSessionJSONBody(ctx context.Context, method string, endpoint string, bundle map[string]any, body []byte) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	applySessionHeaders(req, bundle)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_SESSION_REQUEST_FAILED", "failed to request new api session endpoint").WithCause(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, infraerrors.New(resp.StatusCode, "SUPPLIER_SESSION_PERMISSION_DENIED", "new api session cannot access requested endpoint")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_SESSION_BAD_STATUS", "new api session endpoint returned non-success status")
+	}
+	return data, nil
+}
+
+type newAPITokenSnapshot struct {
+	ID          int64
+	Name        string
+	Group       string
+	Status      string
+	ExpiredTime int64
+	RawPayload  map[string]any
+}
+
+func newAPITokenCreatePayload(request ports.CreateProviderKeyInput, now time.Time) map[string]any {
+	name := newAPITokenName(request.Name)
+	if name == "" {
+		name = "AdminPlus-" + now.Format("20060102150405")
+	}
+	payload := map[string]any{
+		"name":              name,
+		"expired_time":      int64(-1),
+		"unlimited_quota":   true,
+		"group":             strings.TrimSpace(request.ExternalGroupID),
+		"cross_group_retry": false,
+	}
+	if request.ExpiresInDays != nil && *request.ExpiresInDays > 0 {
+		payload["expired_time"] = now.Add(time.Duration(*request.ExpiresInDays) * 24 * time.Hour).Unix()
+	}
+	if request.QuotaUSD > 0 {
+		payload["remain_quota"] = int(math.Round(request.QuotaUSD))
+		payload["unlimited_quota"] = false
+	}
+	return payload
+}
+
+func parseNewAPITokenList(data map[string]any) []newAPITokenSnapshot {
+	items, ok := data["items"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]newAPITokenSnapshot, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		token := newAPITokenSnapshot{
+			ID:          int64FromAny(raw["id"]),
+			Name:        stringFromAny(raw["name"]),
+			Group:       stringFromAny(raw["group"]),
+			Status:      normalizeNewAPITokenStatus(raw["status"]),
+			ExpiredTime: int64FromAny(raw["expired_time"]),
+			RawPayload:  sanitizeNewAPIKeyPayload(raw),
+		}
+		if token.ID > 0 && token.Name != "" {
+			out = append(out, token)
+		}
+	}
+	return out
+}
+
+func newAPIProviderKeyResult(request ports.CreateProviderKeyInput, token newAPITokenSnapshot, secret string, capturedAt time.Time) *ports.ProviderKeyResult {
+	return &ports.ProviderKeyResult{
+		SupplierID:      request.SupplierID,
+		ExternalGroupID: firstNonEmpty(token.Group, request.ExternalGroupID),
+		ExternalKeyID:   strconv.FormatInt(token.ID, 10),
+		Name:            firstNonEmpty(token.Name, request.Name),
+		Secret:          secret,
+		Status:          firstNonEmpty(token.Status, "active"),
+		RawPayload:      token.RawPayload,
+		CreatedAt:       capturedAt,
+	}
+}
+
+func newAPITokenMatchesRequest(token newAPITokenSnapshot, name string, group string) bool {
+	if strings.TrimSpace(token.Name) != strings.TrimSpace(name) {
+		return false
+	}
+	group = strings.TrimSpace(group)
+	return group == "" || strings.TrimSpace(token.Group) == group
+}
+
+func newAPITokenName(name string) string {
+	name = strings.TrimSpace(name)
+	if len(name) > 50 {
+		name = name[:50]
+		for !utf8.ValidString(name) {
+			_, size := utf8.DecodeLastRuneInString(name)
+			if size <= 0 || len(name) < size {
+				return ""
+			}
+			name = name[:len(name)-size]
+		}
+	}
+	return name
+}
+
+func normalizeNewAPISecret(secret string) string {
+	secret = strings.TrimSpace(secret)
+	if secret == "" || strings.HasPrefix(secret, "sk-") {
+		return secret
+	}
+	return "sk-" + secret
+}
+
+func normalizeNewAPITokenStatus(value any) string {
+	if text := stringFromAny(value); text != "" {
+		return text
+	}
+	switch int64FromAny(value) {
+	case 1:
+		return "active"
+	case 2:
+		return "disabled"
+	default:
+		return ""
+	}
+}
+
+func sanitizeNewAPIKeyPayload(raw map[string]any) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(raw))
+	for key, value := range raw {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "key", "api_key", "apikey", "token", "secret":
+			continue
+		default:
+			out[key] = value
+		}
+	}
+	return out
+}

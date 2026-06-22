@@ -113,7 +113,10 @@ func (r *Router) ReadEntitlementTransactions(ctx context.Context, in ports.Sessi
 
 func (r *Router) CreateKey(ctx context.Context, in ports.SessionProbeInput, request ports.CreateProviderKeyInput) (*ports.ProviderKeyResult, error) {
 	if providerTypeFromBundle(in.Bundle) == "new_api" {
-		return nil, capabilityMissing("SUPPLIER_KEY_CAPABILITY_MISSING", "new api key creation is not implemented")
+		if r == nil || r.newapi == nil {
+			return nil, internalError()
+		}
+		return r.newapi.CreateKey(ctx, in, request)
 	}
 	if r == nil || r.sub2api == nil {
 		return nil, internalError()

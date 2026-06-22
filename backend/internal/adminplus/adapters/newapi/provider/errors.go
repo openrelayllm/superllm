@@ -49,6 +49,20 @@ func classifySessionBusinessFailure(message string) error {
 	return infraerrors.New(http.StatusForbidden, "SUPPLIER_SESSION_PERMISSION_DENIED", firstNonEmpty(message, "new api session cannot access requested endpoint"))
 }
 
+func classifyKeyBusinessFailure(message string) error {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	if strings.Contains(lower, "not logged in") || strings.Contains(lower, "未登录") || strings.Contains(lower, "access token") || strings.Contains(lower, "new-api-user") || strings.Contains(lower, "unauthorized") {
+		return infraerrors.New(http.StatusConflict, "SUPPLIER_SESSION_EXPIRED", "new api session is expired or invalid")
+	}
+	if strings.Contains(lower, "最大令牌") || strings.Contains(lower, "maximum token") || strings.Contains(lower, "max token") {
+		return infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_LIMIT_REACHED", firstNonEmpty(message, "new api token limit reached"))
+	}
+	if strings.Contains(lower, "quota") || strings.Contains(lower, "额度") {
+		return infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_QUOTA_INVALID", firstNonEmpty(message, "new api token quota is invalid"))
+	}
+	return infraerrors.New(http.StatusBadGateway, "SUPPLIER_KEY_CREATE_FAILED", firstNonEmpty(message, "new api token creation failed"))
+}
+
 func containsBrowserChallenge(lower string) bool {
 	return strings.Contains(lower, "turnstile") ||
 		strings.Contains(lower, "captcha") ||

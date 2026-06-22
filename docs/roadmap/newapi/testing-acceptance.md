@@ -16,6 +16,7 @@
 - 直达 `/console/token` 可加载，核心 API 返回 200。
 - 移动端 390x844 抽查令牌页卡片布局可用。
 - Admin Plus 供应商页的“渠道状态”可读取 `https://speed.codexapis.com/api/pulse`，展示 `gpt-5.4-mini`、`gpt-5.5`、`gpt-5.4` 等模型的 60 秒延迟、响应耗时和成功率。
+- Admin Plus 供应商分组“补齐 Key/账号”支持 New API：通过 `/api/token/search`、`POST /api/token/`、`POST /api/token/:id/key` 创建或复用第三方 Key，并同步创建本地 Sub2API account。
 
 注意：早期网络日志中过 SPA 子路由的 503 记录，但直达复核未复现为阻断问题，核心 API 均为 200。
 
@@ -25,6 +26,8 @@
 - 登录成功、`require_2fa`、Turnstile 失败、`success=false`、缺 Cookie、`/self` 401、`New-Api-User` 缺失或不匹配都要覆盖。
 - suppliers service 覆盖自动创建 New API supplier，断言 `Type = new_api`、`BalanceCurrency = QTA`。
 - extension ingest 覆盖浏览器一键上报 New API session，断言 summary、加密前 bundle 和传给 provider router 的 probe input 都包含 `New-Api-User`。
+- New API provider fake server 覆盖 `/api/token/search` -> `POST /api/token/` -> `/api/token/:id/key` 两步创建和明文读取，断言请求同时带 Cookie 与 `New-Api-User`，并且响应快照不保存明文 key。
+- supplierkeys service 覆盖 `SupplierTypeNewAPI` 的 `provision_all_group_keys`，断言能创建第三方 Key、本地 Sub2API account 和供应商账号绑定。
 
 ## 最小验收
 
@@ -36,7 +39,8 @@
 6. 再次探测复用已保存会话，能成功读取 `/api/user/self`。
 7. Chrome 插件一键上报 New API 页面时，保存 Cookie + `New-Api-User`，并触发后端余额同步。
 8. 供应商“渠道状态”对 Codex APIs 自动读取 `https://speed.codexapis.com/api/pulse`，返回 `system_type = new_api`、`api_base_url = https://speed.codexapis.com/api/pulse`，并至少展示一个模型卡片。
-9. 登录失败、2FA、Turnstile、session 过期、缺少 `New-Api-User`、接口不可达都有明确错误码。
+9. 供应商分组“补齐 Key/账号”对 New API 不再返回 `SUPPLIER_KEY_PROVIDER_UNSUPPORTED`；任务成功后每个 active group 至少有一个 bound supplier key 或明确的分组级失败原因。
+10. 登录失败、2FA、Turnstile、session 过期、缺少 `New-Api-User`、接口不可达都有明确错误码。
 
 ## 后续扩展
 
@@ -47,6 +51,4 @@ P1：
 
 P2：
 
-- 基于 `/api/token/*` 实现第三方 Key 创建和读取明文，纳入异步 provision job。
-- 第三方 Key 明文只在 Adapter -> Worker -> 本地 Sub2API Admin API 内存链路流转。
 - 使用第三方 Key 做 OpenAI-compatible 健康探测和可用模型校验。

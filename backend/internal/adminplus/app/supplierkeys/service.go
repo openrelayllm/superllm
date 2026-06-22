@@ -220,8 +220,8 @@ func (s *Service) Provision(ctx context.Context, in ProvisionKeyInput) (*Provisi
 	if err != nil {
 		return nil, err
 	}
-	if supplier.Type != adminplusdomain.SupplierTypeSub2API {
-		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_PROVIDER_UNSUPPORTED", "only Sub2API supplier key provisioning is supported")
+	if !supplierSupportsKeyProvisioning(supplier.Type) {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_PROVIDER_UNSUPPORTED", "only Sub2API or New API supplier key provisioning is supported")
 	}
 	group, err := s.repo.GetGroup(ctx, normalized.SupplierID, normalized.SupplierGroupID)
 	if err != nil {
@@ -653,8 +653,8 @@ func (s *Service) normalizeEnsureAllInput(ctx context.Context, in EnsureAllInput
 	if err != nil {
 		return EnsureAllInput{}, nil, err
 	}
-	if supplier.Type != adminplusdomain.SupplierTypeSub2API {
-		return EnsureAllInput{}, nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_PROVIDER_UNSUPPORTED", "only Sub2API supplier key provisioning is supported")
+	if !supplierSupportsKeyProvisioning(supplier.Type) {
+		return EnsureAllInput{}, nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_PROVIDER_UNSUPPORTED", "only Sub2API or New API supplier key provisioning is supported")
 	}
 	baseURL := strings.TrimSpace(in.LocalAccountBaseURL)
 	if baseURL == "" {
@@ -737,6 +737,15 @@ func (s *Service) normalizeRepairBindingInput(in RepairBindingInput) (RepairBind
 func repairableKeyError(errorCode string) bool {
 	switch strings.TrimSpace(errorCode) {
 	case "LOCAL_ACCOUNT_CREATE_FAILED", "SUPPLIER_ACCOUNT_BIND_FAILED":
+		return true
+	default:
+		return false
+	}
+}
+
+func supplierSupportsKeyProvisioning(supplierType adminplusdomain.SupplierType) bool {
+	switch supplierType {
+	case adminplusdomain.SupplierTypeSub2API, adminplusdomain.SupplierTypeNewAPI:
 		return true
 	default:
 		return false

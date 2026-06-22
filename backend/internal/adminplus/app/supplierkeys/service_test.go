@@ -307,6 +307,83 @@ func TestServiceEnsureAllDoesNotCreateOrBindLocalGroupForExistingKey(t *testing.
 	require.Empty(t, local.accounts[2002].GroupIDs)
 }
 
+func TestServiceEnsureAllSupportsNewAPISupplier(t *testing.T) {
+	repo := NewMemoryRepository()
+	repo.PutSupplier(&adminplusdomain.Supplier{
+		ID:              7,
+		Name:            "Codex APIs",
+		Type:            adminplusdomain.SupplierTypeNewAPI,
+		RuntimeStatus:   adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:    adminplusdomain.SupplierHealthStatusNormal,
+		APIBaseURL:      "https://www.codexapis.com",
+		BalanceCurrency: "QTA",
+	})
+	repo.PutGroup(&adminplusdomain.SupplierGroup{
+		ID:                      10,
+		SupplierID:              7,
+		ExternalGroupID:         "kiro",
+		Name:                    "kiro",
+		ProviderFamily:          "new_api",
+		RateMultiplier:          0.3,
+		EffectiveRateMultiplier: 0.3,
+		Status:                  adminplusdomain.SupplierGroupStatusActive,
+	})
+	session := &stubSessionReader{
+		input: ports.SessionProbeInput{
+			SupplierID: 7,
+			APIBaseURL: "https://www.codexapis.com",
+			Bundle:     map[string]any{"provider_type": "new_api", "auth_header_value": "4111"},
+		},
+	}
+	keyAdapter := &stubKeyAdapter{
+		result: &ports.ProviderKeyResult{
+			SupplierID:      7,
+			ExternalGroupID: "kiro",
+			ExternalKeyID:   "701",
+			Name:            "AdminPlus-kiro-kiro",
+			Secret:          "sk-new-api-secret",
+			Status:          "active",
+			RawPayload:      map[string]any{"id": 701, "group": "kiro"},
+		},
+	}
+	local := &stubLocalAccountCreator{}
+	svc := NewService(repo, session, keyAdapter, local)
+
+	result, err := svc.EnsureAll(context.Background(), EnsureAllInput{
+		SupplierID:              7,
+		LocalAccountBaseURL:     "https://www.codexapis.com/v1",
+		LocalAccountConcurrency: 2,
+		LocalAccountPriority:    100,
+		RuntimeStatus:           adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:            adminplusdomain.SupplierHealthStatusNormal,
+		BalanceCurrency:         "QTA",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Total)
+	require.Equal(t, 1, result.Created)
+	require.Equal(t, 0, result.Failed)
+	require.Len(t, result.Items, 1)
+	require.Equal(t, adminplusdomain.SupplierKeyStatusBound, result.Items[0].Key.Status)
+	require.Equal(t, "701", result.Items[0].Key.ExternalKeyID)
+	require.Equal(t, "new_api", result.Items[0].Key.ProviderFamily)
+	require.Equal(t, "QTA", result.Items[0].Binding.BalanceCurrency)
+	require.Equal(t, "openai", local.input.Platform)
+	require.Equal(t, "https://www.codexapis.com/v1", local.input.Credentials["base_url"])
+	require.Equal(t, "sk-new-api-secret", local.input.Credentials["api_key"])
+	require.Equal(t, []ports.CreateProviderKeyInput{{
+		SupplierID:      7,
+		ExternalGroupID: "kiro",
+		Name:            "AdminPlus-kiro-kiro",
+		QuotaUSD:        0,
+		ExpiresInDays:   nil,
+		Metadata: map[string]any{
+			"supplier_group_id": int64(10),
+			"provider_family":   "new_api",
+		},
+	}}, keyAdapter.calls)
+}
+
 func TestServiceRepairBindingBindsFailedKeyToExistingLocalAccount(t *testing.T) {
 	repo := NewMemoryRepository()
 	repo.PutSupplier(&adminplusdomain.Supplier{

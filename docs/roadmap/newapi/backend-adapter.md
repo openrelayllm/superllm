@@ -9,6 +9,7 @@ backend/internal/adminplus/adapters/newapi/provider/
   errors.go       # New API 业务错误到 Admin Plus 错误码的映射
   profile.go      # /api/user/self profile、余额、capability 归一化
   groups.go       # /api/user/self/groups 分组和倍率归一化
+  keys.go         # /api/token/* 用户 Key 创建、搜索和明文读取归一化
   channel_monitors.go # speed/Pulse 模型级延迟、响应耗时和成功率归一化
   client.go       # provider 包说明和兼容占位
 ```
@@ -31,6 +32,25 @@ backend/internal/adminplus/adapters/newapi/provider/
 - supplier 的 `type`
 
 New API 统一分发到 `ProviderKindNewAPI`，Sub2API 继续走原有 adapter。
+
+## Key / 本地账号补齐
+
+New API 的用户 Key 管理走 `UserAuth`，所以必须复用已保存的 Cookie 和 `New-Api-User`：
+
+1. `supplierkeys.Service` 支持 `SupplierTypeSub2API` 和 `SupplierTypeNewAPI`，其他类型仍返回 `SUPPLIER_KEY_PROVIDER_UNSUPPORTED`。
+2. provider router 对 `provider_type = new_api` 的 `CreateKey` 转发到 New API adapter。
+3. New API adapter 先调用 `GET /api/token/search?keyword=<name>&p=1&page_size=100` 查找同名同分组 token，命中时复用。
+4. 未命中时调用 `POST /api/token/` 创建 token，请求体包含：
+   - `name`
+   - `group`
+   - `expired_time`
+   - `unlimited_quota`
+   - `remain_quota`（仅手工指定正额度时）
+   - `cross_group_retry=false`
+5. 创建后再次搜索 token id，再调用 `POST /api/token/:id/key` 读取明文 key。
+6. 明文 key 只在 Adapter -> Provision Worker -> 本地 Sub2API Admin API 的内存链路流转；`provision_response` 会移除 `key`、`api_key`、`token`、`secret` 等字段。
+7. New API 返回的裸 key 会补齐 `sk-` 前缀后写入本地 Sub2API account credential，兼容 OpenAI-style Bearer token 调用。
+8. 全量“补齐 Key/账号”继续复用 `provision_all_group_keys` job，每个分组一个 `ensure_third_party_key` step。
 
 ## 一键上报后的后端链路
 

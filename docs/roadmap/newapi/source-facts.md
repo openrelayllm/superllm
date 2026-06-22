@@ -15,7 +15,9 @@
 | 当前用户模型 | `GET /api/user/models` | `UserAuth` | 返回当前用户可用模型 |
 | 价格与分组倍率 | `GET /api/pricing` | HeaderNav 规则，可能公共或登录态 | 后续用于费率同步 |
 | 用户用量汇总 | `GET /api/data/self`、`GET /api/data/flow/self` | `UserAuth` | 后续用于用量采集；时间跨度最多 1 个月 |
-| 用户 Key 管理 | `/api/token/*` | `UserAuth` | 后续 P2；涉及明文 Key 和审计 |
+| 用户 Key 列表/搜索 | `GET /api/token/`、`GET /api/token/search` | `UserAuth` | 用于 Key provisioning 幂等查找；列表只返回脱敏 key |
+| 用户 Key 创建 | `POST /api/token/` | `UserAuth` | 创建响应不返回 id 或明文 key，需要创建后再次搜索 |
+| 用户 Key 明文读取 | `POST /api/token/:id/key`、`POST /api/token/batch/keys` | `UserAuth` + CriticalRateLimit | 用于 provision 内存链路读取明文；不能写入日志或任务快照 |
 | Uptime Kuma 聚合 | `GET /api/uptime/status` | 公共 | 依赖 New API 后台配置的 Uptime Kuma 分组，不是 Codex APIs 当前 speed 页面 |
 | Codex APIs speed/Pulse | `GET https://speed.codexapis.com/api/pulse` | 公共 | 返回最近 60 秒模型级 `avg_ttft_ms`、`avg_resp_sec`、`success_rate` 和 `health` |
 
@@ -76,5 +78,6 @@
 | access token | 可作为常规凭据 | `/api/user/token` 是写操作，默认不调用 |
 | 业务失败 | 需要检查业务响应 | 很多失败仍是 HTTP 200，必须检查 `success` |
 | 余额字段 | Sub2API profile 口径 | `quota`、`used_quota`、`request_count`，MVP 保存原始 quota |
+| Key 创建 | Sub2API 用户侧 `/api/v1/keys` | New API 用户侧 `/api/token/` 创建，`/api/token/search` 回查 id，`/api/token/:id/key` 读取明文 |
 | 渠道状态 | Sub2API 用户侧 `/api/v1/channel-monitors` | Codex APIs 通过独立 `speed.codexapis.com/api/pulse` 提供模型级实时状态 |
 | 浏览器挑战 | 视供应商实现 | Turnstile/2FA 默认走 Chrome 插件已登录会话兜底 |

@@ -54,6 +54,7 @@ func (c *Client) ProbeSub2APIUserProfile(ctx context.Context, in ports.SessionPr
 			"can_read_profile": true,
 			"can_read_balance": true,
 			"can_read_groups":  true,
+			"can_create_key":   true,
 		},
 		Profile:         profile,
 		BalanceCents:    &balanceCents,
