@@ -22,14 +22,22 @@
 
     <div class="grid gap-4 sm:grid-cols-2">
       <label class="block">
-        <span class="input-label">第三方 Key 名称</span>
-        <input v-model.trim="provisionForm.name" class="input" required />
+        <span class="input-label">本地规范 Key 名称</span>
+        <input v-model.trim="provisionForm.name" class="input bg-gray-50 dark:bg-dark-900" required readonly />
       </label>
       <label class="block">
         <span class="input-label">本地账号名称</span>
         <input v-model.trim="provisionForm.local_account_name" class="input" required />
       </label>
     </div>
+
+    <label class="inline-flex items-start gap-2 text-sm text-gray-700 dark:text-dark-200">
+      <input v-model="provisionForm.sync_provider_name" type="checkbox" class="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-900" />
+      <span>
+        <span class="font-medium text-gray-900 dark:text-gray-100">同步第三方 Key 名称</span>
+        <span class="ml-2 text-xs text-gray-500 dark:text-dark-400">默认不改第三方；勾选后使用稳定别名。</span>
+      </span>
+    </label>
 
     <div class="grid gap-4 sm:grid-cols-3">
       <label class="block">

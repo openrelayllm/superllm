@@ -477,13 +477,26 @@ func (s *stubSessionReader) DecryptedProbeInput(_ context.Context, _ int64) (por
 }
 
 type stubKeyAdapter struct {
-	result *ports.ProviderKeyResult
-	calls  []ports.CreateProviderKeyInput
+	result      *ports.ProviderKeyResult
+	calls       []ports.CreateProviderKeyInput
+	renameCalls []ports.RenameProviderKeyInput
 }
 
 func (s *stubKeyAdapter) CreateKey(_ context.Context, _ ports.SessionProbeInput, request ports.CreateProviderKeyInput) (*ports.ProviderKeyResult, error) {
 	s.calls = append(s.calls, request)
 	return s.result, nil
+}
+
+func (s *stubKeyAdapter) RenameKey(_ context.Context, _ ports.SessionProbeInput, request ports.RenameProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	s.renameCalls = append(s.renameCalls, request)
+	return &ports.ProviderKeyResult{
+		SupplierID:      request.SupplierID,
+		ExternalGroupID: request.ExternalGroupID,
+		ExternalKeyID:   request.ExternalKeyID,
+		Name:            request.Name,
+		Status:          "active",
+		RawPayload:      map[string]any{"renamed": true},
+	}, nil
 }
 
 type stubLocalAccountCreator struct {

@@ -28,6 +28,7 @@ func NewSupplierKeyHandlerWithProvisionJobs(service *supplierkeysapp.Service, pr
 type provisionSupplierKeyRequest struct {
 	SupplierGroupID            int64    `json:"supplier_group_id" binding:"required"`
 	Name                       string   `json:"name"`
+	SyncProviderName           bool     `json:"sync_provider_name"`
 	QuotaUSD                   float64  `json:"quota_usd"`
 	ExpiresInDays              *int     `json:"expires_in_days"`
 	LocalAccountPlatform       string   `json:"local_account_platform"`
@@ -45,6 +46,7 @@ type provisionSupplierKeyRequest struct {
 }
 
 type ensureSupplierKeysRequest struct {
+	SyncProviderName        bool   `json:"sync_provider_name"`
 	LocalAccountBaseURL     string `json:"local_account_base_url"`
 	LocalAccountConcurrency int    `json:"local_account_concurrency"`
 	LocalAccountPriority    int    `json:"local_account_priority"`
@@ -67,6 +69,10 @@ type repairSupplierKeyBindingRequest struct {
 	SupplierAccountLabel      string `json:"supplier_account_label"`
 }
 
+type standardizeSupplierKeyNamesRequest struct {
+	SyncProviderName bool `json:"sync_provider_name"`
+}
+
 func (h *SupplierKeyHandler) Provision(c *gin.Context) {
 	supplierID, ok := parseSupplierID(c)
 	if !ok {
@@ -82,6 +88,7 @@ func (h *SupplierKeyHandler) Provision(c *gin.Context) {
 			SupplierID:                 supplierID,
 			SupplierGroupID:            req.SupplierGroupID,
 			Name:                       req.Name,
+			SyncProviderName:           req.SyncProviderName,
 			QuotaUSD:                   req.QuotaUSD,
 			ExpiresInDays:              req.ExpiresInDays,
 			LocalAccountPlatform:       req.LocalAccountPlatform,
@@ -129,6 +136,7 @@ func (h *SupplierKeyHandler) EnsureAll(c *gin.Context) {
 	if h.provisionJobs == nil {
 		input := supplierkeysapp.EnsureAllInput{
 			SupplierID:              supplierID,
+			SyncProviderName:        req.SyncProviderName,
 			LocalAccountBaseURL:     req.LocalAccountBaseURL,
 			LocalAccountConcurrency: req.LocalAccountConcurrency,
 			LocalAccountPriority:    req.LocalAccountPriority,
@@ -154,6 +162,25 @@ func (h *SupplierKeyHandler) EnsureAll(c *gin.Context) {
 		return
 	}
 	response.Accepted(c, result)
+}
+
+func (h *SupplierKeyHandler) StandardizeNames(c *gin.Context) {
+	supplierID, ok := parseSupplierID(c)
+	if !ok {
+		return
+	}
+	var req standardizeSupplierKeyNamesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	input := supplierkeysapp.StandardizeNamesInput{
+		SupplierID:       supplierID,
+		SyncProviderName: req.SyncProviderName,
+	}
+	executeAdminPlusIdempotentJSON(c, "admin-plus.supplier-key.standardize-names", input, 0, http.StatusOK, func(ctx context.Context) (any, error) {
+		return h.service.StandardizeNames(ctx, input)
+	})
 }
 
 func (h *SupplierKeyHandler) RepairBinding(c *gin.Context) {
@@ -220,6 +247,7 @@ func provisionRequestSnapshot(req provisionSupplierKeyRequest) map[string]any {
 	return map[string]any{
 		"supplier_group_id":             req.SupplierGroupID,
 		"name":                          req.Name,
+		"sync_provider_name":            req.SyncProviderName,
 		"quota_usd":                     req.QuotaUSD,
 		"expires_in_days":               req.ExpiresInDays,
 		"local_account_platform":        req.LocalAccountPlatform,
@@ -239,6 +267,7 @@ func provisionRequestSnapshot(req provisionSupplierKeyRequest) map[string]any {
 
 func ensureAllRequestSnapshot(req ensureSupplierKeysRequest) map[string]any {
 	return map[string]any{
+		"sync_provider_name":        req.SyncProviderName,
 		"local_account_base_url":    req.LocalAccountBaseURL,
 		"local_account_concurrency": req.LocalAccountConcurrency,
 		"local_account_priority":    req.LocalAccountPriority,

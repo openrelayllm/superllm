@@ -1,6 +1,7 @@
 import type { GroupPlatform } from '@/types'
 import type { Supplier, SupplierChannelCheckSnapshot, SupplierCostSnapshot, SupplierGroup, SupplierHealthStatus, SupplierKind, SupplierRuntimeStatus, SupplierType } from '@/api/admin/adminPlus'
 import type { Ref } from 'vue'
+import { supplierSnapshotRechargeMultiplier } from '../supplierCostPresentation'
 import type { ChannelProtocol, ScheduleListRow } from './types'
 import { ctxFn, ctxValue } from './ctxProxy'
 export function attachPresentationCore(ctx: any) {
@@ -159,15 +160,17 @@ export function attachPresentationCore(ctx: any) {
 
   function supplierRechargeMultiplier(supplierID?: number | null): number {
     if (!supplierID) return 1
-    return normalizedRechargeMultiplier(suppliers.value.find((supplier) => supplier.id === supplierID)?.recharge_multiplier)
+    const configured = normalizedRechargeMultiplier(suppliers.value.find((supplier) => supplier.id === supplierID)?.recharge_multiplier)
+    if (Math.abs(configured - 1) > 0.000001) return configured
+    return supplierSnapshotRechargeMultiplier(supplierCostSnapshots.value[supplierID])
   }
 
   function currentSupplierRechargeMultiplier(): number {
-    return normalizedRechargeMultiplier(groupsSupplier.value?.recharge_multiplier)
+    return supplierRechargeMultiplier(groupsSupplier.value?.id)
   }
 
   function channelScheduleSupplierRechargeMultiplier(): number {
-    return normalizedRechargeMultiplier(channelScheduleSupplier.value?.recharge_multiplier)
+    return supplierRechargeMultiplier(channelScheduleSupplier.value?.id)
   }
 
   function actualCostMultiplier(rate?: number | null, rechargeMultiplier?: number | null): number {

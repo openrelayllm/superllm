@@ -623,6 +623,54 @@ func (c *SessionProfileClient) CreateKey(ctx context.Context, in ports.SessionPr
 	return result, nil
 }
 
+func (c *SessionProfileClient) RenameKey(ctx context.Context, in ports.SessionProbeInput, request ports.RenameProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	if c == nil || c.httpClient == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", "provider adapter is not configured")
+	}
+	keyID, err := strconv.ParseInt(strings.TrimSpace(request.ExternalKeyID), 10, 64)
+	if err != nil || keyID <= 0 {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_KEY_EXTERNAL_ID_INVALID", "invalid supplier key id")
+	}
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_KEY_PROVIDER_NAME_INVALID", "target provider key name is empty")
+	}
+	apiBaseURL := firstNonEmpty(in.APIBaseURL, stringValueAt(in.Bundle, "context", "api_base_url"), stringValue(in.Bundle, "api_base_url"), in.Origin)
+	endpoint, err := buildSub2APIUserEndpointURL(apiBaseURL, "/keys/"+strconv.FormatInt(keyID, 10))
+	if err != nil {
+		return nil, err
+	}
+	currentBody, err := c.doSessionJSON(ctx, http.MethodGet, endpoint, in.Bundle, true)
+	if err != nil {
+		return nil, err
+	}
+	current, ok := unwrapDataObject(currentBody)
+	if !ok {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_KEY_RESPONSE_INVALID", "supplier key read response is invalid")
+	}
+	payload := sub2APIKeyRenamePayload(current, name)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	updatedBody, err := c.doSessionJSONBody(ctx, http.MethodPut, endpoint, in.Bundle, body, true)
+	if err != nil {
+		return nil, err
+	}
+	result, err := parseSub2APIKeyCreateResponse(updatedBody)
+	if err != nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_KEY_RESPONSE_INVALID", "supplier key update response is invalid").WithCause(err)
+	}
+	result.SupplierID = request.SupplierID
+	result.ExternalKeyID = firstNonEmpty(result.ExternalKeyID, request.ExternalKeyID)
+	result.ExternalGroupID = firstNonEmpty(result.ExternalGroupID, request.ExternalGroupID, providerKeyGroupID(current))
+	result.Name = firstNonEmpty(result.Name, name)
+	if result.CreatedAt.IsZero() {
+		result.CreatedAt = c.now().UTC()
+	}
+	return result, nil
+}
+
 func (c *SessionProfileClient) findExistingProviderKey(ctx context.Context, endpoint string, bundle map[string]any, request ports.CreateProviderKeyInput) (*ports.ProviderKeyResult, error) {
 	name := strings.TrimSpace(request.Name)
 	if name == "" {
@@ -1258,6 +1306,15 @@ func parseSub2APIKeyCreateResponse(data []byte) (*ports.ProviderKeyResult, error
 	return result, nil
 }
 
+func sub2APIKeyRenamePayload(raw map[string]any, name string) map[string]any {
+	payload := map[string]any{
+		"name":         strings.TrimSpace(name),
+		"ip_whitelist": stringSliceFromAny(firstExisting(raw, "ip_whitelist", "ipWhitelist")),
+		"ip_blacklist": stringSliceFromAny(firstExisting(raw, "ip_blacklist", "ipBlacklist")),
+	}
+	return payload
+}
+
 func parseCheckoutAnnouncements(data []byte, balanceCents int64, runtimeStatus adminplusdomain.SupplierRuntimeStatus) []ports.ProviderAnnouncement {
 	body, ok := unwrapDataObject(data)
 	if !ok {
@@ -1624,6 +1681,23 @@ func providerKeyGroupID(raw map[string]any) string {
 		}
 	}
 	return ""
+}
+
+func stringSliceFromAny(value any) []string {
+	values, ok := value.([]any)
+	if !ok {
+		if text := stringFromAny(value); text != "" {
+			return []string{text}
+		}
+		return []string{}
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if text := stringFromAny(value); text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
 }
 
 func bodyFromMap(raw map[string]any) []byte {

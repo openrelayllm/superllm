@@ -4,6 +4,7 @@ export type ChannelStatusWindow = 'pulse' | '7d' | '15d' | '30d'
 export type ChannelScheduleStepStatus = 'done' | 'pending' | 'warning'
 export type ChannelScheduleStepIcon = 'beaker' | 'key' | 'link' | 'play' | 'check' | 'clock' | 'exclamationTriangle'
 export type ScheduleListStatusFilter = '' | 'scheduled' | 'paused' | 'risky' | 'untested'
+export type ScheduleListLocalGroupFilter = '' | '__ungrouped__' | string
 export type ChannelProtocol = 'openai' | 'claude' | 'gemini' | 'other'
 
 export interface ChannelScheduleStep {
@@ -25,6 +26,8 @@ export interface ScheduleListRow {
   local_account_id: number
   local_account_name: string
   local_account_status: string
+  local_group_ids: number[]
+  local_group_names: string[]
   runtime_status: SupplierRuntimeStatus
   health_status: SupplierHealthStatus
   schedulable: boolean

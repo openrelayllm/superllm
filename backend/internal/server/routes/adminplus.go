@@ -33,6 +33,7 @@ func RegisterAdminPlusRoutes(
 			suppliers.GET("/:id/keys", h.AdminPlus.SupplierKey.List)
 			suppliers.POST("/:id/keys/ensure-all", h.AdminPlus.SupplierKey.EnsureAll)
 			suppliers.POST("/:id/keys/provision", h.AdminPlus.SupplierKey.Provision)
+			suppliers.POST("/:id/keys/standardize-names", h.AdminPlus.SupplierKey.StandardizeNames)
 			suppliers.POST("/:id/keys/:keyID/repair-binding", h.AdminPlus.SupplierKey.RepairBinding)
 			suppliers.POST("/:id/rates/sync", h.AdminPlus.Rate.SyncSupplierRates)
 			suppliers.GET("/:id/balance/current", h.AdminPlus.Balance.GetSupplierCurrent)

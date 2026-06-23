@@ -57,6 +57,62 @@ func (c *Client) CreateKey(ctx context.Context, in ports.SessionProbeInput, requ
 	return created, nil
 }
 
+func (c *Client) RenameKey(ctx context.Context, in ports.SessionProbeInput, request ports.RenameProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	if c == nil || c.httpClient == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", "new api provider adapter is not configured")
+	}
+	tokenID, err := strconv.ParseInt(strings.TrimSpace(request.ExternalKeyID), 10, 64)
+	if err != nil || tokenID <= 0 {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_KEY_EXTERNAL_ID_INVALID", "invalid new api token id")
+	}
+	name := newAPITokenName(request.Name)
+	if name == "" {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_KEY_PROVIDER_NAME_INVALID", "target provider key name is empty")
+	}
+	apiBaseURL, _, err := normalizeBaseURLs(firstNonEmpty(in.APIBaseURL, stringValueAt(in.Bundle, "context", "api_base_url"), stringValue(in.Bundle, "api_base_url")), firstNonEmpty(in.Origin, stringValue(in.Bundle, "origin")))
+	if err != nil {
+		return nil, err
+	}
+	tokenEndpoint, err := buildEndpointURL(apiBaseURL, "/api/token/")
+	if err != nil {
+		return nil, err
+	}
+	getEndpoint := strings.TrimRight(tokenEndpoint, "/") + "/" + strconv.FormatInt(tokenID, 10)
+	raw, err := c.doSessionJSON(ctx, http.MethodGet, getEndpoint, in.Bundle)
+	if err != nil {
+		return nil, err
+	}
+	envelope, err := decodeEnvelope(raw)
+	if err != nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_KEY_RESPONSE_INVALID", "new api token read response is invalid").WithCause(err)
+	}
+	if !envelope.Success {
+		return nil, classifyKeyBusinessFailure(envelope.Message)
+	}
+	payload := newAPITokenRenamePayload(envelope.Data, tokenID, name)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	updatedRaw, err := c.doSessionJSONBody(ctx, http.MethodPut, tokenEndpoint, in.Bundle, body)
+	if err != nil {
+		return nil, err
+	}
+	updatedEnvelope, err := decodeEnvelope(updatedRaw)
+	if err != nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_KEY_RESPONSE_INVALID", "new api token update response is invalid").WithCause(err)
+	}
+	if !updatedEnvelope.Success {
+		return nil, classifyKeyBusinessFailure(updatedEnvelope.Message)
+	}
+	token := parseNewAPITokenSnapshot(updatedEnvelope.Data)
+	if token.ID <= 0 {
+		token = parseNewAPITokenSnapshot(payload)
+	}
+	token.Name = name
+	return newAPIRenamedProviderKeyResult(request, token, c.now().UTC()), nil
+}
+
 func (c *Client) findNewAPIProviderToken(ctx context.Context, tokenEndpoint string, bundle map[string]any, request ports.CreateProviderKeyInput) (*ports.ProviderKeyResult, error) {
 	name := newAPITokenName(request.Name)
 	if name == "" {
@@ -170,6 +226,25 @@ func newAPITokenCreatePayload(request ports.CreateProviderKeyInput, now time.Tim
 	return payload
 }
 
+func newAPITokenRenamePayload(raw map[string]any, tokenID int64, name string) map[string]any {
+	payload := map[string]any{
+		"id":                   tokenID,
+		"name":                 name,
+		"expired_time":         int64FromAny(raw["expired_time"]),
+		"remain_quota":         int64FromAny(raw["remain_quota"]),
+		"unlimited_quota":      boolFromAny(raw["unlimited_quota"]),
+		"model_limits_enabled": boolFromAny(raw["model_limits_enabled"]),
+		"model_limits":         stringFromAny(raw["model_limits"]),
+		"allow_ips":            raw["allow_ips"],
+		"group":                stringFromAny(raw["group"]),
+		"cross_group_retry":    boolFromAny(raw["cross_group_retry"]),
+	}
+	if status := int64FromAny(raw["status"]); status > 0 {
+		payload["status"] = status
+	}
+	return payload
+}
+
 func parseNewAPITokenList(data map[string]any) []newAPITokenSnapshot {
 	items, ok := data["items"].([]any)
 	if !ok {
@@ -181,19 +256,26 @@ func parseNewAPITokenList(data map[string]any) []newAPITokenSnapshot {
 		if !ok {
 			continue
 		}
-		token := newAPITokenSnapshot{
-			ID:          int64FromAny(raw["id"]),
-			Name:        stringFromAny(raw["name"]),
-			Group:       stringFromAny(raw["group"]),
-			Status:      normalizeNewAPITokenStatus(raw["status"]),
-			ExpiredTime: int64FromAny(raw["expired_time"]),
-			RawPayload:  sanitizeNewAPIKeyPayload(raw),
-		}
+		token := parseNewAPITokenSnapshot(raw)
 		if token.ID > 0 && token.Name != "" {
 			out = append(out, token)
 		}
 	}
 	return out
+}
+
+func parseNewAPITokenSnapshot(raw map[string]any) newAPITokenSnapshot {
+	if len(raw) == 0 {
+		return newAPITokenSnapshot{}
+	}
+	return newAPITokenSnapshot{
+		ID:          int64FromAny(raw["id"]),
+		Name:        stringFromAny(raw["name"]),
+		Group:       stringFromAny(raw["group"]),
+		Status:      normalizeNewAPITokenStatus(raw["status"]),
+		ExpiredTime: int64FromAny(raw["expired_time"]),
+		RawPayload:  sanitizeNewAPIKeyPayload(raw),
+	}
 }
 
 func newAPIProviderKeyResult(request ports.CreateProviderKeyInput, token newAPITokenSnapshot, secret string, capturedAt time.Time) *ports.ProviderKeyResult {
@@ -203,6 +285,22 @@ func newAPIProviderKeyResult(request ports.CreateProviderKeyInput, token newAPIT
 		ExternalKeyID:   strconv.FormatInt(token.ID, 10),
 		Name:            firstNonEmpty(token.Name, request.Name),
 		Secret:          secret,
+		Status:          firstNonEmpty(token.Status, "active"),
+		RawPayload:      token.RawPayload,
+		CreatedAt:       capturedAt,
+	}
+}
+
+func newAPIRenamedProviderKeyResult(request ports.RenameProviderKeyInput, token newAPITokenSnapshot, capturedAt time.Time) *ports.ProviderKeyResult {
+	externalKeyID := strings.TrimSpace(request.ExternalKeyID)
+	if token.ID > 0 {
+		externalKeyID = strconv.FormatInt(token.ID, 10)
+	}
+	return &ports.ProviderKeyResult{
+		SupplierID:      request.SupplierID,
+		ExternalGroupID: firstNonEmpty(token.Group, request.ExternalGroupID),
+		ExternalKeyID:   externalKeyID,
+		Name:            firstNonEmpty(token.Name, request.Name),
 		Status:          firstNonEmpty(token.Status, "active"),
 		RawPayload:      token.RawPayload,
 		CreatedAt:       capturedAt,

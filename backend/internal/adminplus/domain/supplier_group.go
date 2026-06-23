@@ -20,6 +20,10 @@ type SupplierGroup struct {
 	Name                    string              `json:"name"`
 	Description             string              `json:"description"`
 	ProviderFamily          string              `json:"provider_family"`
+	OfficialName            string              `json:"official_name"`
+	ModelFamily             string              `json:"model_family"`
+	ModelSpec               string              `json:"model_spec"`
+	StandardKeyName         string              `json:"standard_key_name"`
 	RateMultiplier          float64             `json:"rate_multiplier"`
 	UserRateMultiplier      *float64            `json:"user_rate_multiplier,omitempty"`
 	EffectiveRateMultiplier float64             `json:"effective_rate_multiplier"`
@@ -32,6 +36,7 @@ type SupplierGroup struct {
 	Status                  SupplierGroupStatus `json:"status"`
 	RawPayload              map[string]any      `json:"raw_payload,omitempty"`
 	LastSeenAt              time.Time           `json:"last_seen_at"`
+	NamingUpdatedAt         *time.Time          `json:"naming_updated_at,omitempty"`
 	CreatedAt               time.Time           `json:"created_at"`
 	UpdatedAt               time.Time           `json:"updated_at"`
 }

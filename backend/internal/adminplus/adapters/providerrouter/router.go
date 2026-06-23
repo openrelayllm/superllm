@@ -130,6 +130,19 @@ func (r *Router) CreateKey(ctx context.Context, in ports.SessionProbeInput, requ
 	return r.sub2api.CreateKey(ctx, in, request)
 }
 
+func (r *Router) RenameKey(ctx context.Context, in ports.SessionProbeInput, request ports.RenameProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	if providerTypeFromBundle(in.Bundle) == "new_api" {
+		if r == nil || r.newapi == nil {
+			return nil, internalError()
+		}
+		return r.newapi.RenameKey(ctx, in, request)
+	}
+	if r == nil || r.sub2api == nil {
+		return nil, internalError()
+	}
+	return r.sub2api.RenameKey(ctx, in, request)
+}
+
 func (r *Router) ReadChannelMonitors(ctx context.Context, in ports.SessionProbeInput) (*ports.ReadChannelMonitorsResult, error) {
 	if providerTypeFromBundle(in.Bundle) == "new_api" {
 		if r == nil || r.newapi == nil {

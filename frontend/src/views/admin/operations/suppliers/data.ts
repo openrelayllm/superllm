@@ -1,4 +1,4 @@
-import { enableSupplierChannelScheduling, getSupplierCurrentBalance, getSupplierSession, listSupplierBestChannelChecks, listSupplierChannelChecks, listSupplierChannelMonitors, listLocalSub2APIAccounts, listSupplierAccounts, listSupplierCostSnapshots, listSuppliers, pauseSupplierChannelScheduling, probeSupplierChannel } from '@/api/admin/adminPlus'
+import { enableSupplierChannelScheduling, getSupplierCostSummary, getSupplierCurrentBalance, getSupplierSession, listSupplierBestChannelChecks, listSupplierChannelChecks, listSupplierChannelMonitors, listLocalSub2APIAccounts, listSupplierAccounts, listSuppliers, pauseSupplierChannelScheduling, probeSupplierChannel } from '@/api/admin/adminPlus'
 import type { Ref } from 'vue'
 import type { LocalSub2APIAccount, Supplier, SupplierAccount, SupplierBrowserSession, SupplierChannelCheckSnapshot, SupplierChannelMonitorView, SupplierCostSnapshot, SupplierCurrentBalance } from '@/api/admin/adminPlus'
 import type { ScheduleListRow, LoadBestChannelChecksOptions } from './types'
@@ -50,20 +50,17 @@ export function attachSuppliersData(ctx: any) {
   async function loadSuppliers() {
     loading.value = true
     try {
-      const [result, costResult] = await Promise.all([
-        listSuppliers({
-          q: filters.q || undefined,
-          kind: filters.kind || undefined,
-          type: filters.type || undefined,
-          runtime_status: filters.runtime_status || undefined,
-          health_status: filters.health_status || undefined,
-          page: pagination.page,
-          page_size: pagination.page_size
-        }),
-        listSupplierCostSnapshots({ page: 1, page_size: 200 })
-      ])
+      const result = await listSuppliers({
+        q: filters.q || undefined,
+        kind: filters.kind || undefined,
+        type: filters.type || undefined,
+        runtime_status: filters.runtime_status || undefined,
+        health_status: filters.health_status || undefined,
+        page: pagination.page,
+        page_size: pagination.page_size
+      })
       suppliers.value = result.items
-      supplierCostSnapshots.value = preferredSupplierCostSnapshots(result.items, costResult.items)
+      supplierCostSnapshots.value = await loadSupplierCostSnapshots(result.items)
       await loadBestChannelChecks(result.items.map((item) => item.id), { replace: true })
       pagination.total = result.total || 0
       pagination.pages = result.pages || 0
@@ -75,6 +72,19 @@ export function attachSuppliersData(ctx: any) {
     } finally {
       loading.value = false
     }
+  }
+
+  async function loadSupplierCostSnapshots(items: Supplier[]): Promise<Record<number, SupplierCostSnapshot | undefined>> {
+    if (items.length === 0) return {}
+    const results = await Promise.all(items.map(async (supplier) => {
+      try {
+        const summary = await getSupplierCostSummary(supplier.id)
+        return preferredSupplierCostSnapshots([supplier], summary.items)[supplier.id]
+      } catch {
+        return undefined
+      }
+    }))
+    return Object.fromEntries(items.map((supplier, index) => [supplier.id, results[index]]))
   }
 
   async function loadBestChannelChecks(supplierIds: number[] = suppliers.value.map((item) => item.id), options: LoadBestChannelChecksOptions = {}) {

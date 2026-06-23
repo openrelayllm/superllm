@@ -125,15 +125,17 @@ type SupplierAccount struct {
 }
 
 type LocalSub2APIAccount struct {
-	ID             int64   `json:"id"`
-	Name           string  `json:"name"`
-	Platform       string  `json:"platform"`
-	Type           string  `json:"type"`
-	Status         string  `json:"status"`
-	Schedulable    bool    `json:"schedulable"`
-	Concurrency    int     `json:"concurrency"`
-	Priority       int     `json:"priority"`
-	RateMultiplier float64 `json:"rate_multiplier"`
+	ID             int64    `json:"id"`
+	Name           string   `json:"name"`
+	Platform       string   `json:"platform"`
+	Type           string   `json:"type"`
+	Status         string   `json:"status"`
+	Schedulable    bool     `json:"schedulable"`
+	Concurrency    int      `json:"concurrency"`
+	Priority       int      `json:"priority"`
+	RateMultiplier float64  `json:"rate_multiplier"`
+	GroupIDs       []int64  `json:"group_ids,omitempty"`
+	GroupNames     []string `json:"group_names,omitempty"`
 }
 
 func (k SupplierKind) Valid() bool {

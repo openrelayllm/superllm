@@ -7,7 +7,7 @@ import { supplierDisplayUsageCents, supplierRechargeTotalCents } from '../suppli
 import type { Column } from '@/components/common/types'
 import type { AdminGroup } from '@/types'
 import type { LocalSub2APIAccount, Supplier, SupplierAccount, SupplierBrowserSession, SupplierChannelCheckSnapshot, SupplierChannelMonitorView, SupplierCostSnapshot, SupplierCurrentBalance, SupplierGroup, SupplierGroupStatus, SupplierHealthStatus, SupplierKey, SupplierProvisionJob, SupplierSessionProbeResult, SupplierKind, SupplierRuntimeStatus, SupplierType } from '@/api/admin/adminPlus'
-import type { ChannelStatusWindow, ScheduleListStatusFilter, ChannelProtocol } from './types'
+import type { ChannelStatusWindow, ScheduleListStatusFilter, ScheduleListLocalGroupFilter, ChannelProtocol } from './types'
 
 export function createSuppliersState() {
   const appStore = useAppStore()
@@ -64,6 +64,7 @@ export function createSuppliersState() {
   const groupsLoading = ref(false)
   const groupsSyncing = ref(false)
   const keysEnsuring = ref(false)
+  const keyNamesStandardizing = ref(false)
   const channelChecksSyncing = ref(false)
   const channelScheduleSubmitting = ref(false)
   const scheduleListLoading = ref(false)
@@ -154,6 +155,7 @@ export function createSuppliersState() {
 
   const provisionForm = reactive({
     name: '',
+    sync_provider_name: false,
     local_account_name: '',
     local_account_platform: 'openai',
     local_account_base_url: '',
@@ -169,6 +171,10 @@ export function createSuppliersState() {
     balance_currency: 'USD'
   })
 
+  const keyNamingForm = reactive({
+    sync_provider_name: false
+  })
+
   const repairForm = reactive({
     local_sub2api_account_id: 0,
     runtime_status: 'monitor_only' as SupplierRuntimeStatus,
@@ -181,7 +187,8 @@ export function createSuppliersState() {
 
   const scheduleListFilters = reactive({
     q: '',
-    status: '' as ScheduleListStatusFilter
+    status: '' as ScheduleListStatusFilter,
+    local_group: '' as ScheduleListLocalGroupFilter
   })
 
   const scheduleListSuppliers = ref<Supplier[]>([])
@@ -217,7 +224,7 @@ export function createSuppliersState() {
     { key: 'name', label: '账号', sortable: true, class: 'min-w-[280px]' },
     { key: 'status', label: '状态', class: 'min-w-[132px]' },
     { key: 'schedulable', label: '调度', sortable: true, class: 'w-28' },
-    { key: 'group', label: '渠道分组', class: 'min-w-[260px]' },
+    { key: 'group', label: '渠道 / 本地分组', class: 'min-w-[340px] max-w-[380px]' },
     { key: 'probe', label: '检测结果', class: 'min-w-[210px]' },
     { key: 'actions', label: '操作', class: 'w-[132px] text-right' }
   ]
@@ -295,6 +302,7 @@ export function createSuppliersState() {
     groupsLoading,
     groupsSyncing,
     keysEnsuring,
+    keyNamesStandardizing,
     channelChecksSyncing,
     channelScheduleSubmitting,
     scheduleListLoading,
@@ -334,6 +342,7 @@ export function createSuppliersState() {
     form,
     statusForm,
     provisionForm,
+    keyNamingForm,
     repairForm,
     scheduleListFilters,
     scheduleListSuppliers,

@@ -137,6 +137,19 @@
           <option value="untested">未检测</option>
         </select>
       </label>
+      <label class="block w-52">
+        <span class="input-label">本地分组</span>
+        <select v-model="scheduleListFilters.local_group" class="input">
+          <option value="">全部本地分组</option>
+          <option
+            v-for="option in scheduleListLocalGroupOptions"
+            :key="option.value"
+            :value="option.value"
+          >
+            {{ option.label }} ({{ option.count }})
+          </option>
+        </select>
+      </label>
       <button type="button" class="btn btn-secondary" :disabled="scheduleListLoading" @click="loadScheduleList">
         <Icon name="refresh" size="sm" :class="{ 'animate-spin': scheduleListLoading }" />
         刷新
@@ -199,15 +212,35 @@
       </template>
 
       <template #cell-group="{ row }">
-        <div class="min-w-[240px] max-w-[320px]">
-          <GroupBadge
-            :name="row.group_name || '未同步分组'"
-            :platform="groupPlatformFromProvider(row.provider_family, row.group_name)"
-            :rate-multiplier="scheduleRowCostMultiplier(row)"
-          />
-          <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-dark-400">
-            <span>{{ providerLabel(row.provider_family) }}</span>
-            <span v-if="row.external_group_id" class="font-mono">#{{ row.external_group_id }}</span>
+        <div class="min-w-[320px] max-w-[380px] space-y-2">
+          <div>
+            <div class="text-[11px] font-medium text-gray-500 dark:text-dark-400">供应商渠道</div>
+            <div class="mt-1 flex flex-wrap items-center gap-2">
+              <GroupBadge
+                :name="row.group_name || '未同步分组'"
+                :platform="groupPlatformFromProvider(row.provider_family, row.group_name)"
+                :rate-multiplier="scheduleRowCostMultiplier(row)"
+              />
+              <span class="text-xs text-gray-500 dark:text-dark-400">{{ providerLabel(row.provider_family) }}</span>
+              <span v-if="row.external_group_id" class="font-mono text-xs text-gray-500 dark:text-dark-400">#{{ row.external_group_id }}</span>
+            </div>
+          </div>
+          <div>
+            <div class="text-[11px] font-medium text-gray-500 dark:text-dark-400">本地调度分组</div>
+            <div v-if="row.local_group_names.length > 0" class="mt-1 flex flex-wrap gap-1.5">
+              <span
+                v-for="(groupName, index) in row.local_group_names"
+                :key="`${row.key}:local-group:${row.local_group_ids[index] || groupName}`"
+                class="inline-flex max-w-[120px] items-center gap-1 rounded-md border border-primary-200 bg-primary-50 px-2 py-0.5 text-xs font-medium text-primary-700 dark:border-primary-800 dark:bg-primary-900/20 dark:text-primary-200"
+                :title="row.local_group_ids[index] ? `${groupName} #${row.local_group_ids[index]}` : groupName"
+              >
+                <span class="truncate">{{ groupName }}</span>
+                <span v-if="row.local_group_ids[index]" class="font-mono text-[10px] opacity-70">#{{ row.local_group_ids[index] }}</span>
+              </span>
+            </div>
+            <span v-else class="mt-1 inline-flex rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+              未分配本地分组
+            </span>
           </div>
         </div>
       </template>
@@ -292,6 +325,7 @@ const {
   scheduleListFilters,
   scheduleListColumns,
   filteredScheduleRows,
+  scheduleListLocalGroupOptions,
   scheduleListStats,
   channelScheduleSnapshot,
   channelSchedulePrimaryLabel,

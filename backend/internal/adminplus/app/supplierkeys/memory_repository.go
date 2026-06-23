@@ -149,6 +149,22 @@ func (r *MemoryRepository) UpdateKeyAfterLocalBind(_ context.Context, keyID int6
 	return cloneKey(key), nil
 }
 
+func (r *MemoryRepository) UpdateKeyName(_ context.Context, supplierID int64, keyID int64, name string) (*adminplusdomain.SupplierKey, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key, ok := r.keys[keyID]
+	if !ok || key.SupplierID != supplierID {
+		return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_KEY_NOT_FOUND", "supplier key not found")
+	}
+	key.Name = strings.TrimSpace(name)
+	for _, binding := range r.bindings {
+		if binding.SupplierID == supplierID && binding.SupplierKeyID == keyID {
+			binding.SupplierAccountLabel = key.Name
+		}
+	}
+	return cloneKey(key), nil
+}
+
 func isBlockingKeyStatus(status adminplusdomain.SupplierKeyStatus) bool {
 	switch status {
 	case adminplusdomain.SupplierKeyStatusProvisioning, adminplusdomain.SupplierKeyStatusBound, adminplusdomain.SupplierKeyStatusManualSecretRequired:

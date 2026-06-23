@@ -22,6 +22,24 @@ func NewSQLRepository(db *sql.DB) *SQLRepository {
 	return &SQLRepository{db: db}
 }
 
+func (r *SQLRepository) GetSupplierName(ctx context.Context, supplierID int64) (string, error) {
+	if r == nil || r.db == nil {
+		return "", dbNotConfigured()
+	}
+	var name string
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT name
+		FROM admin_plus_suppliers
+		WHERE id = $1
+	`, supplierID).Scan(&name); err != nil {
+		if err == sql.ErrNoRows {
+			return "", infraerrors.New(http.StatusNotFound, "SUPPLIER_NOT_FOUND", "supplier not found")
+		}
+		return "", err
+	}
+	return name, nil
+}
+
 func (r *SQLRepository) UpsertMany(ctx context.Context, supplierID int64, groups []*adminplusdomain.SupplierGroup, seenAt time.Time) ([]*adminplusdomain.SupplierGroup, error) {
 	if r == nil || r.db == nil {
 		return nil, dbNotConfigured()
@@ -87,16 +105,21 @@ func upsertGroup(ctx context.Context, tx *sql.Tx, group *adminplusdomain.Supplie
 	row := tx.QueryRowContext(ctx, `
 		INSERT INTO admin_plus_supplier_groups (
 			supplier_id, external_group_id, name, description, provider_family,
+			official_name, model_family, model_spec, standard_key_name,
 			rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
 			rpm_limit, daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
 			allow_image_generation, is_private, status, raw_payload,
-			last_seen_at, created_at, updated_at
+			last_seen_at, naming_updated_at, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
 		ON CONFLICT (supplier_id, external_group_id) DO UPDATE
 		SET name = EXCLUDED.name,
 			description = EXCLUDED.description,
 			provider_family = EXCLUDED.provider_family,
+			official_name = EXCLUDED.official_name,
+			model_family = EXCLUDED.model_family,
+			model_spec = EXCLUDED.model_spec,
+			standard_key_name = EXCLUDED.standard_key_name,
 			rate_multiplier = EXCLUDED.rate_multiplier,
 			user_rate_multiplier = EXCLUDED.user_rate_multiplier,
 			effective_rate_multiplier = EXCLUDED.effective_rate_multiplier,
@@ -109,18 +132,24 @@ func upsertGroup(ctx context.Context, tx *sql.Tx, group *adminplusdomain.Supplie
 			status = EXCLUDED.status,
 			raw_payload = EXCLUDED.raw_payload,
 			last_seen_at = EXCLUDED.last_seen_at,
+			naming_updated_at = EXCLUDED.naming_updated_at,
 			updated_at = EXCLUDED.updated_at
 		RETURNING id, supplier_id, external_group_id, name, description, provider_family,
+			official_name, model_family, model_spec, standard_key_name,
 			rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
 			rpm_limit, daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
 			allow_image_generation, is_private, status, raw_payload,
-			last_seen_at, created_at, updated_at
+			last_seen_at, naming_updated_at, created_at, updated_at
 	`,
 		group.SupplierID,
 		group.ExternalGroupID,
 		group.Name,
 		group.Description,
 		group.ProviderFamily,
+		group.OfficialName,
+		group.ModelFamily,
+		group.ModelSpec,
+		group.StandardKeyName,
 		group.RateMultiplier,
 		nullableFloat64(group.UserRateMultiplier),
 		group.EffectiveRateMultiplier,
@@ -133,6 +162,7 @@ func upsertGroup(ctx context.Context, tx *sql.Tx, group *adminplusdomain.Supplie
 		string(group.Status),
 		rawPayload,
 		group.LastSeenAt,
+		nullableTime(group.NamingUpdatedAt),
 		group.CreatedAt,
 		group.UpdatedAt,
 	)
@@ -154,15 +184,16 @@ func (r *SQLRepository) List(ctx context.Context, filter ListFilter) ([]*adminpl
 	}
 	if filter.Query != "" {
 		needle := "%" + strings.ToLower(filter.Query) + "%"
-		where = append(where, "(LOWER(name) LIKE "+addArg(needle)+" OR LOWER(description) LIKE "+addArg(needle)+" OR LOWER(provider_family) LIKE "+addArg(needle)+" OR LOWER(external_group_id) LIKE "+addArg(needle)+")")
+		where = append(where, "(LOWER(name) LIKE "+addArg(needle)+" OR LOWER(description) LIKE "+addArg(needle)+" OR LOWER(provider_family) LIKE "+addArg(needle)+" OR LOWER(external_group_id) LIKE "+addArg(needle)+" OR LOWER(official_name) LIKE "+addArg(needle)+" OR LOWER(model_family) LIKE "+addArg(needle)+" OR LOWER(model_spec) LIKE "+addArg(needle)+" OR LOWER(standard_key_name) LIKE "+addArg(needle)+")")
 	}
 	limitRef := addArg(filter.Limit)
 	query := `
 		SELECT id, supplier_id, external_group_id, name, description, provider_family,
+			official_name, model_family, model_spec, standard_key_name,
 			rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
 			rpm_limit, daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
 			allow_image_generation, is_private, status, raw_payload,
-			last_seen_at, created_at, updated_at
+			last_seen_at, naming_updated_at, created_at, updated_at
 		FROM admin_plus_supplier_groups
 		WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY last_seen_at DESC, id DESC
@@ -200,6 +231,7 @@ func scanSupplierGroup(scanner supplierGroupScanner) (*adminplusdomain.SupplierG
 	var dailyLimit sql.NullFloat64
 	var weeklyLimit sql.NullFloat64
 	var monthlyLimit sql.NullFloat64
+	var namingUpdatedAt sql.NullTime
 	err := scanner.Scan(
 		&group.ID,
 		&group.SupplierID,
@@ -207,6 +239,10 @@ func scanSupplierGroup(scanner supplierGroupScanner) (*adminplusdomain.SupplierG
 		&group.Name,
 		&group.Description,
 		&group.ProviderFamily,
+		&group.OfficialName,
+		&group.ModelFamily,
+		&group.ModelSpec,
+		&group.StandardKeyName,
 		&group.RateMultiplier,
 		&userRate,
 		&group.EffectiveRateMultiplier,
@@ -219,6 +255,7 @@ func scanSupplierGroup(scanner supplierGroupScanner) (*adminplusdomain.SupplierG
 		&status,
 		&rawPayload,
 		&group.LastSeenAt,
+		&namingUpdatedAt,
 		&group.CreatedAt,
 		&group.UpdatedAt,
 	)
@@ -246,6 +283,10 @@ func scanSupplierGroup(scanner supplierGroupScanner) (*adminplusdomain.SupplierG
 		value := monthlyLimit.Float64
 		group.MonthlyLimitUSD = &value
 	}
+	if namingUpdatedAt.Valid {
+		value := namingUpdatedAt.Time
+		group.NamingUpdatedAt = &value
+	}
 	if len(rawPayload) > 0 {
 		var payload map[string]any
 		if err := json.Unmarshal(rawPayload, &payload); err != nil {
@@ -271,6 +312,13 @@ func nullableFloat64(value *float64) any {
 }
 
 func nullableInt64(value *int64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableTime(value *time.Time) any {
 	if value == nil {
 		return nil
 	}

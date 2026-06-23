@@ -1,4 +1,4 @@
-import { ensureSupplierKeys, getSupplierProvisionJob, listLocalSub2APIAccounts, provisionSupplierKey, repairSupplierKeyBinding, syncSupplierGroups } from '@/api/admin/adminPlus'
+import { ensureSupplierKeys, getSupplierProvisionJob, listLocalSub2APIAccounts, provisionSupplierKey, repairSupplierKeyBinding, standardizeSupplierKeyNames, syncSupplierGroups } from '@/api/admin/adminPlus'
 import type { Supplier, SupplierGroup, SupplierKey, SupplierProvisionStatus } from '@/api/admin/adminPlus'
 import { ctxFn, ctxValue } from './ctxProxy'
 export function attachSupplierProvision(ctx: any) {
@@ -14,6 +14,7 @@ export function attachSupplierProvision(ctx: any) {
   const localAccounts = ctxValue(ctx, 'localAccounts')
   const groupsSyncing = ctxValue(ctx, 'groupsSyncing')
   const keysEnsuring = ctxValue(ctx, 'keysEnsuring')
+  const keyNamesStandardizing = ctxValue(ctx, 'keyNamesStandardizing')
   const repairAccountsLoading = ctxValue(ctx, 'repairAccountsLoading')
   const groupsError = ctxValue(ctx, 'groupsError')
   const provisionError = ctxValue(ctx, 'provisionError')
@@ -22,6 +23,7 @@ export function attachSupplierProvision(ctx: any) {
   const provisionJobTimer = ctxValue(ctx, 'provisionJobTimer')
   const groupPagination = ctxValue(ctx, 'groupPagination')
   const provisionForm = ctxValue(ctx, 'provisionForm')
+  const keyNamingForm = ctxValue(ctx, 'keyNamingForm')
   const repairForm = ctxValue(ctx, 'repairForm')
   const currentGroupSession = ctxValue(ctx, 'currentGroupSession')
   const centsFromYuan = ctxFn(ctx, 'centsFromYuan')
@@ -67,8 +69,9 @@ export function attachSupplierProvision(ctx: any) {
 
   function fillProvisionForm(group: SupplierGroup) {
     const supplier = groupsSupplier.value
-    const name = defaultProvisionName(supplier, group)
+    const name = standardProvisionName(supplier, group)
     provisionForm.name = name
+    provisionForm.sync_provider_name = false
     provisionForm.local_account_name = name
     provisionForm.local_account_platform = normalizeLocalPlatform(group.provider_family)
     provisionForm.local_account_base_url = defaultProviderBaseURL(supplier)
@@ -97,6 +100,11 @@ export function attachSupplierProvision(ctx: any) {
 
   function defaultProvisionName(supplier: Supplier | null, group: SupplierGroup): string {
     return [supplier?.name, group.name].filter(Boolean).join('-') || `supplier-group-${group.id}`
+  }
+
+  function standardProvisionName(supplier: Supplier | null, group: SupplierGroup): string {
+    const standardName = String(group.standard_key_name || '').trim()
+    return standardName || defaultProvisionName(supplier, group)
   }
 
   function normalizeLocalPlatform(providerFamily?: string): string {
@@ -148,6 +156,7 @@ export function attachSupplierProvision(ctx: any) {
       const job = await provisionSupplierKey(groupsSupplier.value.id, {
         supplier_group_id: provisionGroup.value.id,
         name: provisionForm.name,
+        sync_provider_name: Boolean(provisionForm.sync_provider_name),
         quota_usd: Number(provisionForm.quota_usd || 0),
         expires_in_days: provisionForm.expires_in_days || null,
         local_account_platform: provisionForm.local_account_platform,
@@ -243,6 +252,7 @@ export function attachSupplierProvision(ctx: any) {
     try {
       const supplier = groupsSupplier.value
       const job = await ensureSupplierKeys(supplier.id, {
+        sync_provider_name: Boolean(keyNamingForm.sync_provider_name),
         local_account_base_url: defaultProviderBaseURL(supplier),
         local_account_concurrency: 2,
         local_account_priority: 100,
@@ -259,6 +269,25 @@ export function attachSupplierProvision(ctx: any) {
       appStore.showError(groupsError.value)
     } finally {
       keysEnsuring.value = false
+    }
+  }
+
+  async function standardizeCurrentKeyNames() {
+    if (!groupsSupplier.value || keyNamesStandardizing.value) return
+    keyNamesStandardizing.value = true
+    groupsError.value = ''
+    try {
+      const result = await standardizeSupplierKeyNames(groupsSupplier.value.id, {
+        sync_provider_name: Boolean(keyNamingForm.sync_provider_name)
+      })
+      const failedText = result.failed > 0 ? `，失败 ${result.failed}` : ''
+      appStore.showSuccess(`已规范 Key 名称：更新 ${result.updated}，跳过 ${result.skipped}${failedText}`)
+      await loadCurrentGroups()
+    } catch (error) {
+      groupsError.value = (error as { message?: string }).message || '规范 Key 名称失败'
+      appStore.showError(groupsError.value)
+    } finally {
+      keyNamesStandardizing.value = false
     }
   }
 
@@ -304,6 +333,7 @@ export function attachSupplierProvision(ctx: any) {
     fillProvisionForm,
     fillRepairForm,
     defaultProvisionName,
+    standardProvisionName,
     normalizeLocalPlatform,
     defaultProviderBaseURL,
     normalizeGatewayBaseURL,
@@ -312,6 +342,7 @@ export function attachSupplierProvision(ctx: any) {
     submitRepairBinding,
     syncCurrentGroups,
     ensureCurrentKeys,
+    standardizeCurrentKeyNames,
     watchProvisionJob,
     refreshProvisionJob,
     stopProvisionJobPolling,

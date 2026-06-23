@@ -24,6 +24,7 @@ func provisionInputFromSnapshot(supplierID int64, step *adminplusdomain.Supplier
 		SupplierID:                 supplierID,
 		SupplierGroupID:            groupID,
 		Name:                       stringValue(snapshot["name"]),
+		SyncProviderName:           boolValue(snapshot["sync_provider_name"], false),
 		QuotaUSD:                   float64Value(snapshot["quota_usd"]),
 		ExpiresInDays:              intPtrValue(snapshot["expires_in_days"]),
 		LocalAccountPlatform:       stringValue(snapshot["local_account_platform"]),
@@ -44,6 +45,7 @@ func provisionInputFromSnapshot(supplierID int64, step *adminplusdomain.Supplier
 func ensureAllInputFromSnapshot(supplierID int64, snapshot map[string]any) supplierkeys.EnsureAllInput {
 	return supplierkeys.EnsureAllInput{
 		SupplierID:              supplierID,
+		SyncProviderName:        boolValue(snapshot["sync_provider_name"], false),
 		LocalAccountBaseURL:     stringValue(snapshot["local_account_base_url"]),
 		LocalAccountConcurrency: intValue(snapshot["local_account_concurrency"]),
 		LocalAccountPriority:    intValue(snapshot["local_account_priority"]),

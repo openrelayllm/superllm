@@ -227,6 +227,14 @@ type CreateProviderKeyInput struct {
 	Metadata        map[string]any
 }
 
+type RenameProviderKeyInput struct {
+	SupplierID      int64
+	ExternalKeyID   string
+	ExternalGroupID string
+	Name            string
+	Metadata        map[string]any
+}
+
 type ProviderKeyResult struct {
 	SupplierID      int64
 	ExternalGroupID string
@@ -240,6 +248,7 @@ type ProviderKeyResult struct {
 
 type SessionKeyAdapter interface {
 	CreateKey(ctx context.Context, in SessionProbeInput, request CreateProviderKeyInput) (*ProviderKeyResult, error)
+	RenameKey(ctx context.Context, in SessionProbeInput, request RenameProviderKeyInput) (*ProviderKeyResult, error)
 }
 
 type ProviderRateEntry struct {

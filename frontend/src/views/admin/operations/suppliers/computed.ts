@@ -39,6 +39,12 @@ export function attachSuppliersComputed(ctx: any) {
   const sessionSourceLabel = ctxFn(ctx, 'sessionSourceLabel')
   const normalizeBalanceErrorMessage = ctxFn(ctx, 'normalizeBalanceErrorMessage')
   const channelProtocolFilterLabel = computed(() => channelProtocolFilter.value ? channelProtocolLabel(channelProtocolFilter.value) : '协议')
+
+  function localGroupOptionValue(groupID?: number, groupName?: string): string {
+    if (typeof groupID === 'number' && Number.isFinite(groupID) && groupID > 0) return String(groupID)
+    return groupName ? `name:${groupName}` : ''
+  }
+
   const scheduleListRows = computed<ScheduleListRow[]>(() => {
     const suppliersByID = new Map(scheduleListSuppliers.value.map((supplier) => [supplier.id, supplier]))
     const rows: ScheduleListRow[] = []
@@ -51,6 +57,11 @@ export function attachSuppliersComputed(ctx: any) {
       const groupName = firstNonEmptyString(check?.group_name, binding.supplier_group_name, binding.rate_profile, '未同步分组')
       const schedulable = Boolean(localAccount?.schedulable ?? check?.local_account_schedulable ?? false)
       const localAccountName = firstNonEmptyString(binding.local_account_name, localAccount?.name, `账号 #${binding.local_sub2api_account_id}`)
+      const localGroupIDs = Array.isArray(localAccount?.group_ids) ? localAccount.group_ids.filter((value) => typeof value === 'number' && Number.isFinite(value)) : []
+      const rawLocalGroupNames = Array.isArray(localAccount?.group_names) ? localAccount.group_names.map((value) => typeof value === 'string' ? value.trim() : '') : []
+      const localGroupNames = Array.from({ length: Math.max(localGroupIDs.length, rawLocalGroupNames.length) }, (_, index) => {
+        return rawLocalGroupNames[index] || (localGroupIDs[index] ? `分组 #${localGroupIDs[index]}` : '')
+      }).filter((value) => value !== '')
       rows.push({
         key: `${binding.supplier_id}:${binding.id}`,
         name: localAccountName,
@@ -62,6 +73,8 @@ export function attachSuppliersComputed(ctx: any) {
         local_account_id: binding.local_sub2api_account_id,
         local_account_name: localAccountName,
         local_account_status: firstNonEmptyString(localAccount?.status, 'unknown'),
+        local_group_ids: localGroupIDs,
+        local_group_names: localGroupNames,
         runtime_status: binding.runtime_status,
         health_status: binding.health_status,
         schedulable,
@@ -92,11 +105,19 @@ export function attachSuppliersComputed(ctx: any) {
       if (scheduleListFilters.status === 'paused' && row.schedulable) return false
       if (scheduleListFilters.status === 'risky' && !scheduleRowRisky(row)) return false
       if (scheduleListFilters.status === 'untested' && row.probe_status !== 'untested') return false
+      if (scheduleListFilters.local_group === '__ungrouped__' && row.local_group_ids.length + row.local_group_names.length > 0) return false
+      if (scheduleListFilters.local_group && scheduleListFilters.local_group !== '__ungrouped__') {
+        const optionValues = row.local_group_names.map((name, index) => localGroupOptionValue(row.local_group_ids[index], name))
+        const idValues = row.local_group_ids.map((id) => String(id))
+        if (!optionValues.includes(scheduleListFilters.local_group) && !idValues.includes(scheduleListFilters.local_group)) return false
+      }
       if (q) {
         const haystack = [
           row.supplier_name,
           row.local_account_name,
           row.group_name,
+          ...row.local_group_names,
+          ...row.local_group_ids.map((id) => `#${id}`),
           row.provider_family,
           row.external_group_id
         ].join(' ').toLowerCase()
@@ -104,6 +125,33 @@ export function attachSuppliersComputed(ctx: any) {
       }
       return true
     })
+  })
+
+  const scheduleListLocalGroupOptions = computed(() => {
+    const options = new Map<string, { value: string; label: string; count: number }>()
+    let ungroupedCount = 0
+    for (const row of scheduleListRows.value) {
+      if (row.local_group_ids.length + row.local_group_names.length === 0) {
+        ungroupedCount++
+        continue
+      }
+      const maxLength = Math.max(row.local_group_ids.length, row.local_group_names.length)
+      for (let index = 0; index < maxLength; index++) {
+        const groupID = row.local_group_ids[index]
+        const groupName = row.local_group_names[index] || (groupID ? `分组 #${groupID}` : '')
+        const value = localGroupOptionValue(groupID, groupName)
+        if (!value) continue
+        const existing = options.get(value)
+        if (existing) {
+          existing.count++
+        } else {
+          options.set(value, { value, label: groupName, count: 1 })
+        }
+      }
+    }
+    const sorted = [...options.values()].sort((a, b) => a.label.localeCompare(b.label))
+    if (ungroupedCount > 0) sorted.unshift({ value: '__ungrouped__', label: '未分配分组', count: ungroupedCount })
+    return sorted
   })
 
   const scheduleListStats = computed(() => {
@@ -422,6 +470,7 @@ export function attachSuppliersComputed(ctx: any) {
     channelProtocolFilterLabel,
     scheduleListRows,
     filteredScheduleRows,
+    scheduleListLocalGroupOptions,
     scheduleListStats,
     currentSession,
     currentBalanceValue,

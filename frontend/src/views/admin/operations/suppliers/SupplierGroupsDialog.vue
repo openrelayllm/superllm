@@ -20,7 +20,7 @@
           </select>
         </label>
       </div>
-      <div class="flex flex-wrap gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <button type="button" class="btn btn-secondary" :disabled="groupsLoading || !groupsSupplier" @click="loadCurrentGroups">
           <Icon name="refresh" size="sm" :class="{ 'animate-spin': groupsLoading }" />
           刷新
@@ -32,6 +32,14 @@
         <button type="button" class="btn btn-secondary" :disabled="channelChecksSyncing || !groupsSupplier || activeProvisionJobRunning" @click="syncCurrentChannelChecks">
           <Icon name="beaker" size="sm" :class="{ 'animate-spin': channelChecksSyncing }" />
           检测渠道
+        </button>
+        <label class="flex h-9 items-center gap-2 rounded-md border border-gray-200 px-3 text-sm text-gray-700 dark:border-dark-700 dark:text-dark-200" title="默认只更新本地名称；勾选后把第三方 Key 名称改为稳定别名。">
+          <input v-model="keyNamingForm.sync_provider_name" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-900" />
+          <span>同步第三方 Key 名称</span>
+        </label>
+        <button type="button" class="btn btn-secondary" :disabled="keyNamesStandardizing || !groupsSupplier" @click="standardizeCurrentKeyNames">
+          <Icon name="key" size="sm" :class="{ 'animate-spin': keyNamesStandardizing }" />
+          规范 Key 名称
         </button>
         <button type="button" class="btn btn-primary" :disabled="keysEnsuring || !canSubmitEnsureKeys" @click="ensureCurrentKeys">
           <Icon name="key" size="sm" :class="{ 'animate-spin': keysEnsuring }" />
@@ -294,6 +302,7 @@ const {
   groupsLoading,
   groupsSyncing,
   keysEnsuring,
+  keyNamesStandardizing,
   channelChecksSyncing,
   groupsError,
   provisionJobError,
@@ -301,6 +310,7 @@ const {
   groupPagination,
   groupColumns,
   groupFilters,
+  keyNamingForm,
   activeProvisionJobRunning,
   groupWorkflowSteps,
   canSubmitGroupSync,
@@ -344,6 +354,7 @@ const {
   openProvisionDialog,
   openRepairDialog,
   syncCurrentGroups,
-  ensureCurrentKeys
+  ensureCurrentKeys,
+  standardizeCurrentKeyNames
 } = props.vm
 </script>

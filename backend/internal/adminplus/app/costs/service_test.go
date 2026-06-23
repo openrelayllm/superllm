@@ -235,6 +235,43 @@ func TestServiceSyncAppliesSupplierRechargeMultiplierToFundingCost(t *testing.T)
 	require.Equal(t, int64(1000), ledger[0].ActualPaymentCents)
 }
 
+func TestServiceSyncDerivesRechargeMultiplierFromFundingCashAmount(t *testing.T) {
+	repo := NewMemoryRepository()
+	now := time.Date(2026, 6, 22, 8, 30, 0, 0, time.UTC)
+	session := &stubCostSessionReader{}
+	funding := &stubCostFundingReader{result: &ports.ReadFundingTransactionsResult{
+		SupplierID:   7,
+		ProviderType: "new_api",
+		Items: []ports.ProviderFundingTransaction{
+			{
+				ExternalID:      "new-api-order-100",
+				Status:          "success",
+				Currency:        "USD",
+				AmountCents:     10000,
+				CashAmountCents: 1000,
+			},
+		},
+	}}
+	svc := NewServiceWithDependencies(repo, session, funding, nil, nil, nil, nil)
+	svc.now = func() time.Time { return now }
+
+	result, err := svc.Sync(context.Background(), SyncInput{
+		SupplierID:                 7,
+		IncludeFundingTransactions: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Snapshot)
+	require.Equal(t, int64(10000), result.Snapshot.CompletedFundingAmountCents)
+	require.Equal(t, int64(1000), result.Snapshot.CompletedFundingCashCents)
+	require.Equal(t, int64(1000), result.Snapshot.RechargeActualPaymentCents)
+	items, err := svc.ListFundingTransactions(context.Background(), TransactionFilter{SupplierID: 7, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, float64(10), items[0].RechargeMultiplier)
+	require.Equal(t, int64(1000), items[0].ActualPaymentCents)
+}
+
 func TestServiceSyncUsesProviderTypeFromSessionBundleForBalanceOnlyNewAPI(t *testing.T) {
 	repo := NewMemoryRepository()
 	now := time.Date(2026, 6, 22, 3, 30, 0, 0, time.UTC)

@@ -38,6 +38,8 @@ func NewMemoryRepository() *MemoryRepository {
 				Concurrency:    3,
 				Priority:       50,
 				RateMultiplier: 1,
+				GroupIDs:       []int64{1},
+				GroupNames:     []string{"Lime"},
 			},
 		},
 	}
@@ -239,11 +241,13 @@ func (r *MemoryRepository) ListLocalAccounts(_ context.Context, query string, li
 	q := strings.ToLower(strings.TrimSpace(query))
 	items := make([]*adminplusdomain.LocalSub2APIAccount, 0, len(r.localAccounts))
 	for _, account := range r.localAccounts {
-		haystack := strings.ToLower(account.Name + " " + account.Platform + " " + account.Type)
+		haystack := strings.ToLower(account.Name + " " + account.Platform + " " + account.Type + " " + strings.Join(account.GroupNames, " "))
 		if q != "" && !strings.Contains(haystack, q) {
 			continue
 		}
 		cp := *account
+		cp.GroupIDs = append([]int64(nil), account.GroupIDs...)
+		cp.GroupNames = append([]string(nil), account.GroupNames...)
 		items = append(items, &cp)
 	}
 	sort.Slice(items, func(i, j int) bool {

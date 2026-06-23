@@ -29,6 +29,7 @@ type ListFilter struct {
 }
 
 type Repository interface {
+	GetSupplierName(ctx context.Context, supplierID int64) (string, error)
 	UpsertMany(ctx context.Context, supplierID int64, groups []*adminplusdomain.SupplierGroup, seenAt time.Time) ([]*adminplusdomain.SupplierGroup, error)
 	List(ctx context.Context, filter ListFilter) ([]*adminplusdomain.SupplierGroup, error)
 }
@@ -74,13 +75,17 @@ func (s *Service) Sync(ctx context.Context, supplierID int64) (*SyncResult, erro
 	if err != nil {
 		return nil, err
 	}
+	supplierName, err := s.repo.GetSupplierName(ctx, supplierID)
+	if err != nil {
+		return nil, err
+	}
 	seenAt := result.CapturedAt.UTC()
 	if seenAt.IsZero() {
 		seenAt = s.now().UTC()
 	}
 	groups := make([]*adminplusdomain.SupplierGroup, 0, len(result.Groups))
 	for _, providerGroup := range result.Groups {
-		group := buildSupplierGroup(supplierID, providerGroup, seenAt)
+		group := buildSupplierGroup(supplierID, supplierName, providerGroup, seenAt)
 		if group == nil {
 			continue
 		}
@@ -116,7 +121,7 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]*adminplusdoma
 	return s.repo.List(ctx, filter)
 }
 
-func buildSupplierGroup(supplierID int64, in *ports.ProviderGroup, seenAt time.Time) *adminplusdomain.SupplierGroup {
+func buildSupplierGroup(supplierID int64, supplierName string, in *ports.ProviderGroup, seenAt time.Time) *adminplusdomain.SupplierGroup {
 	if in == nil {
 		return nil
 	}
@@ -140,7 +145,7 @@ func buildSupplierGroup(supplierID int64, in *ports.ProviderGroup, seenAt time.T
 	if effectiveRateMultiplier <= 0 {
 		effectiveRateMultiplier = rateMultiplier
 	}
-	return &adminplusdomain.SupplierGroup{
+	group := &adminplusdomain.SupplierGroup{
 		SupplierID:              supplierID,
 		ExternalGroupID:         externalID,
 		Name:                    name,
@@ -161,6 +166,8 @@ func buildSupplierGroup(supplierID int64, in *ports.ProviderGroup, seenAt time.T
 		CreatedAt:               seenAt,
 		UpdatedAt:               seenAt,
 	}
+	adminplusdomain.ApplySupplierGroupNaming(group, supplierName, seenAt)
+	return group
 }
 
 func normalizeProviderFamily(value string) string {

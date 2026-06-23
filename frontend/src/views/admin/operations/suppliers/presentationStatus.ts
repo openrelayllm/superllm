@@ -8,7 +8,6 @@ export function attachPresentationStatus(ctx: any) {
   const sessionStore = ctxValue(ctx, 'sessionStore')
   const rowLoginSupplierID = ctxValue(ctx, 'rowLoginSupplierID')
   const currentSessionSummary = ctxValue(ctx, 'currentSessionSummary')
-  const supplierKeysByGroupID = ctxValue(ctx, 'supplierKeysByGroupID')
   const formatMoney = ctxFn(ctx, 'formatMoney')
   const formatDateTime = ctxFn(ctx, 'formatDateTime')
   const supplierCostSnapshot = ctxFn(ctx, 'supplierCostSnapshot')
@@ -305,7 +304,7 @@ export function attachPresentationStatus(ctx: any) {
   }
 
   function groupKey(group: SupplierGroup): SupplierKey | undefined {
-    return supplierKeysByGroupID.value.get(group.id)
+    return ctx.supplierKeysByGroupID?.value?.get(group.id)
   }
 
   function groupAction(group: SupplierGroup) {

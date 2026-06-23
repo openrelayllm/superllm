@@ -44,10 +44,11 @@ func (r *SQLRepository) GetGroup(ctx context.Context, supplierID int64, groupID 
 	}
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, supplier_id, external_group_id, name, description, provider_family,
+			official_name, model_family, model_spec, standard_key_name,
 			rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
 			rpm_limit, daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
 			allow_image_generation, is_private, status, raw_payload,
-			last_seen_at, created_at, updated_at
+			last_seen_at, naming_updated_at, created_at, updated_at
 		FROM admin_plus_supplier_groups
 		WHERE supplier_id = $1 AND id = $2
 	`, supplierID, groupID)
@@ -76,10 +77,11 @@ func (r *SQLRepository) ListGroups(ctx context.Context, supplierID int64) ([]*ad
 	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, supplier_id, external_group_id, name, description, provider_family,
+			official_name, model_family, model_spec, standard_key_name,
 			rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
 			rpm_limit, daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
 			allow_image_generation, is_private, status, raw_payload,
-			last_seen_at, created_at, updated_at
+			last_seen_at, naming_updated_at, created_at, updated_at
 		FROM admin_plus_supplier_groups
 		WHERE supplier_id = $1 AND status = 'active'
 		ORDER BY created_at DESC, id DESC
@@ -219,6 +221,55 @@ func (r *SQLRepository) UpdateKeyAfterLocalBind(ctx context.Context, keyID int64
 		return nil, translateKeyCreateError(err)
 	}
 	return item, nil
+}
+
+func (r *SQLRepository) UpdateKeyName(ctx context.Context, supplierID int64, keyID int64, name string) (*adminplusdomain.SupplierKey, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_KEY_NAME_INVALID", "supplier key name is required")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	row := tx.QueryRowContext(ctx, `
+		UPDATE admin_plus_supplier_keys
+		SET name = $3,
+			updated_at = NOW()
+		WHERE supplier_id = $1 AND id = $2
+		RETURNING id, supplier_id, supplier_group_id, external_group_id, external_key_id,
+			name, key_fingerprint, key_last4, status, provider_family,
+			local_sub2api_account_id, local_account_name, local_account_platform, local_account_type,
+			provision_request, provision_response, error_code, error_message,
+			created_at, updated_at
+	`, supplierID, keyID, name)
+	key, err := scanSupplierKey(row)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE admin_plus_supplier_accounts
+		SET supplier_account_label = $3,
+			updated_at = NOW()
+		WHERE supplier_id = $1 AND supplier_key_id = $2
+	`, supplierID, keyID, name); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	committed = true
+	return key, nil
 }
 
 func (r *SQLRepository) CreateBinding(ctx context.Context, account *adminplusdomain.SupplierAccount) (*adminplusdomain.SupplierAccount, error) {
@@ -475,6 +526,7 @@ func scanSupplierGroup(scanner scanner) (*adminplusdomain.SupplierGroup, error) 
 	var dailyLimit sql.NullFloat64
 	var weeklyLimit sql.NullFloat64
 	var monthlyLimit sql.NullFloat64
+	var namingUpdatedAt sql.NullTime
 	err := scanner.Scan(
 		&group.ID,
 		&group.SupplierID,
@@ -482,6 +534,10 @@ func scanSupplierGroup(scanner scanner) (*adminplusdomain.SupplierGroup, error) 
 		&group.Name,
 		&group.Description,
 		&group.ProviderFamily,
+		&group.OfficialName,
+		&group.ModelFamily,
+		&group.ModelSpec,
+		&group.StandardKeyName,
 		&group.RateMultiplier,
 		&userRate,
 		&group.EffectiveRateMultiplier,
@@ -494,6 +550,7 @@ func scanSupplierGroup(scanner scanner) (*adminplusdomain.SupplierGroup, error) 
 		&status,
 		&rawPayload,
 		&group.LastSeenAt,
+		&namingUpdatedAt,
 		&group.CreatedAt,
 		&group.UpdatedAt,
 	)
@@ -523,6 +580,10 @@ func scanSupplierGroup(scanner scanner) (*adminplusdomain.SupplierGroup, error) 
 	if monthlyLimit.Valid {
 		value := monthlyLimit.Float64
 		group.MonthlyLimitUSD = &value
+	}
+	if namingUpdatedAt.Valid {
+		value := namingUpdatedAt.Time
+		group.NamingUpdatedAt = &value
 	}
 	if len(rawPayload) > 0 {
 		var payload map[string]any

@@ -137,6 +137,7 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin-plus/suppliers/:id/keys",
 		"POST /api/v1/admin-plus/suppliers/:id/keys/ensure-all",
 		"POST /api/v1/admin-plus/suppliers/:id/keys/provision",
+		"POST /api/v1/admin-plus/suppliers/:id/keys/standardize-names",
 		"POST /api/v1/admin-plus/suppliers/:id/keys/:keyID/repair-binding",
 		"POST /api/v1/admin-plus/suppliers/:id/rates/sync",
 		"GET /api/v1/admin-plus/suppliers/:id/balance/current",
@@ -349,6 +350,17 @@ func (r *routeSurfaceKeyAdapter) CreateKey(_ context.Context, in ports.SessionPr
 		ExternalKeyID:   "route-surface-key",
 		Name:            request.Name,
 		Secret:          "sk-route-surface-secret",
+		Status:          "active",
+		RawPayload:      map[string]any{},
+	}, nil
+}
+
+func (r *routeSurfaceKeyAdapter) RenameKey(_ context.Context, in ports.SessionProbeInput, request ports.RenameProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	return &ports.ProviderKeyResult{
+		SupplierID:      in.SupplierID,
+		ExternalGroupID: request.ExternalGroupID,
+		ExternalKeyID:   request.ExternalKeyID,
+		Name:            request.Name,
 		Status:          "active",
 		RawPayload:      map[string]any{},
 	}, nil

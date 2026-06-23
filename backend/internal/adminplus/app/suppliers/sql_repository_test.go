@@ -9,6 +9,7 @@ import (
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
 
@@ -262,19 +263,9 @@ func TestSQLRepositoryCreateAccountReadsLocalAccountFromSub2APIReadDB(t *testing
 	repo := NewSQLRepository(adminDB, sub2apiapp.ReadDB{DB: readDB})
 	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
 
-	readMock.ExpectQuery(`FROM accounts\s+WHERE id = \$1 AND deleted_at IS NULL`).
+	readMock.ExpectQuery(`FROM accounts a\s+LEFT JOIN account_groups ag ON ag\.account_id = a\.id\s+LEFT JOIN groups g ON g\.id = ag\.group_id AND g\.deleted_at IS NULL\s+WHERE a\.id = \$1 AND a\.deleted_at IS NULL`).
 		WithArgs(int64(42)).
-		WillReturnRows(sqlmock.NewRows([]string{
-			"id",
-			"name",
-			"platform",
-			"type",
-			"status",
-			"schedulable",
-			"concurrency",
-			"priority",
-			"rate_multiplier",
-		}).AddRow(
+		WillReturnRows(newLocalSub2APIAccountRows().AddRow(
 			int64(42),
 			"Real Sub2API Account",
 			"openai",
@@ -284,6 +275,8 @@ func TestSQLRepositoryCreateAccountReadsLocalAccountFromSub2APIReadDB(t *testing
 			8,
 			10,
 			1.0,
+			pq.Int64Array{1001, 1002},
+			pq.StringArray{"Lime", "Gemini"},
 		))
 
 	adminMock.ExpectQuery(`INSERT INTO admin_plus_supplier_accounts`).
@@ -358,6 +351,34 @@ func TestSQLRepositoryCreateAccountReadsLocalAccountFromSub2APIReadDB(t *testing
 	require.Equal(t, "Real Sub2API Account", got.LocalAccountName)
 }
 
+func TestSQLRepositoryListLocalAccountsReturnsGroups(t *testing.T) {
+	db, mock := newSupplierSQLMock(t)
+	repo := NewSQLRepository(db, sub2apiapp.ReadDB{DB: db})
+
+	mock.ExpectQuery(`FROM accounts a\s+LEFT JOIN account_groups ag ON ag\.account_id = a\.id\s+LEFT JOIN groups g ON g\.id = ag\.group_id AND g\.deleted_at IS NULL`).
+		WithArgs(100).
+		WillReturnRows(newLocalSub2APIAccountRows().AddRow(
+			int64(42),
+			"Real Sub2API Account",
+			"openai",
+			"api_key",
+			"active",
+			true,
+			8,
+			10,
+			1.0,
+			pq.Int64Array{1001, 1002},
+			pq.StringArray{"Lime", "Gemini"},
+		))
+
+	items, err := repo.ListLocalAccounts(context.Background(), "", 100)
+
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, []int64{1001, 1002}, items[0].GroupIDs)
+	require.Equal(t, []string{"Lime", "Gemini"}, items[0].GroupNames)
+}
+
 func TestSQLRepositoryGetNotFound(t *testing.T) {
 	db, mock := newSupplierSQLMock(t)
 	repo := NewSQLRepository(db, sub2apiapp.ReadDB{DB: db})
@@ -426,5 +447,21 @@ func newSupplierAccountRows() *sqlmock.Rows {
 		"health_status",
 		"created_at",
 		"updated_at",
+	})
+}
+
+func newLocalSub2APIAccountRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{
+		"id",
+		"name",
+		"platform",
+		"type",
+		"status",
+		"schedulable",
+		"concurrency",
+		"priority",
+		"rate_multiplier",
+		"group_ids",
+		"group_names",
 	})
 }

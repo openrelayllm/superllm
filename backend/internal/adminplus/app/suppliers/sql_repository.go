@@ -11,6 +11,7 @@ import (
 	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/lib/pq"
 )
 
 type SQLRepository struct {
@@ -527,7 +528,7 @@ func (r *SQLRepository) ListLocalAccounts(ctx context.Context, query string, lim
 	if r == nil || r.sub2apiDB == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "SUB2API_READ_DB_NOT_CONFIGURED", "sub2api read database is not configured")
 	}
-	where := []string{"deleted_at IS NULL"}
+	where := []string{"a.deleted_at IS NULL"}
 	args := make([]any, 0, 2)
 	addArg := func(value any) string {
 		args = append(args, value)
@@ -535,14 +536,29 @@ func (r *SQLRepository) ListLocalAccounts(ctx context.Context, query string, lim
 	}
 	if strings.TrimSpace(query) != "" {
 		like := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
-		where = append(where, "(LOWER(name) LIKE "+addArg(like)+" OR LOWER(platform) LIKE "+addArg(like)+" OR LOWER(type) LIKE "+addArg(like)+")")
+		groupLike := addArg(like)
+		where = append(where, "(LOWER(a.name) LIKE "+addArg(like)+" OR LOWER(a.platform) LIKE "+addArg(like)+" OR LOWER(a.type) LIKE "+addArg(like)+" OR EXISTS (SELECT 1 FROM account_groups agq INNER JOIN groups gq ON gq.id = agq.group_id AND gq.deleted_at IS NULL WHERE agq.account_id = a.id AND LOWER(gq.name) LIKE "+groupLike+"))")
 	}
 	limitRef := addArg(limit)
 	rows, err := r.sub2apiDB.QueryContext(ctx, `
-		SELECT id, name, platform, type, status, schedulable, concurrency, priority, rate_multiplier
-		FROM accounts
+		SELECT
+			a.id,
+			a.name,
+			a.platform,
+			a.type,
+			a.status,
+			a.schedulable,
+			a.concurrency,
+			a.priority,
+			a.rate_multiplier,
+			COALESCE(array_agg(g.id ORDER BY ag.priority, g.id) FILTER (WHERE g.id IS NOT NULL), ARRAY[]::BIGINT[]),
+			COALESCE(array_agg(g.name ORDER BY ag.priority, ag.group_id) FILTER (WHERE g.name IS NOT NULL), ARRAY[]::TEXT[])
+		FROM accounts a
+		LEFT JOIN account_groups ag ON ag.account_id = a.id
+		LEFT JOIN groups g ON g.id = ag.group_id AND g.deleted_at IS NULL
 		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY id DESC
+		GROUP BY a.id, a.name, a.platform, a.type, a.status, a.schedulable, a.concurrency, a.priority, a.rate_multiplier
+		ORDER BY a.id DESC
 		LIMIT `+limitRef+`
 	`, args...)
 	if err != nil {
@@ -555,6 +571,8 @@ func (r *SQLRepository) ListLocalAccounts(ctx context.Context, query string, lim
 	items := make([]*adminplusdomain.LocalSub2APIAccount, 0)
 	for rows.Next() {
 		var item adminplusdomain.LocalSub2APIAccount
+		var groupIDs pq.Int64Array
+		var groupNames pq.StringArray
 		if err := rows.Scan(
 			&item.ID,
 			&item.Name,
@@ -565,9 +583,13 @@ func (r *SQLRepository) ListLocalAccounts(ctx context.Context, query string, lim
 			&item.Concurrency,
 			&item.Priority,
 			&item.RateMultiplier,
+			&groupIDs,
+			&groupNames,
 		); err != nil {
 			return nil, err
 		}
+		item.GroupIDs = append([]int64(nil), groupIDs...)
+		item.GroupNames = append([]string(nil), groupNames...)
 		items = append(items, &item)
 	}
 	if err := rows.Err(); err != nil {
@@ -581,11 +603,27 @@ func (r *SQLRepository) getLocalAccount(ctx context.Context, id int64) (*adminpl
 		return nil, infraerrors.New(http.StatusInternalServerError, "SUB2API_READ_DB_NOT_CONFIGURED", "sub2api read database is not configured")
 	}
 	row := r.sub2apiDB.QueryRowContext(ctx, `
-		SELECT id, name, platform, type, status, schedulable, concurrency, priority, rate_multiplier
-		FROM accounts
-		WHERE id = $1 AND deleted_at IS NULL
+		SELECT
+			a.id,
+			a.name,
+			a.platform,
+			a.type,
+			a.status,
+			a.schedulable,
+			a.concurrency,
+			a.priority,
+			a.rate_multiplier,
+			COALESCE(array_agg(g.id ORDER BY ag.priority, g.id) FILTER (WHERE g.id IS NOT NULL), ARRAY[]::BIGINT[]),
+			COALESCE(array_agg(g.name ORDER BY ag.priority, ag.group_id) FILTER (WHERE g.name IS NOT NULL), ARRAY[]::TEXT[])
+		FROM accounts a
+		LEFT JOIN account_groups ag ON ag.account_id = a.id
+		LEFT JOIN groups g ON g.id = ag.group_id AND g.deleted_at IS NULL
+		WHERE a.id = $1 AND a.deleted_at IS NULL
+		GROUP BY a.id, a.name, a.platform, a.type, a.status, a.schedulable, a.concurrency, a.priority, a.rate_multiplier
 	`, id)
 	var item adminplusdomain.LocalSub2APIAccount
+	var groupIDs pq.Int64Array
+	var groupNames pq.StringArray
 	if err := row.Scan(
 		&item.ID,
 		&item.Name,
@@ -596,12 +634,16 @@ func (r *SQLRepository) getLocalAccount(ctx context.Context, id int64) (*adminpl
 		&item.Concurrency,
 		&item.Priority,
 		&item.RateMultiplier,
+		&groupIDs,
+		&groupNames,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, infraerrors.New(http.StatusNotFound, "LOCAL_ACCOUNT_NOT_FOUND", "local Sub2API account not found")
 		}
 		return nil, err
 	}
+	item.GroupIDs = append([]int64(nil), groupIDs...)
+	item.GroupNames = append([]string(nil), groupNames...)
 	return &item, nil
 }
 

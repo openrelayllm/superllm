@@ -418,7 +418,7 @@
             </button>
           </div>
           <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">余额更新 {{ supplierBalanceUpdatedLabel(row) }}</div>
-          <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">充值倍率 {{ formatMultiplier(row.recharge_multiplier) }}</div>
+          <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">充值倍率 {{ formatMultiplier(supplierRechargeMultiplier(row.id)) }}</div>
 
           <template v-if="supplierCostSnapshot(row.id)">
             <div class="mt-1 space-y-0.5 text-xs">
@@ -603,6 +603,7 @@ const {
   formatLatency,
   kindLabel,
   typeLabel,
+  supplierRechargeMultiplier,
   channelCostMultiplier,
   runtimeClass,
   healthClass,

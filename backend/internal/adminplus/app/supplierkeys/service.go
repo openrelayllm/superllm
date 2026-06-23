@@ -20,6 +20,7 @@ type ProvisionKeyInput struct {
 	SupplierID                 int64
 	SupplierGroupID            int64
 	Name                       string
+	SyncProviderName           bool
 	QuotaUSD                   float64
 	ExpiresInDays              *int
 	LocalAccountPlatform       string
@@ -38,6 +39,7 @@ type ProvisionKeyInput struct {
 
 type EnsureAllInput struct {
 	SupplierID              int64
+	SyncProviderName        bool
 	LocalAccountBaseURL     string
 	LocalAccountConcurrency int
 	LocalAccountPriority    int
@@ -74,9 +76,38 @@ type RepairBindingInput struct {
 	SupplierAccountLabel      string
 }
 
+type StandardizeNamesInput struct {
+	SupplierID       int64 `json:"supplier_id"`
+	SyncProviderName bool  `json:"sync_provider_name"`
+}
+
 type ProvisionKeyResult struct {
 	Key     *adminplusdomain.SupplierKey     `json:"key"`
 	Binding *adminplusdomain.SupplierAccount `json:"binding"`
+}
+
+type StandardizeNamesResult struct {
+	SupplierID       int64                        `json:"supplier_id"`
+	SyncProviderName bool                         `json:"sync_provider_name"`
+	Total            int                          `json:"total"`
+	Updated          int                          `json:"updated"`
+	Skipped          int                          `json:"skipped"`
+	Failed           int                          `json:"failed"`
+	Items            []StandardizeNamesResultItem `json:"items"`
+}
+
+type StandardizeNamesResultItem struct {
+	KeyID              int64  `json:"key_id"`
+	SupplierGroupID    int64  `json:"supplier_group_id"`
+	ExternalKeyID      string `json:"external_key_id,omitempty"`
+	LocalName          string `json:"local_name"`
+	TargetLocalName    string `json:"target_local_name"`
+	TargetProviderName string `json:"target_provider_name,omitempty"`
+	LocalUpdated       bool   `json:"local_updated,omitempty"`
+	ProviderUpdated    bool   `json:"provider_updated,omitempty"`
+	Action             string `json:"action"`
+	ErrorCode          string `json:"error_code,omitempty"`
+	ErrorMessage       string `json:"error_message,omitempty"`
 }
 
 type EnsureAllResult struct {
@@ -120,6 +151,7 @@ type Repository interface {
 	FindActiveByGroup(ctx context.Context, supplierID int64, groupID int64) (*adminplusdomain.SupplierKey, error)
 	CreateKey(ctx context.Context, key *adminplusdomain.SupplierKey) (*adminplusdomain.SupplierKey, error)
 	UpdateKeyAfterLocalBind(ctx context.Context, keyID int64, localAccount *service.Account, status adminplusdomain.SupplierKeyStatus, errorCode string, errorMessage string) (*adminplusdomain.SupplierKey, error)
+	UpdateKeyName(ctx context.Context, supplierID int64, keyID int64, name string) (*adminplusdomain.SupplierKey, error)
 	CreateBinding(ctx context.Context, account *adminplusdomain.SupplierAccount) (*adminplusdomain.SupplierAccount, error)
 	UpsertBinding(ctx context.Context, account *adminplusdomain.SupplierAccount) (*adminplusdomain.SupplierAccount, error)
 	List(ctx context.Context, filter ListFilter) ([]*adminplusdomain.SupplierKey, error)
@@ -230,6 +262,11 @@ func (s *Service) Provision(ctx context.Context, in ProvisionKeyInput) (*Provisi
 	if group.Status != adminplusdomain.SupplierGroupStatusActive {
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_GROUP_NOT_ACTIVE", "supplier group is not active")
 	}
+	targetLocalName := standardKeyNameForGroup(supplier, group, normalized.Name)
+	providerCreateName := normalized.Name
+	if providerCreateName == "" {
+		providerCreateName = targetLocalName
+	}
 	existing, err := s.repo.FindActiveByGroup(ctx, normalized.SupplierID, group.ID)
 	if err != nil {
 		return nil, err
@@ -247,7 +284,7 @@ func (s *Service) Provision(ctx context.Context, in ProvisionKeyInput) (*Provisi
 	created, err := s.keyAdapter.CreateKey(ctx, input, ports.CreateProviderKeyInput{
 		SupplierID:      normalized.SupplierID,
 		ExternalGroupID: group.ExternalGroupID,
-		Name:            normalized.Name,
+		Name:            providerCreateName,
 		QuotaUSD:        normalized.QuotaUSD,
 		ExpiresInDays:   normalized.ExpiresInDays,
 		Metadata: map[string]any{
@@ -267,16 +304,19 @@ func (s *Service) Provision(ctx context.Context, in ProvisionKeyInput) (*Provisi
 		SupplierGroupID: group.ID,
 		ExternalGroupID: firstNonEmpty(created.ExternalGroupID, group.ExternalGroupID),
 		ExternalKeyID:   trimLimit(created.ExternalKeyID, 160),
-		Name:            trimLimit(firstNonEmpty(created.Name, normalized.Name), 160),
+		Name:            trimLimit(targetLocalName, 160),
 		KeyFingerprint:  fingerprintSecret(created.Secret),
 		KeyLast4:        lastN(created.Secret, 4),
 		Status:          adminplusdomain.SupplierKeyStatusProvisioning,
 		ProviderFamily:  normalizeProviderFamily(group.ProviderFamily),
 		ProvisionRequest: map[string]any{
-			"name":              normalized.Name,
-			"external_group_id": group.ExternalGroupID,
-			"quota_usd":         normalized.QuotaUSD,
-			"expires_in_days":   normalized.ExpiresInDays,
+			"name":                 targetLocalName,
+			"requested_name":       in.Name,
+			"provider_create_name": providerCreateName,
+			"sync_provider_name":   normalized.SyncProviderName,
+			"external_group_id":    group.ExternalGroupID,
+			"quota_usd":            normalized.QuotaUSD,
+			"expires_in_days":      normalized.ExpiresInDays,
 		},
 		ProvisionResponse: cloneMap(created.RawPayload),
 		CreatedAt:         now,
@@ -294,7 +334,7 @@ func (s *Service) Provision(ctx context.Context, in ProvisionKeyInput) (*Provisi
 		Secret:         created.Secret,
 		BaseURL:        normalized.LocalAccountBaseURL,
 		Platform:       normalized.LocalAccountPlatform,
-		Name:           normalized.LocalAccountName,
+		Name:           firstNonEmpty(normalized.LocalAccountName, targetLocalName),
 		Concurrency:    normalized.LocalAccountConcurrency,
 		Priority:       normalized.LocalAccountPriority,
 		RateMultiplier: normalized.LocalAccountRateMultiplier,
@@ -315,6 +355,11 @@ func (s *Service) Provision(ctx context.Context, in ProvisionKeyInput) (*Provisi
 	if err != nil {
 		_, _ = s.repo.UpdateKeyAfterLocalBind(ctx, savedKey.ID, localAccount, adminplusdomain.SupplierKeyStatusFailed, "SUPPLIER_ACCOUNT_BIND_FAILED", err.Error())
 		return nil, err
+	}
+	if normalized.SyncProviderName {
+		if _, err := s.renameProviderKey(ctx, input, savedKey, group); err != nil {
+			return nil, err
+		}
 	}
 	return &ProvisionKeyResult{Key: savedKey, Binding: savedBinding}, nil
 }
@@ -472,6 +517,7 @@ func (s *Service) ensureGroup(ctx context.Context, normalized EnsureAllInput, su
 		SupplierID:                 normalized.SupplierID,
 		SupplierGroupID:            group.ID,
 		Name:                       defaultProvisionName(group),
+		SyncProviderName:           normalized.SyncProviderName,
 		QuotaUSD:                   0,
 		LocalAccountPlatform:       normalizeLocalPlatform(group.ProviderFamily),
 		LocalAccountName:           defaultLocalAccountName(supplier, group),
@@ -508,6 +554,113 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]*adminplusdoma
 	filter.Query = normalizeQuery(filter.Query)
 	filter.Limit = normalizeLimit(filter.Limit)
 	return s.repo.List(ctx, filter)
+}
+
+func (s *Service) StandardizeNames(ctx context.Context, in StandardizeNamesInput) (*StandardizeNamesResult, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("supplier key service is not configured")
+	}
+	if in.SupplierID <= 0 {
+		return nil, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	if in.SyncProviderName {
+		if s.session == nil {
+			return nil, internalError("supplier browser session service is not configured")
+		}
+		if s.keyAdapter == nil {
+			return nil, internalError("supplier key provider adapter is not configured")
+		}
+	}
+	supplier, err := s.repo.GetSupplier(ctx, in.SupplierID)
+	if err != nil {
+		return nil, err
+	}
+	if !supplierSupportsKeyProvisioning(supplier.Type) {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_PROVIDER_UNSUPPORTED", "only Sub2API or New API supplier key provisioning is supported")
+	}
+	keys, err := s.repo.List(ctx, ListFilter{SupplierID: in.SupplierID, Limit: 1000})
+	if err != nil {
+		return nil, err
+	}
+	result := &StandardizeNamesResult{
+		SupplierID:       in.SupplierID,
+		SyncProviderName: in.SyncProviderName,
+		Items:            make([]StandardizeNamesResultItem, 0, len(keys)),
+	}
+	var probeInput ports.SessionProbeInput
+	if in.SyncProviderName && len(keys) > 0 {
+		probeInput, err = s.session.DecryptedProbeInput(ctx, in.SupplierID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for _, key := range keys {
+		if key == nil || !standardizableKeyStatus(key.Status) {
+			continue
+		}
+		result.Total++
+		item := StandardizeNamesResultItem{
+			KeyID:           key.ID,
+			SupplierGroupID: key.SupplierGroupID,
+			ExternalKeyID:   key.ExternalKeyID,
+			LocalName:       key.Name,
+			Action:          "skipped",
+		}
+		group, err := s.repo.GetGroup(ctx, in.SupplierID, key.SupplierGroupID)
+		if err != nil {
+			item.Action = "failed"
+			item.ErrorCode = infraerrors.Reason(err)
+			item.ErrorMessage = infraerrors.Message(err)
+			result.Failed++
+			result.Items = append(result.Items, item)
+			continue
+		}
+		item.TargetLocalName = standardKeyNameForGroup(supplier, group, key.Name)
+		item.TargetProviderName = providerStableKeyName(key, group)
+		if strings.TrimSpace(item.TargetLocalName) == "" {
+			item.Action = "failed"
+			item.ErrorCode = "SUPPLIER_KEY_NAME_INVALID"
+			item.ErrorMessage = "target key name is empty"
+			result.Failed++
+			result.Items = append(result.Items, item)
+			continue
+		}
+		changed := false
+		if key.Name != item.TargetLocalName {
+			updated, err := s.repo.UpdateKeyName(ctx, in.SupplierID, key.ID, item.TargetLocalName)
+			if err != nil {
+				item.Action = "failed"
+				item.ErrorCode = infraerrors.Reason(err)
+				item.ErrorMessage = infraerrors.Message(err)
+				result.Failed++
+				result.Items = append(result.Items, item)
+				continue
+			}
+			key = updated
+			item.LocalUpdated = true
+			changed = true
+		}
+		if in.SyncProviderName {
+			if _, err := s.renameProviderKey(ctx, probeInput, key, group); err != nil {
+				item.Action = "failed"
+				item.ErrorCode = infraerrors.Reason(err)
+				item.ErrorMessage = infraerrors.Message(err)
+				result.Failed++
+				result.Items = append(result.Items, item)
+				continue
+			}
+			item.ProviderUpdated = true
+			changed = true
+		}
+		if changed {
+			item.Action = "updated"
+			result.Updated++
+		} else {
+			result.Skipped++
+		}
+		result.Items = append(result.Items, item)
+	}
+	return result, nil
 }
 
 func (s *Service) RepairBinding(ctx context.Context, in RepairBindingInput) (*ProvisionKeyResult, error) {
@@ -632,9 +785,7 @@ func (s *Service) normalizeProvisionInput(in ProvisionKeyInput) (ProvisionKeyInp
 	}
 	in.Name = name
 	in.LocalAccountPlatform = platform
-	if strings.TrimSpace(in.LocalAccountName) == "" {
-		in.LocalAccountName = name
-	} else {
+	if strings.TrimSpace(in.LocalAccountName) != "" {
 		in.LocalAccountName = trimLimit(in.LocalAccountName, 160)
 	}
 	in.LocalAccountBaseURL = baseURL
@@ -691,6 +842,42 @@ func (s *Service) normalizeEnsureAllInput(ctx context.Context, in EnsureAllInput
 	in.HealthStatus = healthStatus
 	in.BalanceCurrency = normalizeCurrency(in.BalanceCurrency)
 	return in, supplier, nil
+}
+
+func standardizableKeyStatus(status adminplusdomain.SupplierKeyStatus) bool {
+	switch status {
+	case adminplusdomain.SupplierKeyStatusProvisioning, adminplusdomain.SupplierKeyStatusBound, adminplusdomain.SupplierKeyStatusManualSecretRequired:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) renameProviderKey(ctx context.Context, input ports.SessionProbeInput, key *adminplusdomain.SupplierKey, group *adminplusdomain.SupplierGroup) (*ports.ProviderKeyResult, error) {
+	if s == nil || s.keyAdapter == nil {
+		return nil, internalError("supplier key provider adapter is not configured")
+	}
+	if key == nil || key.ID <= 0 {
+		return nil, badRequest("SUPPLIER_KEY_ID_INVALID", "invalid supplier key id")
+	}
+	if strings.TrimSpace(key.ExternalKeyID) == "" {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_EXTERNAL_ID_REQUIRED", "supplier key external id is required for provider rename")
+	}
+	target := providerStableKeyName(key, group)
+	if target == "" {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_PROVIDER_NAME_INVALID", "target provider key name is empty")
+	}
+	return s.keyAdapter.RenameKey(ctx, input, ports.RenameProviderKeyInput{
+		SupplierID:      key.SupplierID,
+		ExternalKeyID:   key.ExternalKeyID,
+		ExternalGroupID: firstNonEmpty(key.ExternalGroupID, groupExternalID(group)),
+		Name:            target,
+		Metadata: map[string]any{
+			"supplier_key_id":   key.ID,
+			"supplier_group_id": key.SupplierGroupID,
+			"provider_family":   providerFamilyForAlias(group),
+		},
+	})
 }
 
 func (s *Service) normalizeRepairBindingInput(in RepairBindingInput) (RepairBindingInput, error) {
@@ -1004,6 +1191,96 @@ func (s *Service) supplierAccountForLocalAccount(in ProvisionKeyInput, key *admi
 		CreatedAt:                 now,
 		UpdatedAt:                 now,
 	}
+}
+
+func standardKeyNameForGroup(supplier *adminplusdomain.Supplier, group *adminplusdomain.SupplierGroup, fallback string) string {
+	if group == nil {
+		return trimLimit(firstNonEmpty(fallback, "AdminPlus-key"), 160)
+	}
+	if strings.TrimSpace(group.StandardKeyName) != "" {
+		return trimLimit(group.StandardKeyName, 160)
+	}
+	naming := adminplusdomain.BuildSupplierGroupNaming(adminplusdomain.SupplierGroupNamingInput{
+		SupplierName:   supplierNameForNaming(supplier, group),
+		OfficialName:   firstNonEmpty(group.OfficialName, group.Name),
+		GroupName:      group.Name,
+		Description:    group.Description,
+		ProviderFamily: group.ProviderFamily,
+		RawPayload:     group.RawPayload,
+		RateMultiplier: effectiveGroupRate(group),
+	})
+	return trimLimit(firstNonEmpty(naming.StandardKeyName, fallback, "AdminPlus-key"), 160)
+}
+
+func supplierNameForNaming(supplier *adminplusdomain.Supplier, group *adminplusdomain.SupplierGroup) string {
+	if supplier != nil && strings.TrimSpace(supplier.Name) != "" {
+		return supplier.Name
+	}
+	if group != nil && group.SupplierID > 0 {
+		return "supplier-" + strconv.FormatInt(group.SupplierID, 10)
+	}
+	return "supplier"
+}
+
+func effectiveGroupRate(group *adminplusdomain.SupplierGroup) float64 {
+	if group == nil {
+		return 1
+	}
+	if group.EffectiveRateMultiplier > 0 {
+		return group.EffectiveRateMultiplier
+	}
+	if group.UserRateMultiplier != nil && *group.UserRateMultiplier > 0 {
+		return *group.UserRateMultiplier
+	}
+	if group.RateMultiplier > 0 {
+		return group.RateMultiplier
+	}
+	return 1
+}
+
+func providerStableKeyName(key *adminplusdomain.SupplierKey, group *adminplusdomain.SupplierGroup) string {
+	if key == nil || key.ID <= 0 {
+		return ""
+	}
+	alias := providerAliasPart(providerFamilyForAlias(group))
+	if alias == "" {
+		alias = "Model"
+	}
+	return trimLimit("#"+strconv.FormatInt(key.ID, 10)+"-"+alias, 80)
+}
+
+func providerFamilyForAlias(group *adminplusdomain.SupplierGroup) string {
+	if group == nil {
+		return ""
+	}
+	if strings.TrimSpace(group.ModelFamily) != "" {
+		return group.ModelFamily
+	}
+	naming := adminplusdomain.BuildSupplierGroupNaming(adminplusdomain.SupplierGroupNamingInput{
+		OfficialName:   firstNonEmpty(group.OfficialName, group.Name),
+		GroupName:      group.Name,
+		Description:    group.Description,
+		ProviderFamily: group.ProviderFamily,
+		RawPayload:     group.RawPayload,
+		RateMultiplier: effectiveGroupRate(group),
+	})
+	return firstNonEmpty(naming.ModelFamily, group.ProviderFamily, group.Name)
+}
+
+func providerAliasPart(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "/", "-")
+	value = strings.ReplaceAll(value, "\\", "-")
+	value = strings.Join(strings.Fields(value), "-")
+	value = strings.Trim(value, "-._")
+	return trimLimit(value, 40)
+}
+
+func groupExternalID(group *adminplusdomain.SupplierGroup) string {
+	if group == nil {
+		return ""
+	}
+	return group.ExternalGroupID
 }
 
 func mergeInt64IDs(existing []int64, ids ...int64) []int64 {

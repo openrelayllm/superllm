@@ -324,6 +324,8 @@ export interface LocalSub2APIAccount {
   concurrency: number
   priority: number
   rate_multiplier: number
+  group_ids?: number[]
+  group_names?: string[]
 }
 
 export interface LocalAccountTestModel {
@@ -398,6 +400,7 @@ export interface SupplierKey {
 export interface ProvisionSupplierKeyPayload {
   supplier_group_id: number
   name?: string
+  sync_provider_name?: boolean
   quota_usd?: number
   expires_in_days?: number | null
   local_account_platform?: string
@@ -420,6 +423,7 @@ export interface ProvisionSupplierKeyResponse {
 }
 
 export interface EnsureSupplierKeysPayload {
+  sync_provider_name?: boolean
   local_account_base_url?: string
   local_account_concurrency?: number
   local_account_priority?: number
@@ -454,6 +458,34 @@ export interface EnsureSupplierKeysResponse {
   local_groups_created: number
   local_accounts_bound: number
   items: EnsureSupplierKeyItem[]
+}
+
+export interface StandardizeSupplierKeyNameItem {
+  key_id: number
+  supplier_group_id: number
+  external_key_id?: string
+  local_name: string
+  target_local_name: string
+  target_provider_name?: string
+  local_updated?: boolean
+  provider_updated?: boolean
+  action: 'updated' | 'skipped' | 'failed'
+  error_code?: string
+  error_message?: string
+}
+
+export interface StandardizeSupplierKeyNamesResponse {
+  supplier_id: number
+  sync_provider_name: boolean
+  total: number
+  updated: number
+  skipped: number
+  failed: number
+  items: StandardizeSupplierKeyNameItem[]
+}
+
+export interface StandardizeSupplierKeyNamesPayload {
+  sync_provider_name?: boolean
 }
 
 export interface SupplierProvisionStep {
@@ -528,6 +560,10 @@ export interface SupplierGroup {
   name: string
   description: string
   provider_family: string
+  official_name?: string
+  model_family?: string
+  model_spec?: string
+  standard_key_name?: string
   rate_multiplier: number
   user_rate_multiplier?: number | null
   effective_rate_multiplier: number
@@ -540,6 +576,7 @@ export interface SupplierGroup {
   status: SupplierGroupStatus
   raw_payload?: Record<string, unknown>
   last_seen_at: string
+  naming_updated_at?: string | null
   created_at: string
   updated_at: string
 }
@@ -1134,6 +1171,13 @@ export async function ensureSupplierKeys(supplierId: number, payload?: EnsureSup
   return data
 }
 
+export async function standardizeSupplierKeyNames(supplierId: number, payload?: StandardizeSupplierKeyNamesPayload): Promise<StandardizeSupplierKeyNamesResponse> {
+  const { data } = await apiClient.post<StandardizeSupplierKeyNamesResponse>(`/admin-plus/suppliers/${supplierId}/keys/standardize-names`, payload || {}, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-key-standardize-names') }
+  })
+  return data
+}
+
 export async function repairSupplierKeyBinding(supplierId: number, keyId: number, payload: RepairSupplierKeyBindingPayload): Promise<ProvisionSupplierKeyResponse> {
   const { data } = await apiClient.post<ProvisionSupplierKeyResponse>(`/admin-plus/suppliers/${supplierId}/keys/${keyId}/repair-binding`, payload, {
     headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-key-repair') }
@@ -1456,6 +1500,7 @@ export const adminPlusAPI = {
   listSupplierKeys,
   ensureSupplierKeys,
   provisionSupplierKey,
+  standardizeSupplierKeyNames,
   repairSupplierKeyBinding,
   listLocalSub2APIAccounts,
   listLocalAccountTestModels,

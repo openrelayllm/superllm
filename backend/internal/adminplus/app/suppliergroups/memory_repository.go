@@ -3,6 +3,7 @@ package suppliergroups
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,10 @@ func NewMemoryRepository() *MemoryRepository {
 		nextID: 1,
 		items:  make(map[int64]*adminplusdomain.SupplierGroup),
 	}
+}
+
+func (r *MemoryRepository) GetSupplierName(_ context.Context, supplierID int64) (string, error) {
+	return "supplier-" + strconv.FormatInt(supplierID, 10), nil
 }
 
 func (r *MemoryRepository) UpsertMany(_ context.Context, supplierID int64, groups []*adminplusdomain.SupplierGroup, seenAt time.Time) ([]*adminplusdomain.SupplierGroup, error) {
@@ -79,7 +84,7 @@ func (r *MemoryRepository) List(_ context.Context, filter ListFilter) ([]*adminp
 			continue
 		}
 		if query != "" {
-			haystack := strings.ToLower(group.Name + " " + group.Description + " " + group.ProviderFamily + " " + group.ExternalGroupID)
+			haystack := strings.ToLower(group.Name + " " + group.Description + " " + group.ProviderFamily + " " + group.ExternalGroupID + " " + group.OfficialName + " " + group.ModelFamily + " " + group.ModelSpec + " " + group.StandardKeyName)
 			if !strings.Contains(haystack, query) {
 				continue
 			}

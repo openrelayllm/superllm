@@ -361,7 +361,7 @@ func fundingFromProvider(supplierID int64, providerType string, item ports.Provi
 	amountCents := nonNegative(item.AmountCents)
 	cashAmountCents := nonNegative(item.CashAmountCents)
 	refundAmountCents := nonNegative(item.RefundAmountCents)
-	rechargeMultiplier = normalizeRechargeMultiplier(rechargeMultiplier)
+	rechargeMultiplier = fundingRechargeMultiplier(amountCents, cashAmountCents, rechargeMultiplier)
 	return &adminplusdomain.SupplierFundingTransaction{
 		SupplierID:         supplierID,
 		ProviderType:       normalizeProviderType(providerType),
@@ -576,6 +576,18 @@ func normalizeRechargeMultiplier(value float64) float64 {
 		return 1
 	}
 	return value
+}
+
+func fundingRechargeMultiplier(amountCents int64, cashAmountCents int64, fallback float64) float64 {
+	amountCents = nonNegative(amountCents)
+	cashAmountCents = nonNegative(cashAmountCents)
+	if amountCents > 0 && cashAmountCents > 0 && amountCents > cashAmountCents {
+		multiplier := float64(amountCents) / float64(cashAmountCents)
+		if multiplier > 0 && !math.IsNaN(multiplier) && !math.IsInf(multiplier, 0) {
+			return multiplier
+		}
+	}
+	return normalizeRechargeMultiplier(fallback)
 }
 
 func actualPaymentCents(amountCents int64, cashAmountCents int64, rechargeMultiplier float64) int64 {
