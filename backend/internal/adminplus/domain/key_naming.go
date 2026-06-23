@@ -181,7 +181,7 @@ func compactDisplayToken(value string) string {
 		return ""
 	}
 	parts := strings.FieldsFunc(value, func(r rune) bool {
-		return !(unicode.IsLetter(r) || unicode.IsDigit(r))
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
 	out := make([]string, 0, len(parts))
 	for _, part := range parts {
