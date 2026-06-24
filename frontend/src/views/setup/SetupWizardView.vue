@@ -2,8 +2,7 @@
   <div
     class="flex min-h-screen items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 p-4 dark:from-dark-900 dark:to-dark-800"
   >
-    <div class="w-full max-w-2xl">
-      <!-- Logo & Title -->
+    <div class="w-full max-w-3xl">
       <div class="mb-8 text-center">
         <div
           class="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 shadow-lg"
@@ -14,8 +13,7 @@
         <p class="mt-2 text-gray-500 dark:text-dark-400">{{ t('setup.description') }}</p>
       </div>
 
-      <!-- Progress Steps -->
-      <div class="mb-8">
+      <div class="mb-8 overflow-x-auto pb-2">
         <div class="flex items-center justify-center">
           <template v-for="(step, index) in steps" :key="step.id">
             <div class="flex items-center">
@@ -38,7 +36,7 @@
                 <span v-else>{{ index + 1 }}</span>
               </div>
               <span
-                class="ml-2 text-sm font-medium"
+                class="ml-2 hidden text-sm font-medium sm:inline"
                 :class="
                   currentStep >= index
                     ? 'text-gray-900 dark:text-white'
@@ -50,16 +48,14 @@
             </div>
             <div
               v-if="index < steps.length - 1"
-              class="mx-3 h-0.5 w-12"
+              class="mx-2 h-0.5 w-8 sm:mx-3 sm:w-12"
               :class="currentStep > index ? 'bg-primary-500' : 'bg-gray-200 dark:bg-dark-700'"
             ></div>
           </template>
         </div>
       </div>
 
-      <!-- Step Content -->
       <div class="rounded-2xl bg-white p-8 shadow-xl dark:bg-dark-800">
-        <!-- Step 1: Database -->
         <div v-if="currentStep === 0" class="space-y-6">
           <div class="mb-6 text-center">
             <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
@@ -68,6 +64,18 @@
             <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
               {{ t('setup.database.description') }}
             </p>
+          </div>
+
+          <div class="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-left dark:border-amber-900/60 dark:bg-amber-950/30">
+            <Icon name="shield" size="md" class="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" :stroke-width="2" />
+            <div>
+              <p class="text-sm font-medium text-amber-900 dark:text-amber-100">
+                {{ t('setup.database.dedicatedWarningTitle') }}
+              </p>
+              <p class="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-200">
+                {{ t('setup.database.dedicatedWarningBody') }}
+              </p>
+            </div>
           </div>
 
           <div class="grid grid-cols-2 gap-4">
@@ -172,7 +180,6 @@
           </button>
         </div>
 
-        <!-- Step 2: Redis -->
         <div v-if="currentStep === 1" class="space-y-6">
           <div class="mb-6 text-center">
             <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
@@ -279,8 +286,103 @@
           </button>
         </div>
 
-        <!-- Step 3: Admin -->
         <div v-if="currentStep === 2" class="space-y-6">
+          <div class="mb-6 text-center">
+            <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
+              {{ t('setup.sub2api.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
+              {{ t('setup.sub2api.description') }}
+            </p>
+          </div>
+
+          <div class="flex gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-left dark:border-blue-900/60 dark:bg-blue-950/30">
+            <Icon name="infoCircle" size="md" class="mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" :stroke-width="2" />
+            <div>
+              <p class="text-sm font-medium text-blue-900 dark:text-blue-100">
+                {{ t('setup.sub2api.integrationTitle') }}
+              </p>
+              <p class="mt-1 text-xs leading-5 text-blue-800 dark:text-blue-200">
+                {{ t('setup.sub2api.integrationBody') }}
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <label class="input-label">{{ t('setup.sub2api.readonlyDatabaseUrl') }}</label>
+            <input
+              v-model="formData.sub2api.readonly_database_url"
+              type="password"
+              class="input"
+              placeholder="postgresql://readonly:password@127.0.0.1:5432/sub2api?sslmode=disable"
+              autocomplete="off"
+            />
+            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+              {{ t('setup.sub2api.readonlyDatabaseHint') }}
+            </p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="input-label">{{ t('setup.sub2api.readonlyRedisUrl') }}</label>
+              <input
+                v-model="formData.sub2api.readonly_redis_url"
+                type="password"
+                class="input"
+                placeholder="redis://127.0.0.1:6379/1"
+                autocomplete="off"
+              />
+            </div>
+            <div>
+              <label class="input-label">{{ t('setup.sub2api.readonlyRedisDb') }}</label>
+              <input
+                :value="formData.sub2api.readonly_redis_db ?? ''"
+                @input="updateSub2APIRedisDB"
+                type="number"
+                min="0"
+                max="15"
+                class="input"
+                placeholder="1"
+              />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="input-label">{{ t('setup.sub2api.adminBaseUrl') }}</label>
+              <input
+                v-model="formData.sub2api.admin_base_url"
+                type="url"
+                class="input"
+                placeholder="https://sub2api.example.com"
+              />
+            </div>
+            <div>
+              <label class="input-label">{{ t('setup.sub2api.adminApiKey') }}</label>
+              <input
+                v-model="formData.sub2api.admin_api_key"
+                type="password"
+                class="input"
+                :placeholder="t('setup.sub2api.adminApiKeyPlaceholder')"
+                autocomplete="off"
+              />
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between rounded-xl border border-gray-200 p-3 dark:border-dark-700">
+            <div>
+              <p class="text-sm font-medium text-gray-900 dark:text-white">
+                {{ t('setup.sub2api.allowEmbeddedGateway') }}
+              </p>
+              <p class="text-xs text-gray-500 dark:text-dark-400">
+                {{ t('setup.sub2api.allowEmbeddedGatewayHint') }}
+              </p>
+            </div>
+            <Toggle v-model="formData.sub2api.allow_embedded_gateway" />
+          </div>
+        </div>
+
+        <div v-if="currentStep === 3" class="space-y-6">
           <div class="mb-6 text-center">
             <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
               {{ t('setup.admin.title') }}
@@ -327,8 +429,7 @@
           </div>
         </div>
 
-        <!-- Step 4: Complete -->
-        <div v-if="currentStep === 3" class="space-y-6">
+        <div v-if="currentStep === finalStepIndex" class="space-y-6">
           <div class="mb-6 text-center">
             <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
               {{ t('setup.ready.title') }}
@@ -365,10 +466,22 @@
               </h3>
               <p class="text-gray-900 dark:text-white">{{ formData.admin.email }}</p>
             </div>
+
+            <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-700">
+              <h3 class="mb-2 text-sm font-medium text-gray-500 dark:text-dark-400">
+                {{ t('setup.ready.sub2api') }}
+              </h3>
+              <p class="text-gray-900 dark:text-white">
+                {{
+                  hasSub2APIIntegration
+                    ? t('setup.ready.sub2apiConfigured')
+                    : t('setup.ready.sub2apiSkipped')
+                }}
+              </p>
+            </div>
           </div>
         </div>
 
-        <!-- Error Message -->
         <div
           v-if="errorMessage"
           class="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-800/50 dark:bg-red-900/20"
@@ -379,7 +492,6 @@
           </div>
         </div>
 
-        <!-- Success Message -->
         <div
           v-if="installSuccess"
           class="mt-6 rounded-xl border border-green-200 bg-green-50 p-4 dark:border-green-800/50 dark:bg-green-900/20"
@@ -421,7 +533,6 @@
           </div>
         </div>
 
-        <!-- Navigation Buttons -->
         <div class="mt-8 flex justify-between">
           <button
             v-if="currentStep > 0 && !installSuccess"
@@ -434,7 +545,7 @@
           <div v-else></div>
 
           <button
-            v-if="currentStep < 3"
+            v-if="currentStep < finalStepIndex"
             @click="nextStep"
             :disabled="!canProceed"
             class="btn btn-primary"
@@ -490,9 +601,11 @@ const { t } = useI18n()
 const steps = computed(() => [
   { id: 'database', title: t('setup.database.title') },
   { id: 'redis', title: t('setup.redis.title') },
+  { id: 'sub2api', title: t('setup.sub2api.title') },
   { id: 'admin', title: t('setup.admin.title') },
   { id: 'complete', title: t('setup.ready.title') }
 ])
+const finalStepIndex = computed(() => steps.value.length - 1)
 
 const currentStep = ref(0)
 const errorMessage = ref('')
@@ -523,6 +636,14 @@ const formData = reactive<InstallRequest>({
     db: 1,
     enable_tls: false
   },
+  sub2api: {
+    readonly_database_url: '',
+    readonly_redis_url: '',
+    readonly_redis_db: null,
+    admin_base_url: '',
+    admin_api_key: '',
+    allow_embedded_gateway: false
+  },
   admin: {
     email: '',
     password: ''
@@ -541,6 +662,8 @@ const canProceed = computed(() => {
     case 1:
       return redisConnected.value
     case 2:
+      return true
+    case 3:
       return (
         formData.admin.email &&
         formData.admin.password.length >= 8 &&
@@ -549,6 +672,18 @@ const canProceed = computed(() => {
     default:
       return true
   }
+})
+
+const hasSub2APIIntegration = computed(() => {
+  const cfg = formData.sub2api
+  return Boolean(
+    cfg.readonly_database_url ||
+      cfg.readonly_redis_url ||
+      cfg.readonly_redis_db !== null ||
+      cfg.admin_base_url ||
+      cfg.admin_api_key ||
+      cfg.allow_embedded_gateway
+  )
 })
 
 async function testDatabaseConnection() {
@@ -597,7 +732,13 @@ async function performInstall() {
   errorMessage.value = ''
 
   try {
-    await install(formData)
+    await install({
+      ...formData,
+      sub2api: {
+        ...formData.sub2api,
+        readonly_redis_db: formData.sub2api.readonly_redis_db ?? null
+      }
+    })
     installSuccess.value = true
     // Start polling for service restart
     waitForServiceRestart()
@@ -608,6 +749,12 @@ async function performInstall() {
   } finally {
     installing.value = false
   }
+}
+
+function updateSub2APIRedisDB(event: Event) {
+  const value = (event.target as HTMLInputElement).value.trim()
+  const parsed = Number(value)
+  formData.sub2api.readonly_redis_db = value === '' || !Number.isFinite(parsed) ? null : parsed
 }
 
 // Wait for service to restart and become available

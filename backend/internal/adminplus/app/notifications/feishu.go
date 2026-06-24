@@ -8,12 +8,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 const (
@@ -80,7 +83,7 @@ func (f *Feishu) SendEvent(ctx context.Context, event Event) error {
 	err = f.sendPayload(ctx, payload)
 	if err != nil {
 		if delivery != nil && f.repo != nil {
-			_ = f.repo.MarkDeliveryFailed(ctx, delivery.ID, err.Error())
+			_ = f.repo.MarkDeliveryFailed(ctx, delivery.ID, deliveryErrorMessage(err))
 		}
 		return err
 	}
@@ -130,7 +133,8 @@ func (f *Feishu) sendPayload(ctx context.Context, payload map[string]any) error 
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("feishu webhook returned status %d", resp.StatusCode)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return feishuWebhookError(resp.StatusCode, string(raw))
 	}
 	return nil
 }
@@ -202,6 +206,66 @@ func normalizeThrottleKey(value string) string {
 	v = strings.Join(strings.Fields(v), "_")
 	if len(v) > 160 {
 		return v[:160]
+	}
+	return v
+}
+
+func feishuWebhookError(statusCode int, responseBody string) error {
+	message := fmt.Sprintf("飞书 Webhook 返回 HTTP %d", statusCode)
+	if hint := feishuStatusHint(statusCode); hint != "" {
+		message += "：" + hint
+	}
+	body := truncateWebhookResponse(responseBody)
+	if body != "" {
+		message += "；响应：" + body
+	}
+	httpStatus := http.StatusBadGateway
+	if statusCode >= 400 && statusCode < 500 {
+		httpStatus = http.StatusBadRequest
+	}
+	if statusCode == http.StatusTooManyRequests {
+		httpStatus = http.StatusTooManyRequests
+	}
+	if statusCode >= 500 {
+		httpStatus = http.StatusServiceUnavailable
+	}
+	return infraerrors.New(httpStatus, "FEISHU_WEBHOOK_FAILED", message).WithMetadata(map[string]string{
+		"upstream_status": strconv.Itoa(statusCode),
+	})
+}
+
+func feishuStatusHint(statusCode int) string {
+	switch statusCode {
+	case http.StatusBadRequest:
+		return "请求格式或签名参数不被飞书接受"
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "请检查机器人签名密钥或机器人权限"
+	case http.StatusNotFound:
+		return "请检查机器人 Webhook 地址是否完整、有效或已被删除"
+	case http.StatusTooManyRequests:
+		return "飞书限流，请稍后重试"
+	default:
+		if statusCode >= 500 {
+			return "飞书服务暂时不可用"
+		}
+		return ""
+	}
+}
+
+func deliveryErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	if message := infraerrors.Message(err); strings.TrimSpace(message) != "" && message != infraerrors.UnknownMessage {
+		return message
+	}
+	return err.Error()
+}
+
+func truncateWebhookResponse(value string) string {
+	v := strings.TrimSpace(value)
+	if len(v) > 300 {
+		return v[:300]
 	}
 	return v
 }

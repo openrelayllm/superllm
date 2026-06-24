@@ -14,6 +14,7 @@ import (
 	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
+	notificationsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	schedulerapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
@@ -58,6 +59,7 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 		&routeSurfaceKeyAdapter{},
 		&routeSurfaceLocalAccountCreator{},
 	)
+	notificationService := notificationsapp.NewService(notificationsapp.NewMemoryRepository())
 	handlers := &handler.Handlers{
 		Auth:    &handler.AuthHandler{},
 		Setting: &handler.SettingHandler{},
@@ -76,6 +78,7 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 			Balance:       adminplushandler.NewBalanceHandler(balancesapp.NewService(balancesapp.NewMemoryRepository())),
 			Announcement:  adminplushandler.NewAnnouncementHandler(announcementsapp.NewService(announcementsapp.NewMemoryRepository())),
 			Health:        adminplushandler.NewHealthHandler(healthapp.NewService(healthapp.NewMemoryRepository())),
+			Notification:  adminplushandler.NewNotificationHandler(notificationService),
 			UsageCost:     adminplushandler.NewUsageCostHandler(usagecostsapp.NewServiceWithDependencies(usagecostsapp.NewMemoryRepository(), sessionService, &routeSurfaceUsageCostReader{})),
 			Cost:          adminplushandler.NewCostHandler(costsapp.NewService(costsapp.NewMemoryRepository())),
 			ChannelCheck:  adminplushandler.NewChannelCheckHandler(channelchecksapp.NewService(nil, supplierService, sessionService, healthapp.NewService(healthapp.NewMemoryRepository()))),
@@ -179,6 +182,12 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin-plus/health/samples",
 		"GET /api/v1/admin-plus/health/events",
 		"PATCH /api/v1/admin-plus/health/events/:id/ack",
+		"GET /api/v1/admin-plus/notifications/center/status",
+		"GET /api/v1/admin-plus/notifications/settings",
+		"PUT /api/v1/admin-plus/notifications/settings",
+		"POST /api/v1/admin-plus/notifications/test",
+		"GET /api/v1/admin-plus/notifications/deliveries",
+		"POST /api/v1/admin-plus/notifications/deliveries/:id/retry",
 		"POST /api/v1/admin-plus/usage-costs/lines/import",
 		"GET /api/v1/admin-plus/usage-costs/lines",
 		"GET /api/v1/admin-plus/costs/ledger-overview",

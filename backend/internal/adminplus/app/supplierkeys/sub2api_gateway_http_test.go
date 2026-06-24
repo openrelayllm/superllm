@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -132,6 +133,32 @@ func TestShouldUseSub2APIHTTPGatewayFromEnvRequiresBothValues(t *testing.T) {
 	require.False(t, ShouldUseSub2APIHTTPGatewayFromEnv())
 	t.Setenv(sub2APIAdminAPIKeyEnv, "admin-secret")
 	require.True(t, ShouldUseSub2APIHTTPGatewayFromEnv())
+}
+
+func TestShouldUseSub2APIHTTPGatewayFromConfigRequiresBothValues(t *testing.T) {
+	require.False(t, ShouldUseSub2APIHTTPGatewayFromConfig(&config.Config{}))
+	require.False(t, ShouldUseSub2APIHTTPGatewayFromConfig(&config.Config{
+		AdminPlus: config.AdminPlusConfig{Sub2APIAdminBaseURL: "https://sub2api.example"},
+	}))
+	require.True(t, ShouldUseSub2APIHTTPGatewayFromConfig(&config.Config{
+		AdminPlus: config.AdminPlusConfig{
+			Sub2APIAdminBaseURL: "https://sub2api.example",
+			Sub2APIAdminAPIKey:  "admin-secret",
+		},
+	}))
+}
+
+func TestNewSub2APIHTTPGatewayFromConfigUsesConfigValues(t *testing.T) {
+	gateway, err := NewSub2APIHTTPGatewayFromConfig(&config.Config{
+		AdminPlus: config.AdminPlusConfig{
+			Sub2APIAdminBaseURL: "https://sub2api.example",
+			Sub2APIAdminAPIKey:  "admin-secret",
+		},
+	}, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "https://sub2api.example", gateway.baseURL)
+	require.Equal(t, "admin-secret", gateway.apiKey)
 }
 
 func writeSub2APISuccess(t *testing.T, w http.ResponseWriter, data any) {

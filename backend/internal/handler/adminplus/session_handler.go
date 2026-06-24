@@ -8,6 +8,7 @@ import (
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/gin-gonic/gin"
 )
@@ -175,13 +176,14 @@ func (h *SessionHandler) Login(c *gin.Context) {
 			SupplierID:               supplierID,
 			LowBalanceThresholdCents: req.LowBalanceThresholdCents,
 		})
-		if response.ErrorFrom(c, err) {
-			return
-		}
-		out["probe"] = result.Probe
-		if result.Snapshot != nil {
-			out["balance_snapshot"] = result.Snapshot
-			out["balance_event"] = result.Event
+		if err != nil {
+			out["balance_sync_error"] = sessionOperationErrorSummary(err)
+		} else if result != nil {
+			out["probe"] = result.Probe
+			if result.Snapshot != nil {
+				out["balance_snapshot"] = result.Snapshot
+				out["balance_event"] = result.Event
+			}
 		}
 	}
 	response.Success(c, out)
@@ -233,6 +235,34 @@ func parseOptionalSessionTime(raw string) *time.Time {
 		return nil
 	}
 	return &parsed
+}
+
+func sessionOperationErrorSummary(err error) gin.H {
+	if err == nil {
+		return gin.H{}
+	}
+	appErr := infraerrors.FromError(err)
+	out := gin.H{
+		"code":      infraerrors.Reason(err),
+		"message":   infraerrors.Message(err),
+		"raw_error": trimSessionString(err.Error(), 1200),
+	}
+	if appErr != nil {
+		out["code"] = appErr.Reason
+		out["message"] = appErr.Message
+		if len(appErr.Metadata) > 0 {
+			out["metadata"] = appErr.Metadata
+		}
+	}
+	return out
+}
+
+func trimSessionString(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit]
 }
 
 func sessionStringValue(values map[string]any, key string) string {

@@ -45,9 +45,19 @@ export interface ServerConfig {
   mode: string
 }
 
+export interface Sub2APIIntegrationConfig {
+  readonly_database_url: string
+  readonly_redis_url: string
+  readonly_redis_db?: number | null
+  admin_base_url: string
+  admin_api_key: string
+  allow_embedded_gateway: boolean
+}
+
 export interface InstallRequest {
   database: DatabaseConfig
   redis: RedisConfig
+  sub2api: Sub2APIIntegrationConfig
   admin: AdminConfig
   server: ServerConfig
 }

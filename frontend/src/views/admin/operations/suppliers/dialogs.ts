@@ -342,7 +342,11 @@ export function attachSupplierDialogs(ctx: any) {
     if (options.updateLastProbe) {
       lastProbe.value = result.probe || null
     }
-    appStore.showSuccess(result.probe ? `${options.successMessage}，已读取供应商余额` : options.successMessage)
+    if (result.balance_sync_error) {
+      appStore.showWarning(`${options.successMessage}，余额读取失败，已保留会话并交给调度中心重试`)
+    } else {
+      appStore.showSuccess(result.probe ? `${options.successMessage}，已读取供应商余额` : options.successMessage)
+    }
     return result
   }
 

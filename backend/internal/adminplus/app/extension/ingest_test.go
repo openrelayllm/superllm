@@ -3,7 +3,6 @@ package extension
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"testing"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 	usagecostsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -215,7 +213,7 @@ func TestCompleteTaskEncryptsCapturedSessionBundle(t *testing.T) {
 	require.Contains(t, latest.SessionBundleCiphertext, "encrypted:")
 }
 
-func TestCompleteTaskNormalizesNewAPIBrowserSessionAndSyncsBalance(t *testing.T) {
+func TestCompleteTaskNormalizesNewAPIBrowserSessionWithoutSyncingBalance(t *testing.T) {
 	sessionRepo := sessionsapp.NewMemoryRepository()
 	cipher := &recordingSessionCipher{}
 	sessionService := sessionsapp.NewService(sessionRepo, cipher)
@@ -282,17 +280,11 @@ func TestCompleteTaskNormalizesNewAPIBrowserSessionAndSyncsBalance(t *testing.T)
 	ingest, ok := completed.Result["ingest"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, true, ingest["session_captured"])
-	require.Equal(t, int64(1234500), ingest["balance_cents"])
-	require.Equal(t, "USD", ingest["balance_currency"])
-	require.Equal(t, 1, probe.calls)
-	require.Equal(t, int64(42), probe.lastInput.SupplierID)
-	require.Equal(t, "https://www.codexapis.com", probe.lastInput.APIBaseURL)
-	require.Equal(t, "new_api", probe.lastInput.Bundle["provider_type"])
-	require.Equal(t, "new_api", probe.lastInput.Bundle["system_type"])
-
-	headers, ok := probe.lastInput.Bundle["required_headers"].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "42", headers["New-Api-User"])
+	require.NotContains(t, ingest, "balance_cents")
+	require.NotContains(t, ingest, "balance_currency")
+	require.NotContains(t, ingest, "balance_probe")
+	require.NotContains(t, ingest, "balance_probe_error")
+	require.Equal(t, 0, probe.calls)
 
 	latest, err := sessionRepo.Get(context.Background(), 42)
 	require.NoError(t, err)
@@ -302,75 +294,12 @@ func TestCompleteTaskNormalizesNewAPIBrowserSessionAndSyncsBalance(t *testing.T)
 	var savedBundle map[string]any
 	require.NoError(t, json.Unmarshal([]byte(cipher.plaintext), &savedBundle))
 	require.Equal(t, "new_api", savedBundle["provider_type"])
+	require.Equal(t, "new_api", savedBundle["system_type"])
 	require.Equal(t, "New-Api-User", savedBundle["auth_header_name"])
 	require.Equal(t, "42", savedBundle["auth_header_value"])
-}
-
-func TestCompleteTaskKeepsCapturedSessionWhenBalanceProbeFails(t *testing.T) {
-	sessionRepo := sessionsapp.NewMemoryRepository()
-	sessionService := sessionsapp.NewService(sessionRepo, stubSessionCipher{})
-	probe := &failingSessionProbeAdapter{
-		err: infraerrors.New(http.StatusForbidden, "SUPPLIER_SESSION_PERMISSION_DENIED", "supplier session cannot access user profile"),
-	}
-	processor := NewIngestProcessorWithCipher(
-		ratesapp.NewService(newIngestRateRepository()),
-		balancesapp.NewServiceWithDependencies(balancesapp.NewMemoryRepository(), nil, sessionService, probe),
-		announcementsapp.NewService(announcementsapp.NewMemoryRepository()),
-		healthapp.NewService(healthapp.NewMemoryRepository()),
-		usagecostsapp.NewService(usagecostsapp.NewMemoryRepository()),
-		sessionService,
-		stubSessionCipher{},
-	)
-	svc := NewServiceWithResultProcessor(NewMemoryRepository(), processor)
-	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
-	svc.now = func() time.Time { return now }
-	svc.newToken = func() (string, error) { return "lease-token", nil }
-
-	task, err := svc.CreateLeasedTask(context.Background(), CreateLeasedTaskInput{
-		SupplierID: 7,
-		Type:       adminplusdomain.ExtensionTaskTypeCaptureSession,
-		DeviceID:   "chrome-1",
-		LeaseTTL:   time.Minute,
-	})
-	require.NoError(t, err)
-
-	completed, err := svc.CompleteTask(context.Background(), CompleteTaskInput{
-		TaskID:     task.ID,
-		DeviceID:   "chrome-1",
-		LeaseToken: "lease-token",
-		Result: map[string]any{
-			"source": "chrome",
-			"session_bundle": map[string]any{
-				"origin":      "https://relay.example.com",
-				"captured_at": "2026-06-20T10:00:00Z",
-				"tokens": map[string]any{
-					"access_token": "secret-access-token",
-				},
-				"context": map[string]any{
-					"api_base_url": "https://relay.example.com/api",
-				},
-			},
-		},
-	})
-
-	require.NoError(t, err)
-	require.Equal(t, adminplusdomain.ExtensionTaskStatusSucceeded, completed.Status)
-	require.Equal(t, 1, probe.calls)
-	require.NotContains(t, completed.Result, "session_bundle")
-	ingest, ok := completed.Result["ingest"].(map[string]any)
+	headers, ok := savedBundle["required_headers"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, true, ingest["session_captured"])
-	probeError, ok := ingest["balance_probe_error"].(string)
-	require.True(t, ok)
-	require.Contains(t, probeError, "SUPPLIER_SESSION_PERMISSION_DENIED")
-	require.Contains(t, probeError, "supplier session cannot access user profile")
-
-	latest, err := sessionRepo.Get(context.Background(), 7)
-	require.NoError(t, err)
-	require.Equal(t, int64(7), latest.SupplierID)
-	require.Equal(t, "https://relay.example.com", latest.Origin)
-	require.Equal(t, "https://relay.example.com/api", latest.APIBaseURL)
-	require.Equal(t, int64(task.ID), latest.SourceExtensionTaskID)
+	require.Equal(t, "42", headers["New-Api-User"])
 }
 
 type stubSessionCipher struct{}
@@ -394,16 +323,6 @@ func (c *recordingSessionCipher) Encrypt(plaintext string) (string, error) {
 
 func (c *recordingSessionCipher) Decrypt(ciphertext string) (string, error) {
 	return c.plaintext, nil
-}
-
-type failingSessionProbeAdapter struct {
-	err   error
-	calls int
-}
-
-func (a *failingSessionProbeAdapter) ProbeSub2APIUserProfile(_ context.Context, _ ports.SessionProbeInput) (*ports.SessionProbeResult, error) {
-	a.calls++
-	return nil, a.err
 }
 
 type recordingSessionProbe struct {

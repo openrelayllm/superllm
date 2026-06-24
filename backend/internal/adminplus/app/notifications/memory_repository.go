@@ -11,8 +11,9 @@ import (
 )
 
 type MemoryRepository struct {
-	items []*adminplusdomain.NotificationDelivery
-	next  int64
+	items    []*adminplusdomain.NotificationDelivery
+	next     int64
+	settings *adminplusdomain.NotificationSettings
 }
 
 func NewMemoryRepository() *MemoryRepository {
@@ -42,6 +43,18 @@ func (r *MemoryRepository) CreateDelivery(_ context.Context, delivery *adminplus
 	}
 	r.items = append(r.items, item)
 	return cloneDelivery(item), true, nil
+}
+
+func (r *MemoryRepository) GetDelivery(_ context.Context, id int64) (*adminplusdomain.NotificationDelivery, error) {
+	if r == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "NOTIFICATION_REPOSITORY_NOT_CONFIGURED", "notification repository is not configured")
+	}
+	for _, item := range r.items {
+		if item.ID == id {
+			return cloneDelivery(item), nil
+		}
+	}
+	return nil, infraerrors.New(http.StatusNotFound, "NOTIFICATION_DELIVERY_NOT_FOUND", "notification delivery not found")
 }
 
 func (r *MemoryRepository) ListDeliveries(_ context.Context, filter DeliveryFilter) ([]*adminplusdomain.NotificationDelivery, error) {
@@ -83,6 +96,42 @@ func (r *MemoryRepository) MarkDeliveryFailed(_ context.Context, id int64, messa
 	return r.updateStatus(id, adminplusdomain.NotificationStatusFailed, message)
 }
 
+func (r *MemoryRepository) IncrementDeliveryAttempt(_ context.Context, id int64) (*adminplusdomain.NotificationDelivery, error) {
+	if r == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "NOTIFICATION_REPOSITORY_NOT_CONFIGURED", "notification repository is not configured")
+	}
+	for _, item := range r.items {
+		if item.ID == id {
+			item.Attempts++
+			item.Status = adminplusdomain.NotificationStatusSending
+			item.LastError = ""
+			item.UpdatedAt = time.Now().UTC()
+			return cloneDelivery(item), nil
+		}
+	}
+	return nil, infraerrors.New(http.StatusNotFound, "NOTIFICATION_DELIVERY_NOT_FOUND", "notification delivery not found")
+}
+
+func (r *MemoryRepository) LoadSettings(_ context.Context) (*adminplusdomain.NotificationSettings, error) {
+	if r == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "NOTIFICATION_REPOSITORY_NOT_CONFIGURED", "notification repository is not configured")
+	}
+	if r.settings == nil {
+		return nil, nil
+	}
+	copied := cloneSettings(*r.settings)
+	return &copied, nil
+}
+
+func (r *MemoryRepository) SaveSettings(_ context.Context, settings adminplusdomain.NotificationSettings) error {
+	if r == nil {
+		return infraerrors.New(http.StatusInternalServerError, "NOTIFICATION_REPOSITORY_NOT_CONFIGURED", "notification repository is not configured")
+	}
+	copied := cloneSettings(settings)
+	r.settings = &copied
+	return nil
+}
+
 func (r *MemoryRepository) updateStatus(id int64, status adminplusdomain.NotificationStatus, message string) error {
 	for _, item := range r.items {
 		if item.ID == id {
@@ -97,6 +146,14 @@ func (r *MemoryRepository) updateStatus(id int64, status adminplusdomain.Notific
 		}
 	}
 	return infraerrors.New(http.StatusNotFound, "NOTIFICATION_DELIVERY_NOT_FOUND", "notification delivery not found")
+}
+
+func cloneSettings(in adminplusdomain.NotificationSettings) adminplusdomain.NotificationSettings {
+	out := in
+	if in.Rules != nil {
+		out.Rules = append([]adminplusdomain.NotificationRule{}, in.Rules...)
+	}
+	return out
 }
 
 func cloneDelivery(in *adminplusdomain.NotificationDelivery) *adminplusdomain.NotificationDelivery {

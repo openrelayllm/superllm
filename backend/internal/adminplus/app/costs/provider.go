@@ -9,9 +9,11 @@ import (
 
 var ProviderSet = wire.NewSet(
 	NewSQLRepository,
+	NewFeishuNotifier,
 	wire.Bind(new(Repository), new(*SQLRepository)),
+	wire.Bind(new(Notifier), new(*FeishuNotifier)),
 	wire.Bind(new(SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(UsageCostSyncer), new(*usagecostsapp.Service)),
 	wire.Bind(new(BalanceSyncer), new(*balancesapp.Service)),
-	NewServiceWithDependencies,
+	NewServiceWithDependenciesAndNotifier,
 )

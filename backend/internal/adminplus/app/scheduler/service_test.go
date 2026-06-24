@@ -925,6 +925,10 @@ func (r *fakeSchedulerRepository) ListSteps(_ context.Context, runID string, lim
 	return out, nil
 }
 
+func (r *fakeSchedulerRepository) ListAttempts(_ context.Context, _ string, _ int) ([]adminplusdomain.SchedulerAttemptRecord, error) {
+	return []adminplusdomain.SchedulerAttemptRecord{}, nil
+}
+
 func (r *fakeSchedulerRepository) RetryStep(_ context.Context, stepID int64, retryAt time.Time) (*adminplusdomain.SchedulerStepRecord, error) {
 	for idx := range r.steps {
 		if r.steps[idx].ID != stepID {

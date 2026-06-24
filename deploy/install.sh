@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# Sub2API Installation Script
-# Sub2API 安装脚本
-# Usage: curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install.sh | bash
+# Sub2API Admin Plus Installation Script
+# Sub2API Admin Plus 安装脚本
+# Usage: curl -sSL https://raw.githubusercontent.com/openrelayllm/sub2api-admin-plus/main/deploy/install.sh | bash
 #
 
 set -e
@@ -31,11 +31,18 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-GITHUB_REPO="Wei-Shaw/sub2api"
-INSTALL_DIR="/opt/sub2api"
-SERVICE_NAME="sub2api"
+GITHUB_REPO="openrelayllm/sub2api-admin-plus"
+INSTALL_DIR="/opt/sub2api-admin-plus"
+SERVICE_NAME="sub2api-admin-plus"
 SERVICE_USER="sub2api"
-CONFIG_DIR="/etc/sub2api"
+CONFIG_DIR="/etc/sub2api-admin-plus"
+BINARY_NAME="sub2api-admin-plus"
+ARCHIVE_BINARY_NAME="sub2api"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+LEGACY_INSTALL_DIR="/opt/sub2api"
+LEGACY_SERVICE_NAME="sub2api"
+LEGACY_BINARY_NAME="sub2api"
+LEGACY_SERVICE_FILE="/etc/systemd/system/${LEGACY_SERVICE_NAME}.service"
 
 # Server configuration (will be set by user)
 SERVER_HOST="0.0.0.0"
@@ -63,7 +70,7 @@ declare -A MSG_ZH=(
     ["enter_choice"]="请输入选择 (默认: 1)"
 
     # Installation
-    ["install_title"]="Sub2API 安装脚本"
+    ["install_title"]="Sub2API Admin Plus 安装脚本"
     ["run_as_root"]="请使用 root 权限运行 (使用 sudo)"
     ["detected_platform"]="检测到平台"
     ["unsupported_arch"]="不支持的架构"
@@ -91,16 +98,17 @@ declare -A MSG_ZH=(
     ["ready_for_setup"]="准备就绪，可以启动设置向导"
 
     # Completion
-    ["install_complete"]="Sub2API 安装完成！"
+    ["install_complete"]="Sub2API Admin Plus 安装完成！"
     ["install_dir"]="安装目录"
     ["next_steps"]="后续步骤"
     ["step1_check_services"]="确保 PostgreSQL 和 Redis 正在运行："
-    ["step2_start_service"]="启动 Sub2API 服务："
+    ["step2_start_service"]="启动 Sub2API Admin Plus 服务："
     ["step3_enable_autostart"]="设置开机自启："
     ["step4_open_wizard"]="在浏览器中打开设置向导："
     ["wizard_guide"]="设置向导将引导您完成："
     ["wizard_db"]="数据库配置"
     ["wizard_redis"]="Redis 配置"
+    ["wizard_sub2api"]="Sub2API 集成配置"
     ["wizard_admin"]="管理员账号创建"
     ["useful_commands"]="常用命令"
     ["cmd_status"]="查看状态"
@@ -109,7 +117,7 @@ declare -A MSG_ZH=(
     ["cmd_stop"]="停止服务"
 
     # Upgrade
-    ["upgrading"]="正在升级 Sub2API..."
+    ["upgrading"]="正在升级 Sub2API Admin Plus..."
     ["current_version"]="当前版本"
     ["stopping_service"]="正在停止服务..."
     ["backup_created"]="备份已创建"
@@ -125,11 +133,11 @@ declare -A MSG_ZH=(
     ["validating_version"]="正在验证版本..."
     ["available_versions"]="可用版本列表"
     ["fetching_versions"]="正在获取可用版本..."
-    ["not_installed"]="Sub2API 尚未安装，请先执行全新安装"
+    ["not_installed"]="Sub2API Admin Plus 尚未安装，请先执行全新安装"
     ["fresh_install_hint"]="用法"
 
     # Uninstall
-    ["uninstall_confirm"]="这将从系统中移除 Sub2API。"
+    ["uninstall_confirm"]="这将从系统中移除 Sub2API Admin Plus。"
     ["are_you_sure"]="确定要继续吗？(y/N)"
     ["uninstall_cancelled"]="卸载已取消"
     ["removing_files"]="正在移除文件..."
@@ -141,21 +149,21 @@ declare -A MSG_ZH=(
     ["install_lock_removed"]="安装锁文件已移除，重新安装时将进入设置向导"
     ["purge_prompt"]="是否同时删除配置目录？这将清除所有配置和数据 [y/N]: "
     ["removing_config_dir"]="正在移除配置目录..."
-    ["uninstall_complete"]="Sub2API 已卸载"
+    ["uninstall_complete"]="Sub2API Admin Plus 已卸载"
 
     # Help
     ["usage"]="用法"
     ["cmd_none"]="(无参数)"
-    ["cmd_install"]="安装 Sub2API"
+    ["cmd_install"]="安装 Sub2API Admin Plus"
     ["cmd_upgrade"]="升级到最新版本"
-    ["cmd_uninstall"]="卸载 Sub2API"
+    ["cmd_uninstall"]="卸载 Sub2API Admin Plus"
     ["cmd_install_version"]="安装/回退到指定版本"
     ["cmd_list_versions"]="列出可用版本"
     ["opt_version"]="指定要安装的版本号 (例如: v1.0.0)"
 
     # Server configuration
     ["server_config_title"]="服务器配置"
-    ["server_config_desc"]="配置 Sub2API 服务监听地址"
+    ["server_config_desc"]="配置 Sub2API Admin Plus 服务监听地址"
     ["server_host_prompt"]="服务器监听地址"
     ["server_host_hint"]="0.0.0.0 表示监听所有网卡，127.0.0.1 仅本地访问"
     ["server_port_prompt"]="服务器端口"
@@ -188,7 +196,7 @@ declare -A MSG_EN=(
     ["enter_choice"]="Enter your choice (default: 1)"
 
     # Installation
-    ["install_title"]="Sub2API Installation Script"
+    ["install_title"]="Sub2API Admin Plus Installation Script"
     ["run_as_root"]="Please run as root (use sudo)"
     ["detected_platform"]="Detected platform"
     ["unsupported_arch"]="Unsupported architecture"
@@ -216,16 +224,17 @@ declare -A MSG_EN=(
     ["ready_for_setup"]="Ready for Setup Wizard"
 
     # Completion
-    ["install_complete"]="Sub2API installation completed!"
+    ["install_complete"]="Sub2API Admin Plus installation completed!"
     ["install_dir"]="Installation directory"
     ["next_steps"]="NEXT STEPS"
     ["step1_check_services"]="Make sure PostgreSQL and Redis are running:"
-    ["step2_start_service"]="Start Sub2API service:"
+    ["step2_start_service"]="Start Sub2API Admin Plus service:"
     ["step3_enable_autostart"]="Enable auto-start on boot:"
     ["step4_open_wizard"]="Open the Setup Wizard in your browser:"
     ["wizard_guide"]="The Setup Wizard will guide you through:"
     ["wizard_db"]="Database configuration"
     ["wizard_redis"]="Redis configuration"
+    ["wizard_sub2api"]="Sub2API integration configuration"
     ["wizard_admin"]="Admin account creation"
     ["useful_commands"]="USEFUL COMMANDS"
     ["cmd_status"]="Check status"
@@ -234,7 +243,7 @@ declare -A MSG_EN=(
     ["cmd_stop"]="Stop"
 
     # Upgrade
-    ["upgrading"]="Upgrading Sub2API..."
+    ["upgrading"]="Upgrading Sub2API Admin Plus..."
     ["current_version"]="Current version"
     ["stopping_service"]="Stopping service..."
     ["backup_created"]="Backup created"
@@ -250,11 +259,11 @@ declare -A MSG_EN=(
     ["validating_version"]="Validating version..."
     ["available_versions"]="Available versions"
     ["fetching_versions"]="Fetching available versions..."
-    ["not_installed"]="Sub2API is not installed. Please run a fresh install first"
+    ["not_installed"]="Sub2API Admin Plus is not installed. Please run a fresh install first"
     ["fresh_install_hint"]="Usage"
 
     # Uninstall
-    ["uninstall_confirm"]="This will remove Sub2API from your system."
+    ["uninstall_confirm"]="This will remove Sub2API Admin Plus from your system."
     ["are_you_sure"]="Are you sure? (y/N)"
     ["uninstall_cancelled"]="Uninstall cancelled"
     ["removing_files"]="Removing files..."
@@ -266,21 +275,21 @@ declare -A MSG_EN=(
     ["install_lock_removed"]="Install lock removed. Setup wizard will appear on next install."
     ["purge_prompt"]="Also remove config directory? This will delete all config and data [y/N]: "
     ["removing_config_dir"]="Removing config directory..."
-    ["uninstall_complete"]="Sub2API has been uninstalled"
+    ["uninstall_complete"]="Sub2API Admin Plus has been uninstalled"
 
     # Help
     ["usage"]="Usage"
     ["cmd_none"]="(none)"
-    ["cmd_install"]="Install Sub2API"
+    ["cmd_install"]="Install Sub2API Admin Plus"
     ["cmd_upgrade"]="Upgrade to the latest version"
-    ["cmd_uninstall"]="Remove Sub2API"
+    ["cmd_uninstall"]="Remove Sub2API Admin Plus"
     ["cmd_install_version"]="Install/rollback to a specific version"
     ["cmd_list_versions"]="List available versions"
     ["opt_version"]="Specify version to install (e.g., v1.0.0)"
 
     # Server configuration
     ["server_config_title"]="Server Configuration"
-    ["server_config_desc"]="Configure Sub2API server listen address"
+    ["server_config_desc"]="Configure Sub2API Admin Plus server listen address"
     ["server_host_prompt"]="Server listen address"
     ["server_host_hint"]="0.0.0.0 listens on all interfaces, 127.0.0.1 for local only"
     ["server_port_prompt"]="Server port"
@@ -329,7 +338,12 @@ print_error() {
 # When piped (curl | bash), stdin is not a terminal, but /dev/tty may still be available
 is_interactive() {
     # Check if /dev/tty is available (works even when piped)
-    [ -e /dev/tty ] && [ -r /dev/tty ] && [ -w /dev/tty ]
+    [ -t 0 ] || {
+        [ -e /dev/tty ] &&
+            [ -r /dev/tty ] &&
+            [ -w /dev/tty ] &&
+            ( : < /dev/tty > /dev/tty ) 2>/dev/null
+    }
 }
 
 # Select language
@@ -417,6 +431,27 @@ configure_server() {
     echo ""
 }
 
+load_existing_server_config() {
+    local existing_host
+    local existing_port
+    local candidate
+    for candidate in "$SERVICE_FILE" "$LEGACY_SERVICE_FILE"; do
+        if [ ! -f "$candidate" ]; then
+            continue
+        fi
+        existing_host=$(grep -E '^Environment=SERVER_HOST=' "$candidate" | tail -1 | sed 's/^Environment=SERVER_HOST=//' || true)
+        existing_port=$(grep -E '^Environment=SERVER_PORT=' "$candidate" | tail -1 | sed 's/^Environment=SERVER_PORT=//' || true)
+        break
+    done
+
+    if [ -n "$existing_host" ]; then
+        SERVER_HOST="$existing_host"
+    fi
+    if validate_port "$existing_port"; then
+        SERVER_PORT="$existing_port"
+    fi
+}
+
 # Check if running as root
 check_root() {
     # Use 'id -u' instead of $EUID for better compatibility
@@ -449,9 +484,6 @@ detect_platform() {
         linux)
             OS="linux"
             ;;
-        darwin)
-            OS="darwin"
-            ;;
         *)
             print_error "$(msg 'unsupported_os'): $OS"
             exit 1
@@ -471,6 +503,10 @@ check_dependencies() {
 
     if ! command -v tar &> /dev/null; then
         missing+=("tar")
+    fi
+
+    if ! command -v sha256sum &> /dev/null; then
+        missing+=("sha256sum")
     fi
 
     if [ ${#missing[@]} -gt 0 ]; then
@@ -555,11 +591,28 @@ validate_version() {
     echo "$version"
 }
 
+current_binary_path() {
+    if [ -f "$INSTALL_DIR/$BINARY_NAME" ]; then
+        echo "$INSTALL_DIR/$BINARY_NAME"
+        return 0
+    fi
+    if [ -f "$LEGACY_INSTALL_DIR/$LEGACY_BINARY_NAME" ]; then
+        echo "$LEGACY_INSTALL_DIR/$LEGACY_BINARY_NAME"
+        return 0
+    fi
+    return 1
+}
+
+is_installed() {
+    current_binary_path >/dev/null 2>&1
+}
+
 # Get current installed version
 get_current_version() {
-    if [ -f "$INSTALL_DIR/sub2api" ]; then
+    local binary_path
+    if binary_path=$(current_binary_path); then
         # Use grep -E for better compatibility (works on macOS and Linux)
-        "$INSTALL_DIR/sub2api" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
+        "$binary_path" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
     else
         echo "not_installed"
     fi
@@ -568,7 +621,7 @@ get_current_version() {
 # Download and extract
 download_and_extract() {
     local version_num=${LATEST_VERSION#v}
-    local archive_name="sub2api_${version_num}_${OS}_${ARCH}.tar.gz"
+    local archive_name="sub2api-admin-plus_${version_num}_${OS}_${ARCH}.tar.gz"
     local download_url="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_VERSION}/${archive_name}"
     local checksum_url="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_VERSION}/checksums.txt"
 
@@ -604,20 +657,28 @@ download_and_extract() {
     # Extract
     print_info "$(msg 'extracting')"
     tar -xzf "$TEMP_DIR/$archive_name" -C "$TEMP_DIR"
+    local extracted_dir="$TEMP_DIR/${archive_name%.tar.gz}"
+    if [ ! -d "$extracted_dir" ]; then
+        extracted_dir="$TEMP_DIR"
+    fi
 
     # Create install directory
     mkdir -p "$INSTALL_DIR"
 
     # Copy binary
-    cp "$TEMP_DIR/sub2api" "$INSTALL_DIR/sub2api"
-    chmod +x "$INSTALL_DIR/sub2api"
+    if [ ! -f "$extracted_dir/$ARCHIVE_BINARY_NAME" ]; then
+        print_error "Release archive does not contain expected binary: $ARCHIVE_BINARY_NAME"
+        exit 1
+    fi
+    cp "$extracted_dir/$ARCHIVE_BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+    chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
     # Copy deploy files if they exist in the archive
-    if [ -d "$TEMP_DIR/deploy" ]; then
-        cp -r "$TEMP_DIR/deploy/"* "$INSTALL_DIR/" 2>/dev/null || true
+    if [ -d "$extracted_dir/deploy" ]; then
+        cp -r "$extracted_dir/deploy/"* "$INSTALL_DIR/" 2>/dev/null || true
     fi
 
-    print_success "$(msg 'binary_installed') $INSTALL_DIR/sub2api"
+    print_success "$(msg 'binary_installed') $INSTALL_DIR/$BINARY_NAME"
 }
 
 # Create system user
@@ -662,39 +723,82 @@ setup_directories() {
     print_success "$(msg 'dirs_configured')"
 }
 
+migrate_legacy_config() {
+    local migrated=false
+    local candidate
+
+    if [ ! -f "$CONFIG_DIR/config.yaml" ]; then
+        for candidate in \
+            "$LEGACY_INSTALL_DIR/config.yaml" \
+            "$LEGACY_INSTALL_DIR/data/config.yaml" \
+            "/etc/sub2api/config.yaml"
+        do
+            if [ -f "$candidate" ]; then
+                cp "$candidate" "$CONFIG_DIR/config.yaml"
+                chmod 600 "$CONFIG_DIR/config.yaml"
+                print_info "Migrated config: $candidate -> $CONFIG_DIR/config.yaml"
+                migrated=true
+                break
+            fi
+        done
+    fi
+
+    if [ ! -f "$CONFIG_DIR/.installed" ]; then
+        for candidate in \
+            "$LEGACY_INSTALL_DIR/.installed" \
+            "$LEGACY_INSTALL_DIR/data/.installed" \
+            "/etc/sub2api/.installed"
+        do
+            if [ -f "$candidate" ]; then
+                cp "$candidate" "$CONFIG_DIR/.installed"
+                chmod 400 "$CONFIG_DIR/.installed"
+                print_info "Migrated install lock: $candidate -> $CONFIG_DIR/.installed"
+                migrated=true
+                break
+            fi
+        done
+    fi
+
+    if [ "$migrated" = true ]; then
+        chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR"
+    fi
+}
+
 # Install systemd service
 install_service() {
     print_info "$(msg 'installing_service')"
 
     # Create service file with configured host and port
-    cat > /etc/systemd/system/sub2api.service << EOF
+    cat > "$SERVICE_FILE" << EOF
 [Unit]
-Description=Sub2API - AI API Gateway Platform
-Documentation=https://github.com/Wei-Shaw/sub2api
+Description=Sub2API Admin Plus - operations automation extension
+Documentation=https://github.com/${GITHUB_REPO}
 After=network.target postgresql.service redis.service
 Wants=postgresql.service redis.service
 
 [Service]
 Type=simple
-User=sub2api
-Group=sub2api
-WorkingDirectory=/opt/sub2api
-ExecStart=/opt/sub2api/sub2api
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+WorkingDirectory=${INSTALL_DIR}
+ExecStart=${INSTALL_DIR}/${BINARY_NAME}
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=sub2api
+SyslogIdentifier=${SERVICE_NAME}
 
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/opt/sub2api
+ReadWritePaths=${INSTALL_DIR}
+ReadWritePaths=${CONFIG_DIR}
 
 # Environment - Server configuration
 Environment=GIN_MODE=release
+Environment=DATA_DIR=${CONFIG_DIR}
 Environment=SERVER_HOST=${SERVER_HOST}
 Environment=SERVER_PORT=${SERVER_PORT}
 
@@ -706,6 +810,24 @@ EOF
     systemctl daemon-reload
 
     print_success "$(msg 'service_installed')"
+}
+
+stop_existing_services() {
+    local service
+    for service in "$SERVICE_NAME" "$LEGACY_SERVICE_NAME"; do
+        if systemctl is-active --quiet "$service"; then
+            print_info "$(msg 'stopping_service') $service"
+            systemctl stop "$service"
+        fi
+    done
+}
+
+disable_legacy_service() {
+    if [ -f "$LEGACY_SERVICE_FILE" ]; then
+        systemctl disable "$LEGACY_SERVICE_NAME" 2>/dev/null || true
+        print_warning "Legacy service disabled: $LEGACY_SERVICE_NAME"
+        print_warning "Legacy files kept for manual rollback: $LEGACY_INSTALL_DIR"
+    fi
 }
 
 # Prepare for setup wizard (no config file needed - setup wizard will create it)
@@ -740,12 +862,12 @@ get_public_ip() {
 start_service() {
     print_info "$(msg 'starting_service')"
 
-    if systemctl start sub2api; then
+    if systemctl start "$SERVICE_NAME"; then
         print_success "$(msg 'service_started')"
         return 0
     else
         print_error "$(msg 'service_start_failed')"
-        print_info "sudo journalctl -u sub2api -n 50"
+        print_info "sudo journalctl -u $SERVICE_NAME -n 50"
         return 1
     fi
 }
@@ -754,7 +876,7 @@ start_service() {
 enable_autostart() {
     print_info "$(msg 'enabling_autostart')"
 
-    if systemctl enable sub2api 2>/dev/null; then
+    if systemctl enable "$SERVICE_NAME" 2>/dev/null; then
         print_success "$(msg 'autostart_enabled')"
         return 0
     else
@@ -789,16 +911,17 @@ print_completion() {
     echo "     $(msg 'wizard_guide')"
     echo "     - $(msg 'wizard_db')"
     echo "     - $(msg 'wizard_redis')"
+    echo "     - $(msg 'wizard_sub2api')"
     echo "     - $(msg 'wizard_admin')"
     echo ""
     echo "=============================================="
     echo "  $(msg 'useful_commands')"
     echo "=============================================="
     echo ""
-    echo "  $(msg 'cmd_status'):   sudo systemctl status sub2api"
-    echo "  $(msg 'cmd_logs'):     sudo journalctl -u sub2api -f"
-    echo "  $(msg 'cmd_restart'):  sudo systemctl restart sub2api"
-    echo "  $(msg 'cmd_stop'):     sudo systemctl stop sub2api"
+    echo "  $(msg 'cmd_status'):   sudo systemctl status $SERVICE_NAME"
+    echo "  $(msg 'cmd_logs'):     sudo journalctl -u $SERVICE_NAME -f"
+    echo "  $(msg 'cmd_restart'):  sudo systemctl restart $SERVICE_NAME"
+    echo "  $(msg 'cmd_stop'):     sudo systemctl stop $SERVICE_NAME"
     echo ""
     echo "=============================================="
 }
@@ -806,38 +929,42 @@ print_completion() {
 # Upgrade function
 upgrade() {
     # Check if Sub2API is installed
-    if [ ! -f "$INSTALL_DIR/sub2api" ]; then
+    if ! is_installed; then
         print_error "$(msg 'not_installed')"
         print_info "$(msg 'fresh_install_hint'): $0 install"
         exit 1
     fi
 
     print_info "$(msg 'upgrading')"
+    load_existing_server_config
 
     # Get current version
-    CURRENT_VERSION=$("$INSTALL_DIR/sub2api" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
+    CURRENT_VERSION=$(get_current_version)
     print_info "$(msg 'current_version'): $CURRENT_VERSION"
 
-    # Stop service
-    if systemctl is-active --quiet sub2api; then
-        print_info "$(msg 'stopping_service')"
-        systemctl stop sub2api
-    fi
+    stop_existing_services
 
     # Backup current binary
-    cp "$INSTALL_DIR/sub2api" "$INSTALL_DIR/sub2api.backup"
-    print_info "$(msg 'backup_created'): $INSTALL_DIR/sub2api.backup"
+    local current_binary
+    current_binary=$(current_binary_path)
+    cp "$current_binary" "$current_binary.backup"
+    print_info "$(msg 'backup_created'): $current_binary.backup"
 
     # Download and install new version
     get_latest_version
     download_and_extract
 
     # Set permissions
-    chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/sub2api"
+    create_user
+    setup_directories
+    migrate_legacy_config
+    chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/$BINARY_NAME"
+    install_service
+    disable_legacy_service
 
     # Start service
     print_info "$(msg 'starting_service')"
-    systemctl start sub2api
+    systemctl start "$SERVICE_NAME"
 
     print_success "$(msg 'upgrade_complete')"
 }
@@ -848,7 +975,7 @@ install_version() {
     local target_version="$1"
 
     # Check if Sub2API is installed
-    if [ ! -f "$INSTALL_DIR/sub2api" ]; then
+    if ! is_installed; then
         print_error "$(msg 'not_installed')"
         print_info "$(msg 'fresh_install_hint'): $0 install -v $target_version"
         exit 1
@@ -858,6 +985,7 @@ install_version() {
     target_version=$(validate_version "$target_version")
 
     print_info "$(msg 'installing_version'): $target_version"
+    load_existing_server_config
 
     # Get current version
     local current_version
@@ -870,22 +998,19 @@ install_version() {
         exit 0
     fi
 
-    # Stop service if running
-    if systemctl is-active --quiet sub2api; then
-        print_info "$(msg 'stopping_service')"
-        systemctl stop sub2api
-    fi
+    stop_existing_services
 
     # Backup current binary (for potential recovery)
-    if [ -f "$INSTALL_DIR/sub2api" ]; then
-        local backup_name
+    local current_binary
+    if current_binary=$(current_binary_path); then
+        local backup_path
         if [ "$current_version" != "unknown" ] && [ "$current_version" != "not_installed" ]; then
-            backup_name="sub2api.backup.${current_version}"
+            backup_path="$current_binary.backup.${current_version}"
         else
-            backup_name="sub2api.backup.$(date +%Y%m%d%H%M%S)"
+            backup_path="$current_binary.backup.$(date +%Y%m%d%H%M%S)"
         fi
-        cp "$INSTALL_DIR/sub2api" "$INSTALL_DIR/$backup_name"
-        print_info "$(msg 'backup_created'): $INSTALL_DIR/$backup_name"
+        cp "$current_binary" "$backup_path"
+        print_info "$(msg 'backup_created'): $backup_path"
     fi
 
     # Set LATEST_VERSION to the target version for download_and_extract
@@ -895,15 +1020,20 @@ install_version() {
     download_and_extract
 
     # Set permissions
-    chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/sub2api"
+    create_user
+    setup_directories
+    migrate_legacy_config
+    chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/$BINARY_NAME"
+    install_service
+    disable_legacy_service
 
     # Start service
     print_info "$(msg 'starting_service')"
-    if systemctl start sub2api; then
+    if systemctl start "$SERVICE_NAME"; then
         print_success "$(msg 'service_started')"
     else
         print_error "$(msg 'service_start_failed')"
-        print_info "sudo journalctl -u sub2api -n 50"
+        print_info "sudo journalctl -u $SERVICE_NAME -n 50"
     fi
 
     # Print completion message
@@ -938,11 +1068,11 @@ uninstall() {
     fi
 
     print_info "$(msg 'stopping_service')"
-    systemctl stop sub2api 2>/dev/null || true
-    systemctl disable sub2api 2>/dev/null || true
+    systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+    systemctl disable "$SERVICE_NAME" 2>/dev/null || true
 
     print_info "$(msg 'removing_files')"
-    rm -f /etc/systemd/system/sub2api.service
+    rm -f "$SERVICE_FILE"
     systemctl daemon-reload
 
     print_info "$(msg 'removing_install_dir')"
@@ -1054,7 +1184,7 @@ main() {
             check_dependencies
             if [ -n "$target_version" ]; then
                 # Install specific version (fresh install or rollback)
-                if [ -f "$INSTALL_DIR/sub2api" ]; then
+                if is_installed; then
                     # Already installed, treat as version change
                     install_version "$target_version"
                 else
@@ -1072,18 +1202,22 @@ main() {
                     print_completion
                 fi
             else
-                # Fresh install with latest version
-                configure_server
-                get_latest_version
-                download_and_extract
-                create_user
-                setup_directories
-                install_service
-                prepare_for_setup
-                get_public_ip
-                start_service
-                enable_autostart
-                print_completion
+                if is_installed; then
+                    upgrade
+                else
+                    # Fresh install with latest version
+                    configure_server
+                    get_latest_version
+                    download_and_extract
+                    create_user
+                    setup_directories
+                    install_service
+                    prepare_for_setup
+                    get_public_ip
+                    start_service
+                    enable_autostart
+                    print_completion
+                fi
             fi
             exit 0
             ;;
@@ -1133,10 +1267,10 @@ main() {
             echo ""
             echo "Examples:"
             echo "  $0                        # Install latest version"
-            echo "  $0 install -v v0.3.0      # Install specific version"
+            echo "  $0 install -v v0.11.1     # Install specific version"
             echo "  $0 upgrade                # Upgrade to latest"
-            echo "  $0 upgrade -v v0.3.0      # Upgrade to specific version"
-            echo "  $0 rollback v0.3.0        # Rollback to v0.3.0"
+            echo "  $0 upgrade -v v0.11.1     # Upgrade to specific version"
+            echo "  $0 rollback v0.11.1       # Rollback to v0.11.1"
             echo "  $0 list-versions          # List available versions"
             echo ""
             exit 0
@@ -1150,7 +1284,7 @@ main() {
 
     if [ -n "$target_version" ]; then
         # Install specific version
-        if [ -f "$INSTALL_DIR/sub2api" ]; then
+        if is_installed; then
             install_version "$target_version"
         else
             configure_server
@@ -1166,18 +1300,22 @@ main() {
             print_completion
         fi
     else
-        # Install latest version
-        configure_server
-        get_latest_version
-        download_and_extract
-        create_user
-        setup_directories
-        install_service
-        prepare_for_setup
-        get_public_ip
-        start_service
-        enable_autostart
-        print_completion
+        if is_installed; then
+            upgrade
+        else
+            # Install latest version
+            configure_server
+            get_latest_version
+            download_and_extract
+            create_user
+            setup_directories
+            install_service
+            prepare_for_setup
+            get_public_ip
+            start_service
+            enable_autostart
+            print_completion
+        fi
     fi
 }
 

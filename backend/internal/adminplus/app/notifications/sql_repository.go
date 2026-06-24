@@ -16,9 +16,13 @@ import (
 
 type Repository interface {
 	CreateDelivery(ctx context.Context, delivery *adminplusdomain.NotificationDelivery) (*adminplusdomain.NotificationDelivery, bool, error)
+	GetDelivery(ctx context.Context, id int64) (*adminplusdomain.NotificationDelivery, error)
 	ListDeliveries(ctx context.Context, filter DeliveryFilter) ([]*adminplusdomain.NotificationDelivery, error)
 	MarkDeliverySucceeded(ctx context.Context, id int64) error
 	MarkDeliveryFailed(ctx context.Context, id int64, message string) error
+	IncrementDeliveryAttempt(ctx context.Context, id int64) (*adminplusdomain.NotificationDelivery, error)
+	LoadSettings(ctx context.Context) (*adminplusdomain.NotificationSettings, error)
+	SaveSettings(ctx context.Context, settings adminplusdomain.NotificationSettings) error
 }
 
 type DeliveryFilter struct {
@@ -45,6 +49,10 @@ func (r *SQLRepository) CreateDelivery(ctx context.Context, delivery *adminplusd
 	if err != nil {
 		return nil, false, err
 	}
+	status := delivery.Status
+	if status == "" {
+		status = adminplusdomain.NotificationStatusSending
+	}
 	row := r.db.QueryRowContext(ctx, `
 		INSERT INTO admin_plus_notification_deliveries (
 			channel,
@@ -57,7 +65,7 @@ func (r *SQLRepository) CreateDelivery(ctx context.Context, delivery *adminplusd
 			last_error,
 			payload
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 1, '', $7)
+		VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8)
 		RETURNING id, channel, event_type, event_id, supplier_id, dedupe_key, status, attempts, last_error, payload, sent_at, created_at, updated_at
 	`,
 		delivery.Channel,
@@ -65,7 +73,8 @@ func (r *SQLRepository) CreateDelivery(ctx context.Context, delivery *adminplusd
 		delivery.EventID,
 		delivery.SupplierID,
 		delivery.DedupeKey,
-		adminplusdomain.NotificationStatusSending,
+		status,
+		truncateError(delivery.LastError),
 		payload,
 	)
 	created, err := scanDelivery(row)
@@ -76,6 +85,21 @@ func (r *SQLRepository) CreateDelivery(ctx context.Context, delivery *adminplusd
 		return nil, false, err
 	}
 	return created, true, nil
+}
+
+func (r *SQLRepository) GetDelivery(ctx context.Context, id int64) (*adminplusdomain.NotificationDelivery, error) {
+	if r == nil || r.db == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "NOTIFICATION_REPOSITORY_NOT_CONFIGURED", "notification repository is not configured")
+	}
+	if id <= 0 {
+		return nil, infraerrors.New(http.StatusBadRequest, "NOTIFICATION_DELIVERY_ID_INVALID", "invalid notification delivery id")
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, channel, event_type, event_id, supplier_id, dedupe_key, status, attempts, last_error, payload, sent_at, created_at, updated_at
+		FROM admin_plus_notification_deliveries
+		WHERE id = $1
+	`, id)
+	return scanDelivery(row)
 }
 
 func (r *SQLRepository) ListDeliveries(ctx context.Context, filter DeliveryFilter) ([]*adminplusdomain.NotificationDelivery, error) {
@@ -163,6 +187,57 @@ func (r *SQLRepository) MarkDeliveryFailed(ctx context.Context, id int64, messag
 		return err
 	}
 	return requireAffected(result, "NOTIFICATION_DELIVERY_NOT_FOUND", "notification delivery not found")
+}
+
+func (r *SQLRepository) IncrementDeliveryAttempt(ctx context.Context, id int64) (*adminplusdomain.NotificationDelivery, error) {
+	if r == nil || r.db == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "NOTIFICATION_REPOSITORY_NOT_CONFIGURED", "notification repository is not configured")
+	}
+	row := r.db.QueryRowContext(ctx, `
+		UPDATE admin_plus_notification_deliveries
+		SET status = $2,
+			attempts = attempts + 1,
+			last_error = '',
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, channel, event_type, event_id, supplier_id, dedupe_key, status, attempts, last_error, payload, sent_at, created_at, updated_at
+	`, id, adminplusdomain.NotificationStatusSending)
+	return scanDelivery(row)
+}
+
+func (r *SQLRepository) LoadSettings(ctx context.Context) (*adminplusdomain.NotificationSettings, error) {
+	if r == nil || r.db == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "NOTIFICATION_REPOSITORY_NOT_CONFIGURED", "notification repository is not configured")
+	}
+	var raw []byte
+	err := r.db.QueryRowContext(ctx, `SELECT value FROM admin_plus_notification_settings WHERE key = 'global'`).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var settings adminplusdomain.NotificationSettings
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return nil, err
+	}
+	return &settings, nil
+}
+
+func (r *SQLRepository) SaveSettings(ctx context.Context, settings adminplusdomain.NotificationSettings) error {
+	if r == nil || r.db == nil {
+		return infraerrors.New(http.StatusInternalServerError, "NOTIFICATION_REPOSITORY_NOT_CONFIGURED", "notification repository is not configured")
+	}
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return infraerrors.New(http.StatusBadRequest, "NOTIFICATION_SETTINGS_INVALID", "notification settings must be valid JSON")
+	}
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO admin_plus_notification_settings (key, value, updated_at)
+		VALUES ('global', $1, NOW())
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+	`, raw)
+	return err
 }
 
 func marshalPayload(payload map[string]any) ([]byte, error) {

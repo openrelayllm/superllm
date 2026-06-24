@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
@@ -156,6 +157,40 @@ func (r *SQLRepository) ListSteps(ctx context.Context, runID string, limit int) 
 			return nil, err
 		}
 		out = append(out, *step)
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLRepository) ListAttempts(ctx context.Context, runID string, limit int) ([]adminplusdomain.SchedulerAttemptRecord, error) {
+	if r == nil || r.db == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_SCHEDULER_DB_NOT_CONFIGURED", "admin plus scheduler database is not configured")
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return []adminplusdomain.SchedulerAttemptRecord{}, nil
+	}
+	if limit <= 0 || limit > 2000 {
+		limit = 1000
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, step_id, run_id, supplier_id, task_type, status, worker_id, attempt_no,
+			started_at, finished_at, duration_ms, error_code, error_message, request_snapshot, response_snapshot
+		FROM admin_plus_scheduler_attempts
+		WHERE run_id = $1
+		ORDER BY step_id ASC, attempt_no ASC, id ASC
+		LIMIT $2
+	`, runID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]adminplusdomain.SchedulerAttemptRecord, 0)
+	for rows.Next() {
+		attempt, err := scanAttemptRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *attempt)
 	}
 	return out, rows.Err()
 }
@@ -415,7 +450,12 @@ func (r *SQLRepository) CompleteStep(ctx context.Context, stepID int64, status s
 	if r == nil || r.db == nil {
 		return infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_SCHEDULER_DB_NOT_CONFIGURED", "admin plus scheduler database is not configured")
 	}
-	_, err := r.db.ExecContext(ctx, `
+	errorCode, errorMessage, responseSnapshot := schedulerAttemptDiagnostics(status, resultCount, reason)
+	responsePayload, err := json.Marshal(responseSnapshot)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx, `
 		WITH current_step AS (
 			SELECT id, run_id, supplier_id, task_type, locked_by, attempts, started_at
 			FROM admin_plus_scheduler_steps
@@ -449,12 +489,35 @@ func (r *SQLRepository) CompleteStep(ctx context.Context, stepID int64, status s
 			current_step.started_at,
 			$5,
 			CASE WHEN current_step.started_at IS NULL THEN 0 ELSE EXTRACT(EPOCH FROM ($5 - current_step.started_at))::bigint * 1000 END,
-			CASE WHEN $2 IN ('retryable_failed', 'manual_required', 'dead') THEN 'SCHEDULER_STEP_FAILED' ELSE '' END,
-			$4,
-			jsonb_build_object('result_count', $3)
+			$6,
+			$7,
+			$8::jsonb
 		FROM current_step
-	`, stepID, status, resultCount, reason, finishedAt)
+	`, stepID, status, resultCount, reason, finishedAt, errorCode, errorMessage, string(responsePayload))
 	return err
+}
+
+func schedulerAttemptDiagnostics(status string, resultCount int, reason string) (string, string, map[string]any) {
+	snapshot := map[string]any{
+		"result_count": resultCount,
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return "", "", snapshot
+	}
+	snapshot["reason"] = trimLimit(reason, 1800)
+	var parsed stepFailureReason
+	if json.Unmarshal([]byte(reason), &parsed) == nil {
+		snapshot["failure"] = parsed
+		code := firstNonEmpty(parsed.LoginCode, parsed.Code)
+		message := firstNonEmpty(parsed.LoginMessage, parsed.Message, parsed.RawError)
+		return code, trimLimit(message, 900), snapshot
+	}
+	if status != "retryable_failed" && status != "manual_required" && status != "dead" {
+		return "", "", snapshot
+	}
+	code := firstNonEmpty(reasonCodeFromText(reason), "SCHEDULER_STEP_FAILED")
+	return code, trimLimit(reason, 900), snapshot
 }
 
 func (r *SQLRepository) RetryStep(ctx context.Context, stepID int64, retryAt time.Time) (*adminplusdomain.SchedulerStepRecord, error) {
@@ -806,6 +869,49 @@ func scanStepRecord(row scanner) (*adminplusdomain.SchedulerStepRecord, error) {
 	step.StartedAt = timePtr(startedAt)
 	step.FinishedAt = timePtr(finishedAt)
 	return &step, nil
+}
+
+func scanAttemptRecord(row scanner) (*adminplusdomain.SchedulerAttemptRecord, error) {
+	var attempt adminplusdomain.SchedulerAttemptRecord
+	var taskType string
+	var startedAt sql.NullTime
+	var requestSnapshot, responseSnapshot []byte
+	if err := row.Scan(
+		&attempt.ID,
+		&attempt.StepID,
+		&attempt.RunID,
+		&attempt.SupplierID,
+		&taskType,
+		&attempt.Status,
+		&attempt.WorkerID,
+		&attempt.AttemptNo,
+		&startedAt,
+		&attempt.FinishedAt,
+		&attempt.DurationMS,
+		&attempt.ErrorCode,
+		&attempt.ErrorMessage,
+		&requestSnapshot,
+		&responseSnapshot,
+	); err != nil {
+		return nil, err
+	}
+	attempt.TaskType = adminplusdomain.ExtensionTaskType(taskType)
+	attempt.StartedAt = timePtr(startedAt)
+	if len(requestSnapshot) > 0 {
+		var payload map[string]any
+		if err := json.Unmarshal(requestSnapshot, &payload); err != nil {
+			return nil, err
+		}
+		attempt.RequestSnapshot = payload
+	}
+	if len(responseSnapshot) > 0 {
+		var payload map[string]any
+		if err := json.Unmarshal(responseSnapshot, &payload); err != nil {
+			return nil, err
+		}
+		attempt.ResponseSnapshot = payload
+	}
+	return &attempt, nil
 }
 
 func scanPlan(row scanner) (*adminplusdomain.SchedulerPlan, error) {

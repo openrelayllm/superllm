@@ -2,7 +2,7 @@
 
 版本：v0.1.0
 日期：2026-06-23
-状态：规划中，等待实施
+状态：部分实施，持续迭代
 范围：供应商运营自动化调度中心、采集计划、运行审计、供应商自动化矩阵、智能动作、全局设置、异步 Worker 与 Provider Adapter 编排。
 
 ## 目录
@@ -79,6 +79,7 @@
 - 已新增 `admin_plus_scheduler_plans`、`admin_plus_scheduler_attempts`、`admin_plus_scheduler_actions` 和 `admin_plus_scheduler_settings` 表，计划、attempt、智能动作和设置均进入当前事实源。
 - 已新增 DB claim Worker、step lease、attempt 记录、run 取消、step 取消和失败 step 重新入队能力；Redis Stream 唤醒仍作为后续增强，当前 Worker 依赖 DB polling 推进。
 - 已新增供应商 Checklist 弹窗，按现有供应商事实展示基础信息、URL、会话、余额、充值倍率、充值入口、分组、倍率、账务、渠道检测和本地调度状态。
+- 已新增通知中心入口 `/admin/scheduler/notifications`，支持飞书配置、测试诊断、业务规则、防打扰、投递记录、失败投递重试和抑制记录审计；余额、健康、费率、公告、对账异常和系统测试事件均已接入。
 - 未完成项：计划编辑向导持久保存、Redis Stream 唤醒。
 
 ## 3. 目标与收益

@@ -24,6 +24,7 @@ export function createSuppliersState() {
   const sessionDialogOpen = ref(false)
   const channelStatusDialogOpen = ref(false)
   const groupsDialogOpen = ref(false)
+  const channelProbeDialogOpen = ref(false)
   const provisionDialogOpen = ref(false)
   const repairDialogOpen = ref(false)
   const channelScheduleDialogOpen = ref(false)
@@ -38,6 +39,8 @@ export function createSuppliersState() {
   const sessionSupplier = ref<Supplier | null>(null)
   const channelStatusSupplier = ref<Supplier | null>(null)
   const groupsSupplier = ref<Supplier | null>(null)
+  const channelProbeSupplier = ref<Supplier | null>(null)
+  const channelProbeSnapshot = ref<SupplierChannelCheckSnapshot | null>(null)
   const provisionGroup = ref<SupplierGroup | null>(null)
   const repairKey = ref<SupplierKey | null>(null)
   const channelScheduleSupplier = ref<Supplier | null>(null)
@@ -262,6 +265,7 @@ export function createSuppliersState() {
     sessionDialogOpen,
     channelStatusDialogOpen,
     groupsDialogOpen,
+    channelProbeDialogOpen,
     provisionDialogOpen,
     repairDialogOpen,
     channelScheduleDialogOpen,
@@ -276,6 +280,8 @@ export function createSuppliersState() {
     sessionSupplier,
     channelStatusSupplier,
     groupsSupplier,
+    channelProbeSupplier,
+    channelProbeSnapshot,
     provisionGroup,
     repairKey,
     channelScheduleSupplier,

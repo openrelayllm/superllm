@@ -99,6 +99,29 @@ func TestFeishuSendEventMarksFailed(t *testing.T) {
 	require.Contains(t, repo.failedMessage, "502")
 }
 
+func TestFeishuSendEventReturnsReadableWebhookError(t *testing.T) {
+	repo := &fakeNotificationRepository{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":9499,"msg":"not found"}`))
+	}))
+	t.Cleanup(server.Close)
+	notifier := &Feishu{webhookURL: server.URL, repo: repo}
+
+	err := notifier.SendEvent(context.Background(), Event{
+		Type:       "system.test",
+		ID:         41,
+		SupplierID: 0,
+		Text:       "hello",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "FEISHU_WEBHOOK_FAILED")
+	require.Contains(t, repo.failedMessage, "飞书 Webhook 返回 HTTP 404")
+	require.Contains(t, repo.failedMessage, "Webhook 地址")
+	require.NotContains(t, repo.failedMessage, "internal error")
+}
+
 func TestFeishuSendEventThrottlesWithinWindow(t *testing.T) {
 	repo := NewMemoryRepository()
 	requests := 0
@@ -165,6 +188,15 @@ func (r *fakeNotificationRepository) ListDeliveries(_ context.Context, _ Deliver
 	return r.deliveries, nil
 }
 
+func (r *fakeNotificationRepository) GetDelivery(_ context.Context, id int64) (*adminplusdomain.NotificationDelivery, error) {
+	for _, item := range r.deliveries {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return nil, nil
+}
+
 func (r *fakeNotificationRepository) MarkDeliverySucceeded(_ context.Context, id int64) error {
 	r.succeededID = id
 	return nil
@@ -173,5 +205,17 @@ func (r *fakeNotificationRepository) MarkDeliverySucceeded(_ context.Context, id
 func (r *fakeNotificationRepository) MarkDeliveryFailed(_ context.Context, id int64, message string) error {
 	r.failedID = id
 	r.failedMessage = message
+	return nil
+}
+
+func (r *fakeNotificationRepository) IncrementDeliveryAttempt(_ context.Context, id int64) (*adminplusdomain.NotificationDelivery, error) {
+	return r.GetDelivery(context.Background(), id)
+}
+
+func (r *fakeNotificationRepository) LoadSettings(_ context.Context) (*adminplusdomain.NotificationSettings, error) {
+	return nil, nil
+}
+
+func (r *fakeNotificationRepository) SaveSettings(_ context.Context, _ adminplusdomain.NotificationSettings) error {
 	return nil
 }

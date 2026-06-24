@@ -2,6 +2,7 @@ package costs
 
 import (
 	"context"
+	"log/slog"
 	"math"
 	"sort"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 )
+
+const defaultReconcileAnomalyThresholdCents int64 = 100
 
 type SyncInput struct {
 	SupplierID                     int64
@@ -84,8 +87,13 @@ type SupplierLookup interface {
 	Get(ctx context.Context, id int64) (*adminplusdomain.Supplier, error)
 }
 
+type Notifier interface {
+	NotifyCostReconcileAnomaly(ctx context.Context, snapshot *adminplusdomain.SupplierCostSnapshot) error
+}
+
 type Service struct {
 	repo              Repository
+	notifier          Notifier
 	session           SessionReader
 	fundingReader     ports.SessionFundingAdapter
 	entitlementReader ports.SessionEntitlementAdapter
@@ -100,7 +108,12 @@ func NewService(repo Repository) *Service {
 }
 
 func NewServiceWithDependencies(repo Repository, session SessionReader, fundingReader ports.SessionFundingAdapter, entitlementReader ports.SessionEntitlementAdapter, usageCostSyncer UsageCostSyncer, balanceSyncer BalanceSyncer, supplierLookup SupplierLookup) *Service {
+	return NewServiceWithDependenciesAndNotifier(repo, nil, session, fundingReader, entitlementReader, usageCostSyncer, balanceSyncer, supplierLookup)
+}
+
+func NewServiceWithDependenciesAndNotifier(repo Repository, notifier Notifier, session SessionReader, fundingReader ports.SessionFundingAdapter, entitlementReader ports.SessionEntitlementAdapter, usageCostSyncer UsageCostSyncer, balanceSyncer BalanceSyncer, supplierLookup SupplierLookup) *Service {
 	service := NewService(repo)
+	service.notifier = notifier
 	service.session = session
 	service.fundingReader = fundingReader
 	service.entitlementReader = entitlementReader
@@ -278,12 +291,22 @@ func (s *Service) Sync(ctx context.Context, in SyncInput) (*SyncResult, error) {
 		if result.Snapshot == nil {
 			result.Snapshot = snapshot
 		}
+		s.notifyCostReconcileAnomaly(ctx, snapshot)
 	}
 	result.LedgerEntries = ledgerEntries
 	if len(result.Diagnostics) == 0 {
 		result.Diagnostics = nil
 	}
 	return result, nil
+}
+
+func (s *Service) notifyCostReconcileAnomaly(ctx context.Context, snapshot *adminplusdomain.SupplierCostSnapshot) {
+	if s == nil || s.notifier == nil || snapshot == nil || !shouldNotifyCostReconcileAnomaly(snapshot) {
+		return
+	}
+	if err := s.notifier.NotifyCostReconcileAnomaly(ctx, snapshot); err != nil {
+		slog.Warn("admin plus cost reconcile notification failed", "supplier_id", snapshot.SupplierID, "snapshot_id", snapshot.ID, "currency", snapshot.Currency, "err", err)
+	}
 }
 
 func (s *Service) ListSnapshots(ctx context.Context, filter SummaryFilter) ([]*adminplusdomain.SupplierCostSnapshot, error) {
@@ -574,6 +597,20 @@ func nonNegative(value int64) int64 {
 func normalizeRechargeMultiplier(value float64) float64 {
 	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 		return 1
+	}
+	return value
+}
+
+func shouldNotifyCostReconcileAnomaly(snapshot *adminplusdomain.SupplierCostSnapshot) bool {
+	if snapshot == nil || snapshot.BalanceDeltaCents == nil {
+		return false
+	}
+	return absInt64(*snapshot.BalanceDeltaCents) >= defaultReconcileAnomalyThresholdCents
+}
+
+func absInt64(value int64) int64 {
+	if value < 0 {
+		return -value
 	}
 	return value
 }

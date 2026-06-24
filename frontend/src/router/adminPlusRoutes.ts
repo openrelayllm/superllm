@@ -74,6 +74,12 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     meta: adminMeta('调度中心')
   },
   {
+    path: '/admin/scheduler/notifications',
+    name: 'AdminPlusNotificationCenter',
+    component: () => import('@/views/admin/scheduler/NotificationCenterView.vue'),
+    meta: adminMeta('通知中心')
+  },
+  {
     path: '/admin/collection/scheduler',
     redirect: redirectWithQuery('/admin/scheduler')
   },
@@ -135,7 +141,7 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/automation/notifications',
-    redirect: redirectWithQuery('/admin/suppliers')
+    redirect: redirectWithQuery('/admin/scheduler/notifications')
   },
   {
     path: '/admin/automation/audits',
@@ -191,7 +197,7 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/operations/notifications',
-    redirect: redirectWithQuery('/admin/suppliers')
+    redirect: redirectWithQuery('/admin/scheduler/notifications')
   },
   {
     path: '/admin/settings',

@@ -98,6 +98,7 @@ Generated artifacts are intentionally ignored:
   - 通知发送前写入 `admin_plus_notification_deliveries`。
   - 同一业务事件同一通道通过 `dedupe_key` 去重。
   - 费率、健康和公告等高频事件支持窗口去重，避免同一事件窗口重复刷屏。
+  - 通知中心提供后台飞书配置、测试诊断、业务规则、防打扰、投递记录和失败投递重试。
   - 已提供通知记录页面和 `GET /api/v1/admin-plus/notifications/deliveries`。
   - 通知成功或失败都会记录投递状态，不回滚业务快照或事件。
 - 前端已提供 Admin Plus 独立业务导航和页面。

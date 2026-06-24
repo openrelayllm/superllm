@@ -109,7 +109,12 @@ func RegisterAdminPlusRoutes(
 
 		notifications := adminPlus.Group("/notifications")
 		{
+			notifications.GET("/center/status", h.AdminPlus.Notification.CenterStatus)
+			notifications.GET("/settings", h.AdminPlus.Notification.Settings)
+			notifications.PUT("/settings", h.AdminPlus.Notification.UpdateSettings)
+			notifications.POST("/test", h.AdminPlus.Notification.Test)
 			notifications.GET("/deliveries", h.AdminPlus.Notification.ListDeliveries)
+			notifications.POST("/deliveries/:id/retry", h.AdminPlus.Notification.RetryDelivery)
 		}
 
 		usageCosts := adminPlus.Group("/usage-costs")

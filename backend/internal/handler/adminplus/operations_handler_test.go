@@ -372,14 +372,12 @@ func TestSupplierSessionProbeReadsProfileAndRecordsBalance(t *testing.T) {
 	require.NotContains(t, probed.Body.String(), "secret-cookie")
 }
 
-func TestCaptureSessionAutoCreatesSupplierAndSyncsBalance(t *testing.T) {
-	var seenAuth string
+func TestCaptureSessionAutoCreatesSupplierWithoutSyncingBalance(t *testing.T) {
 	profileCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch req.URL.Path {
 		case "/api/v1/user/profile":
-			seenAuth = req.Header.Get("Authorization")
 			profileCalls++
 			_, _ = w.Write([]byte(`{
 				"code": 0,
@@ -440,10 +438,10 @@ func TestCaptureSessionAutoCreatesSupplierAndSyncsBalance(t *testing.T) {
 		}
 	}`)
 	require.Equal(t, http.StatusOK, completed.Code, completed.Body.String())
-	require.Equal(t, 1, profileCalls)
-	require.Equal(t, "Bearer real-provider-token", seenAuth)
-	require.Contains(t, completed.Body.String(), `"balance_cents":183`)
-	require.Contains(t, completed.Body.String(), `"balance_snapshot_id":1`)
+	require.Equal(t, 0, profileCalls)
+	require.Contains(t, completed.Body.String(), `"session_captured":true`)
+	require.NotContains(t, completed.Body.String(), `"balance_cents"`)
+	require.NotContains(t, completed.Body.String(), `"balance_snapshot_id"`)
 	require.NotContains(t, completed.Body.String(), "real-provider-token")
 }
 
@@ -1243,7 +1241,7 @@ func newOperationsHandlerTestRouterWithDependencies(dashboardURL string, apiBase
 		LastError:  "webhook failed",
 		Payload:    map[string]any{"msg_type": "text"},
 	})
-	notificationHandler := NewNotificationHandler(notificationRepo)
+	notificationHandler := NewNotificationHandler(notificationsapp.NewService(notificationRepo))
 	supplierHandler := NewSupplierHandler(supplierSvc)
 	balanceHandler := NewBalanceHandler(balanceService)
 	rateHandler := NewRateHandler(rateService)

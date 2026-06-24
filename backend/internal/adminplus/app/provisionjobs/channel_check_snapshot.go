@@ -12,6 +12,7 @@ func channelCheckInputFromSnapshot(supplierID int64, snapshot map[string]any) ch
 		SupplierGroupID:         int64Value(snapshot["supplier_group_id"]),
 		CandidateLimit:          intValue(snapshot["candidate_limit"]),
 		AutoPauseOnFailure:      boolValue(snapshot["auto_pause_on_failure"], true),
+		ProbeModel:              stringValue(snapshot["probe_model"]),
 		FirstTokenThresholdMS:   int64Value(snapshot["first_token_threshold_ms"]),
 		TotalLatencyThresholdMS: int64Value(snapshot["total_latency_threshold_ms"]),
 	}

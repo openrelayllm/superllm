@@ -75,6 +75,7 @@ func GetInstallLockPath() string {
 type SetupConfig struct {
 	Database DatabaseConfig `json:"database" yaml:"database"`
 	Redis    RedisConfig    `json:"redis" yaml:"redis"`
+	Sub2API  Sub2APIConfig  `json:"sub2api" yaml:"sub2api"`
 	Admin    AdminConfig    `json:"admin" yaml:"-"` // Not stored in config file
 	Server   ServerConfig   `json:"server" yaml:"server"`
 	JWT      JWTConfig      `json:"jwt" yaml:"jwt"`
@@ -96,6 +97,27 @@ type RedisConfig struct {
 	Password  string `json:"password" yaml:"password"`
 	DB        int    `json:"db" yaml:"db"`
 	EnableTLS bool   `json:"enable_tls" yaml:"enable_tls"`
+}
+
+type Sub2APIConfig struct {
+	ReadonlyDatabaseURL  string `json:"readonly_database_url" yaml:"readonly_database_url,omitempty"`
+	ReadonlyRedisURL     string `json:"readonly_redis_url" yaml:"readonly_redis_url,omitempty"`
+	ReadonlyRedisDB      *int   `json:"readonly_redis_db" yaml:"readonly_redis_db,omitempty"`
+	AdminBaseURL         string `json:"admin_base_url" yaml:"-"`
+	AdminAPIKey          string `json:"admin_api_key" yaml:"-"`
+	AllowEmbeddedGateway bool   `json:"allow_embedded_gateway" yaml:"-"`
+}
+
+type sub2APIYAMLConfig struct {
+	ReadonlyDatabaseURL string `yaml:"readonly_database_url,omitempty"`
+	ReadonlyRedisURL    string `yaml:"readonly_redis_url,omitempty"`
+	ReadonlyRedisDB     *int   `yaml:"readonly_redis_db,omitempty"`
+}
+
+type adminPlusYAMLConfig struct {
+	Sub2APIAdminBaseURL         string `yaml:"sub2api_admin_base_url,omitempty"`
+	Sub2APIAdminAPIKey          string `yaml:"sub2api_admin_api_key,omitempty"`
+	AllowEmbeddedSub2APIGateway bool   `yaml:"allow_embedded_sub2api_gateway,omitempty"`
 }
 
 type AdminConfig struct {
@@ -463,12 +485,17 @@ func writeConfigFile(cfg *SetupConfig) error {
 		tz = "Asia/Shanghai"
 	}
 
+	sub2apiConfig := buildSub2APIYAMLConfig(cfg.Sub2API)
+	adminPlusConfig := buildAdminPlusYAMLConfig(cfg.Sub2API)
+
 	// Prepare config for YAML (exclude sensitive data and admin config)
 	yamlConfig := struct {
-		Server   ServerConfig   `yaml:"server"`
-		Database DatabaseConfig `yaml:"database"`
-		Redis    RedisConfig    `yaml:"redis"`
-		JWT      struct {
+		Server    ServerConfig         `yaml:"server"`
+		Database  DatabaseConfig       `yaml:"database"`
+		Redis     RedisConfig          `yaml:"redis"`
+		Sub2API   *sub2APIYAMLConfig   `yaml:"sub2api,omitempty"`
+		AdminPlus *adminPlusYAMLConfig `yaml:"admin_plus,omitempty"`
+		JWT       struct {
 			Secret     string `yaml:"secret"`
 			ExpireHour int    `yaml:"expire_hour"`
 		} `yaml:"jwt"`
@@ -484,9 +511,11 @@ func writeConfigFile(cfg *SetupConfig) error {
 		} `yaml:"rate_limit"`
 		Timezone string `yaml:"timezone"`
 	}{
-		Server:   cfg.Server,
-		Database: cfg.Database,
-		Redis:    cfg.Redis,
+		Server:    cfg.Server,
+		Database:  cfg.Database,
+		Redis:     cfg.Redis,
+		Sub2API:   sub2apiConfig,
+		AdminPlus: adminPlusConfig,
 		JWT: struct {
 			Secret     string `yaml:"secret"`
 			ExpireHour int    `yaml:"expire_hour"`
@@ -521,6 +550,32 @@ func writeConfigFile(cfg *SetupConfig) error {
 	}
 
 	return os.WriteFile(GetConfigFilePath(), data, 0600)
+}
+
+func buildSub2APIYAMLConfig(cfg Sub2APIConfig) *sub2APIYAMLConfig {
+	readonlyDatabaseURL := strings.TrimSpace(cfg.ReadonlyDatabaseURL)
+	readonlyRedisURL := strings.TrimSpace(cfg.ReadonlyRedisURL)
+	if readonlyDatabaseURL == "" && readonlyRedisURL == "" && cfg.ReadonlyRedisDB == nil {
+		return nil
+	}
+	return &sub2APIYAMLConfig{
+		ReadonlyDatabaseURL: readonlyDatabaseURL,
+		ReadonlyRedisURL:    readonlyRedisURL,
+		ReadonlyRedisDB:     cfg.ReadonlyRedisDB,
+	}
+}
+
+func buildAdminPlusYAMLConfig(cfg Sub2APIConfig) *adminPlusYAMLConfig {
+	adminBaseURL := strings.TrimSpace(cfg.AdminBaseURL)
+	adminAPIKey := strings.TrimSpace(cfg.AdminAPIKey)
+	if adminBaseURL == "" && adminAPIKey == "" && !cfg.AllowEmbeddedGateway {
+		return nil
+	}
+	return &adminPlusYAMLConfig{
+		Sub2APIAdminBaseURL:         adminBaseURL,
+		Sub2APIAdminAPIKey:          adminAPIKey,
+		AllowEmbeddedSub2APIGateway: cfg.AllowEmbeddedGateway,
+	}
 }
 
 func generateSecret(length int) (string, error) {
@@ -559,6 +614,15 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 	return defaultValue
 }
 
+func getEnvIntPointer(key string) *int {
+	if val := os.Getenv(key); val != "" {
+		if i, err := strconv.Atoi(val); err == nil {
+			return &i
+		}
+	}
+	return nil
+}
+
 // AutoSetupFromEnv performs automatic setup using environment variables
 // This is designed for Docker deployment where all config is passed via env vars
 func AutoSetupFromEnv() error {
@@ -587,6 +651,14 @@ func AutoSetupFromEnv() error {
 			Password:  getEnvOrDefault("REDIS_PASSWORD", ""),
 			DB:        getEnvIntOrDefault("REDIS_DB", 0),
 			EnableTLS: getEnvOrDefault("REDIS_ENABLE_TLS", "false") == "true",
+		},
+		Sub2API: Sub2APIConfig{
+			ReadonlyDatabaseURL:  getEnvOrDefault("SUB2API_READONLY_DATABASE_URL", ""),
+			ReadonlyRedisURL:     getEnvOrDefault("SUB2API_READONLY_REDIS_URL", ""),
+			ReadonlyRedisDB:      getEnvIntPointer("SUB2API_READONLY_REDIS_DB"),
+			AdminBaseURL:         getEnvOrDefault("ADMIN_PLUS_SUB2API_ADMIN_BASE_URL", ""),
+			AdminAPIKey:          getEnvOrDefault("ADMIN_PLUS_SUB2API_ADMIN_API_KEY", ""),
+			AllowEmbeddedGateway: getEnvOrDefault("ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY", "false") == "true",
 		},
 		Admin: AdminConfig{
 			Email:    getEnvOrDefault("ADMIN_EMAIL", "admin@sub2api.local"),

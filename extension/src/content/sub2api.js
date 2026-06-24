@@ -76,7 +76,8 @@
       context,
       required_headers: {
         origin: location.origin,
-        referer: location.href
+        referer: location.href,
+        'user-agent': navigator.userAgent
       },
       storage_keys: Object.keys(storage).slice(0, 80)
     }

@@ -198,6 +198,9 @@ export default {
       password: 'Password',
       databaseName: 'Database Name',
       sslMode: 'SSL Mode',
+      dedicatedWarningTitle: 'Use a dedicated Admin Plus database',
+      dedicatedWarningBody:
+        'Do not point this instance at an existing Sub2API production database. Use sub2api_admin_plus for the database and user, and grant CREATE on the public schema.',
       passwordPlaceholder: 'Password',
       ssl: {
         disable: 'Disable',
@@ -217,6 +220,22 @@ export default {
       enableTls: 'Enable TLS',
       enableTlsHint: 'Use TLS when connecting to Redis (public CA certs)'
     },
+    sub2api: {
+      title: 'Sub2API Integration',
+      description: 'Connect an existing Sub2API instance for account-pool reads and provisioning',
+      integrationTitle: 'Admin Plus extends Sub2API',
+      integrationBody:
+        'These settings do not replace the Admin Plus primary database. The readonly database and Redis connections read live Sub2API data; the Admin API provisions supplier keys into the real Sub2API instance.',
+      readonlyDatabaseUrl: 'Sub2API readonly database URL (optional)',
+      readonlyDatabaseHint: 'Use a readonly user with SELECT grants for accounts, groups, account_groups, usage_logs, and related tables.',
+      readonlyRedisUrl: 'Sub2API readonly Redis URL (optional)',
+      readonlyRedisDb: 'Sub2API Redis DB (optional)',
+      adminBaseUrl: 'Sub2API Admin API URL (optional)',
+      adminApiKey: 'Sub2API Admin API Key',
+      adminApiKeyPlaceholder: 'Matches the Sub2API admin API key',
+      allowEmbeddedGateway: 'Allow embedded compatibility fallback',
+      allowEmbeddedGatewayHint: 'Use only for local development; production should configure the real Sub2API Admin API.'
+    },
     admin: {
       title: 'Admin Account',
       description: 'Create the local development administrator account',
@@ -232,7 +251,10 @@ export default {
       description: 'Review the Admin Plus configuration and complete setup',
       database: 'Database',
       redis: 'Redis',
-      adminEmail: 'Admin Email'
+      adminEmail: 'Admin Email',
+      sub2api: 'Sub2API Integration',
+      sub2apiConfigured: 'Sub2API connection configured',
+      sub2apiSkipped: 'Not configured yet; add it later through config file or environment variables'
     },
     status: {
       testing: 'Testing...',

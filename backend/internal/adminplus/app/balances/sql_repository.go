@@ -56,6 +56,10 @@ func (r *SQLRepository) CreateSnapshot(ctx context.Context, snapshot *adminplusd
 		SET balance_cents = $2,
 			balance_currency = $3,
 			balance_updated_at = $4,
+			runtime_status = CASE
+				WHEN $2 <= 0 AND runtime_status IN ('candidate', 'active') THEN 'monitor_only'
+				ELSE runtime_status
+			END,
 			updated_at = NOW()
 		WHERE id = $1
 	`, created.SupplierID, created.BalanceCents, created.Currency, created.CapturedAt); err != nil {

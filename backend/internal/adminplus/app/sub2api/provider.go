@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -26,8 +27,8 @@ type ReadDB struct {
 	DB *sql.DB
 }
 
-func ProvideReadSQLDB(defaultDB *sql.DB) ReadDB {
-	dsn := os.Getenv("SUB2API_READONLY_DATABASE_URL")
+func ProvideReadSQLDB(defaultDB *sql.DB, cfg *config.Config) ReadDB {
+	dsn := sub2APIReadonlyDatabaseURL(cfg)
 	if dsn == "" {
 		return ReadDB{DB: defaultDB}
 	}
@@ -48,9 +49,9 @@ type Sub2APIRedis struct {
 }
 
 func ProvideReadRedis(defaultRedis *redis.Client, cfg *config.Config) Sub2APIRedis {
-	redisURL := os.Getenv("SUB2API_READONLY_REDIS_URL")
-	dbOverride := os.Getenv("SUB2API_READONLY_REDIS_DB")
-	if redisURL == "" && dbOverride == "" {
+	redisURL := sub2APIReadonlyRedisURL(cfg)
+	dbOverride, hasDBOverride := sub2APIReadonlyRedisDB(cfg)
+	if redisURL == "" && !hasDBOverride {
 		return Sub2APIRedis{Client: defaultRedis, Configured: defaultRedis != nil}
 	}
 
@@ -73,12 +74,43 @@ func ProvideReadRedis(defaultRedis *redis.Client, cfg *config.Config) Sub2APIRed
 			MinIdleConns: cfg.Redis.MinIdleConns,
 		}
 	}
-	if dbOverride != "" {
-		db, err := strconv.Atoi(dbOverride)
-		if err != nil || db < 0 {
-			return Sub2APIRedis{Client: defaultRedis, Configured: defaultRedis != nil}
-		}
-		opts.DB = db
+	if hasDBOverride {
+		opts.DB = dbOverride
 	}
 	return Sub2APIRedis{Client: redis.NewClient(opts), Configured: true, Owned: true}
+}
+
+func sub2APIReadonlyDatabaseURL(cfg *config.Config) string {
+	if cfg != nil {
+		return strings.TrimSpace(cfg.Sub2API.ReadonlyDatabaseURL)
+	}
+	return strings.TrimSpace(os.Getenv("SUB2API_READONLY_DATABASE_URL"))
+}
+
+func sub2APIReadonlyRedisURL(cfg *config.Config) string {
+	if cfg != nil {
+		return strings.TrimSpace(cfg.Sub2API.ReadonlyRedisURL)
+	}
+	return strings.TrimSpace(os.Getenv("SUB2API_READONLY_REDIS_URL"))
+}
+
+func sub2APIReadonlyRedisDB(cfg *config.Config) (int, bool) {
+	if cfg != nil {
+		if cfg.Sub2API.ReadonlyRedisDB >= 0 {
+			if cfg.Sub2API.ReadonlyRedisDB == 0 && strings.TrimSpace(cfg.Sub2API.ReadonlyRedisURL) == "" {
+				return 0, false
+			}
+			return cfg.Sub2API.ReadonlyRedisDB, true
+		}
+		return 0, false
+	}
+	raw := strings.TrimSpace(os.Getenv("SUB2API_READONLY_REDIS_DB"))
+	if raw == "" {
+		return 0, false
+	}
+	db, err := strconv.Atoi(raw)
+	if err != nil || db < 0 {
+		return 0, false
+	}
+	return db, true
 }

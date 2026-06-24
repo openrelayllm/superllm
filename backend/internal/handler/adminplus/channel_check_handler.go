@@ -26,17 +26,19 @@ func NewChannelCheckHandlerWithProvisionJobs(service *channelchecksapp.Service, 
 }
 
 type probeSupplierChannelRequest struct {
-	SupplierGroupID         int64 `json:"supplier_group_id"`
-	AutoPauseOnFailure      *bool `json:"auto_pause_on_failure"`
-	FirstTokenThresholdMS   int64 `json:"first_token_threshold_ms"`
-	TotalLatencyThresholdMS int64 `json:"total_latency_threshold_ms"`
+	SupplierGroupID         int64  `json:"supplier_group_id"`
+	AutoPauseOnFailure      *bool  `json:"auto_pause_on_failure"`
+	ProbeModel              string `json:"probe_model"`
+	FirstTokenThresholdMS   int64  `json:"first_token_threshold_ms"`
+	TotalLatencyThresholdMS int64  `json:"total_latency_threshold_ms"`
 }
 
 type syncSupplierChannelsRequest struct {
-	CandidateLimit          int   `json:"candidate_limit"`
-	AutoPauseOnFailure      *bool `json:"auto_pause_on_failure"`
-	FirstTokenThresholdMS   int64 `json:"first_token_threshold_ms"`
-	TotalLatencyThresholdMS int64 `json:"total_latency_threshold_ms"`
+	CandidateLimit          int    `json:"candidate_limit"`
+	AutoPauseOnFailure      *bool  `json:"auto_pause_on_failure"`
+	ProbeModel              string `json:"probe_model"`
+	FirstTokenThresholdMS   int64  `json:"first_token_threshold_ms"`
+	TotalLatencyThresholdMS int64  `json:"total_latency_threshold_ms"`
 }
 
 type setChannelSchedulingRequest struct {
@@ -80,6 +82,7 @@ func (h *ChannelCheckHandler) Probe(c *gin.Context) {
 		SupplierID:              supplierID,
 		SupplierGroupID:         req.SupplierGroupID,
 		AutoPauseOnFailure:      boolDefault(req.AutoPauseOnFailure, true),
+		ProbeModel:              strings.TrimSpace(req.ProbeModel),
 		FirstTokenThresholdMS:   req.FirstTokenThresholdMS,
 		TotalLatencyThresholdMS: req.TotalLatencyThresholdMS,
 	})
@@ -108,6 +111,7 @@ func (h *ChannelCheckHandler) Sync(c *gin.Context) {
 		Request: map[string]any{
 			"candidate_limit":            req.CandidateLimit,
 			"auto_pause_on_failure":      boolDefault(req.AutoPauseOnFailure, true),
+			"probe_model":                strings.TrimSpace(req.ProbeModel),
 			"first_token_threshold_ms":   req.FirstTokenThresholdMS,
 			"total_latency_threshold_ms": req.TotalLatencyThresholdMS,
 		},

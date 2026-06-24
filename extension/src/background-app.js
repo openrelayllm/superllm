@@ -193,10 +193,6 @@ class AdminPlusClient {
     })
   }
 
-  async supplierSession(supplierID) {
-    return this.request(`/api/v1/admin-plus/suppliers/${supplierID}/session`)
-  }
-
   async fail(task, errorCode, errorMessage) {
     return this.request(`/api/v1/admin-plus/extension/tasks/${task.id}/fail`, {
       method: 'POST',
@@ -550,12 +546,11 @@ async function captureSupplierSession(supplierID, autoCreate) {
       await recordCaptureResult('failed', '未找到可上报的 token 或 cookie', task, supplier, identification.activeTab)
       return { task, status: 'failed', result: failed }
     }
-    const completed = await completeCaptureTask(client, task, captureResult)
+    const completed = await client.complete(task, captureResult)
     const ingest = completed.result?.ingest || {}
-    const partial = Boolean(ingest.balance_probe_error)
     await recordCaptureResult(
-      partial ? 'partial' : 'succeeded',
-      partial ? '会话已保存，后台余额同步失败' : '上报成功',
+      'succeeded',
+      '上报成功',
       completed,
       supplier,
       identification.activeTab,
@@ -564,7 +559,7 @@ async function captureSupplierSession(supplierID, autoCreate) {
     )
     return {
       task: completed,
-      status: partial ? 'partial' : 'succeeded',
+      status: 'succeeded',
       supplier,
       result: {
         session_summary: completed.result?.session_summary || captureResult.session_summary || {},
@@ -576,46 +571,6 @@ async function captureSupplierSession(supplierID, autoCreate) {
     await recordCaptureResult('failed', error.message || String(error), task, supplier, identification.activeTab).catch(() => {})
     throw error
   }
-}
-
-async function completeCaptureTask(client, task, captureResult) {
-  try {
-    return await client.complete(task, captureResult)
-  } catch (error) {
-    if (!isNonBlockingProfileProbeError(error)) {
-      throw error
-    }
-    const session = await client.supplierSession(task.supplier_id).catch(() => null)
-    if (!capturedSessionMatchesTask(session, task)) {
-      throw error
-    }
-    return {
-      ...task,
-      status: 'succeeded',
-      result: {
-        session_summary: session.session_summary || captureResult.session_summary || {},
-        ingest: {
-          session_captured: true,
-          balance_probe_error: error.message || String(error)
-        }
-      }
-    }
-  }
-}
-
-function capturedSessionMatchesTask(session, task) {
-  return Boolean(
-    session?.has_encrypted_bundle &&
-    Number(session.source_extension_task_id || 0) === Number(task?.id || 0)
-  )
-}
-
-function isNonBlockingProfileProbeError(error) {
-  const reason = String(error?.reason || '')
-  const message = String(error?.message || error || '')
-  return reason === 'SUPPLIER_SESSION_PERMISSION_DENIED' ||
-    message.includes('supplier session cannot access user profile') ||
-    message.includes('cannot access user profile')
 }
 
 async function recordCaptureResult(status, message, task, supplier, activeTab, summary = {}, ingest = {}) {
@@ -634,10 +589,9 @@ async function recordCaptureResult(status, message, task, supplier, activeTab, s
 
 async function setCaptureBadge(status) {
   if (!chrome.action?.setBadgeText) return
-  const partial = status === 'partial'
   const ok = status === 'succeeded'
-  await chrome.action.setBadgeText({ text: ok ? 'OK' : partial ? 'WARN' : 'ERR' })
-  await chrome.action.setBadgeBackgroundColor({ color: ok ? '#12b76a' : partial ? '#f79009' : '#f04438' })
+  await chrome.action.setBadgeText({ text: ok ? 'OK' : 'ERR' })
+  await chrome.action.setBadgeBackgroundColor({ color: ok ? '#12b76a' : '#f04438' })
 }
 
 async function runCaptureInTab(tabId, task, supplier) {

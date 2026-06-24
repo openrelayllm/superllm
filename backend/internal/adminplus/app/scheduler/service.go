@@ -68,6 +68,7 @@ type Repository interface {
 	ListRuns(ctx context.Context, limit int) ([]adminplusdomain.SchedulerRunSummary, error)
 	GetRun(ctx context.Context, runID string) (*adminplusdomain.SchedulerRunSummary, error)
 	ListSteps(ctx context.Context, runID string, limit int) ([]adminplusdomain.SchedulerStepRecord, error)
+	ListAttempts(ctx context.Context, runID string, limit int) ([]adminplusdomain.SchedulerAttemptRecord, error)
 	RetryStep(ctx context.Context, stepID int64, retryAt time.Time) (*adminplusdomain.SchedulerStepRecord, error)
 	CancelStep(ctx context.Context, stepID int64, cancelledAt time.Time) (*adminplusdomain.SchedulerStepRecord, error)
 	CancelRun(ctx context.Context, runID string, cancelledAt time.Time) (*adminplusdomain.SchedulerRunSummary, error)
@@ -124,15 +125,23 @@ type SessionRefresher interface {
 }
 
 type stepFailureReason struct {
-	Stage        string `json:"stage"`
-	Code         string `json:"code,omitempty"`
-	Message      string `json:"message,omitempty"`
-	Action       string `json:"action,omitempty"`
-	Outcome      string `json:"outcome,omitempty"`
-	LoginCode    string `json:"login_code,omitempty"`
-	LoginMessage string `json:"login_message,omitempty"`
-	Suggestion   string `json:"suggestion,omitempty"`
-	RawError     string `json:"raw_error,omitempty"`
+	Stage        string            `json:"stage"`
+	Code         string            `json:"code,omitempty"`
+	Message      string            `json:"message,omitempty"`
+	Action       string            `json:"action,omitempty"`
+	Outcome      string            `json:"outcome,omitempty"`
+	LoginCode    string            `json:"login_code,omitempty"`
+	LoginMessage string            `json:"login_message,omitempty"`
+	Suggestion   string            `json:"suggestion,omitempty"`
+	RawError     string            `json:"raw_error,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
+type stepFailureInput struct {
+	TaskType adminplusdomain.ExtensionTaskType
+	Stage    string
+	Action   string
+	Err      error
 }
 
 func ProvideService(
@@ -523,6 +532,11 @@ func (s *Service) GetRunDetail(ctx context.Context, runID string) (*adminplusdom
 		if err != nil {
 			return nil, err
 		}
+		attempts, err := s.repo.ListAttempts(ctx, runID, 1000)
+		if err != nil {
+			return nil, err
+		}
+		attachStepAttempts(steps, attempts)
 		return &adminplusdomain.SchedulerRunDetail{Run: *run, Steps: steps}, nil
 	}
 	for _, run := range s.ListRuns(ctx, 100) {
@@ -538,6 +552,23 @@ func (s *Service) ListSteps(ctx context.Context, runID string, limit int) ([]adm
 		return []adminplusdomain.SchedulerStepRecord{}, nil
 	}
 	return s.repo.ListSteps(ctx, strings.TrimSpace(runID), limit)
+}
+
+func attachStepAttempts(steps []adminplusdomain.SchedulerStepRecord, attempts []adminplusdomain.SchedulerAttemptRecord) {
+	if len(steps) == 0 || len(attempts) == 0 {
+		return
+	}
+	indexByStepID := make(map[int64]int, len(steps))
+	for index := range steps {
+		indexByStepID[steps[index].ID] = index
+	}
+	for _, attempt := range attempts {
+		index, ok := indexByStepID[attempt.StepID]
+		if !ok {
+			continue
+		}
+		steps[index].OperationLogs = append(steps[index].OperationLogs, attempt)
+	}
 }
 
 func (s *Service) RetryStep(ctx context.Context, stepID int64) (*adminplusdomain.SchedulerStepRecord, error) {
@@ -1045,6 +1076,7 @@ func (s *Service) refreshSupplierSession(ctx context.Context, supplier *adminplu
 			LoginMessage: firstNonEmpty(infraerrors.Message(loginErr), "supplier direct login failed"),
 			Suggestion:   loginFailureSuggestion(loginErr),
 			RawError:     trimLimit(loginErr.Error(), 900),
+			Metadata:     errorMetadata(loginErr),
 		})
 		return false
 	}
@@ -1071,7 +1103,7 @@ func (s *Service) syncSupplierTask(ctx context.Context, supplier *adminplusdomai
 		}
 		result, err := s.groupSyncer.Sync(ctx, supplier.ID)
 		if err != nil {
-			item.Reason = err.Error()
+			item.Reason = encodeSyncFailure(stepFailureInput{TaskType: taskType, Stage: "supplier_groups_sync", Action: "sync_groups", Err: err})
 			return
 		}
 		if result != nil {
@@ -1084,7 +1116,7 @@ func (s *Service) syncSupplierTask(ctx context.Context, supplier *adminplusdomai
 		}
 		result, err := s.rateSyncer.SyncFromSession(ctx, ratesapp.SyncFromSessionInput{SupplierID: supplier.ID})
 		if err != nil {
-			item.Reason = err.Error()
+			item.Reason = encodeSyncFailure(stepFailureInput{TaskType: taskType, Stage: "supplier_rates_sync", Action: "sync_rates", Err: err})
 			return
 		}
 		if result != nil {
@@ -1097,7 +1129,7 @@ func (s *Service) syncSupplierTask(ctx context.Context, supplier *adminplusdomai
 		}
 		result, err := s.balanceSyncer.SyncFromSession(ctx, balancesapp.SyncFromSessionInput{SupplierID: supplier.ID})
 		if err != nil {
-			item.Reason = err.Error()
+			item.Reason = encodeSyncFailure(stepFailureInput{TaskType: taskType, Stage: "supplier_balance_sync", Action: "sync_balance", Err: err})
 			return
 		}
 		if result != nil && result.Snapshot != nil {
@@ -1110,7 +1142,7 @@ func (s *Service) syncSupplierTask(ctx context.Context, supplier *adminplusdomai
 		}
 		result, err := s.announcementSyncer.SyncFromSession(ctx, announcementsapp.SyncFromSessionInput{SupplierID: supplier.ID})
 		if err != nil {
-			item.Reason = err.Error()
+			item.Reason = encodeSyncFailure(stepFailureInput{TaskType: taskType, Stage: "supplier_announcements_sync", Action: "sync_announcements", Err: err})
 			return
 		}
 		if result != nil {
@@ -1123,7 +1155,7 @@ func (s *Service) syncSupplierTask(ctx context.Context, supplier *adminplusdomai
 		}
 		result, err := s.healthSyncer.SyncFromSession(ctx, healthapp.SyncFromSessionInput{SupplierID: supplier.ID})
 		if err != nil {
-			item.Reason = err.Error()
+			item.Reason = encodeSyncFailure(stepFailureInput{TaskType: taskType, Stage: "supplier_health_sync", Action: "sync_health", Err: err})
 			return
 		}
 		if result != nil {
@@ -1141,7 +1173,7 @@ func (s *Service) syncSupplierTask(ctx context.Context, supplier *adminplusdomai
 			EndedAt:    endedAt,
 		})
 		if err != nil {
-			item.Reason = err.Error()
+			item.Reason = encodeSyncFailure(stepFailureInput{TaskType: taskType, Stage: "supplier_usage_costs_sync", Action: "sync_usage_costs", Err: err})
 			return
 		}
 		if result != nil {
@@ -1157,7 +1189,7 @@ func (s *Service) syncSupplierTask(ctx context.Context, supplier *adminplusdomai
 			AutoPauseOnFailure: true,
 		})
 		if err != nil {
-			item.Reason = err.Error()
+			item.Reason = encodeSyncFailure(stepFailureInput{TaskType: taskType, Stage: "supplier_channel_check", Action: "check_channels", Err: err})
 			return
 		}
 		if result != nil {
@@ -1580,6 +1612,112 @@ func encodeStepFailure(reason stepFailureReason) string {
 	return strings.TrimSpace(firstNonEmpty(reason.LoginMessage, reason.Message, reason.RawError, reason.Code))
 }
 
+func encodeSyncFailure(in stepFailureInput) string {
+	err := in.Err
+	if err == nil {
+		return ""
+	}
+	code := infraerrors.Reason(err)
+	message := infraerrors.Message(err)
+	metadata := map[string]string(nil)
+	if appErr := infraerrors.FromError(err); appErr != nil {
+		if appErr.Reason != "" {
+			code = appErr.Reason
+		}
+		if appErr.Message != "" && appErr.Message != infraerrors.UnknownMessage {
+			message = appErr.Message
+		}
+		metadata = errorMetadata(err)
+	}
+	if strings.TrimSpace(code) == "" {
+		code = firstNonEmpty(reasonCodeFromText(err.Error()), "SCHEDULER_STEP_FAILED")
+	}
+	if strings.TrimSpace(message) == "" || message == infraerrors.UnknownMessage {
+		message = syncFailureDefaultMessage(in.TaskType)
+	}
+	return encodeStepFailure(stepFailureReason{
+		Stage:      firstNonEmpty(in.Stage, "supplier_sync"),
+		Code:       code,
+		Message:    message,
+		Action:     firstNonEmpty(in.Action, "sync"),
+		Outcome:    syncFailureOutcome(code),
+		Suggestion: syncFailureSuggestion(code),
+		RawError:   trimLimit(err.Error(), 900),
+		Metadata:   metadata,
+	})
+}
+
+func errorMetadata(err error) map[string]string {
+	appErr := infraerrors.FromError(err)
+	if appErr == nil || len(appErr.Metadata) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(appErr.Metadata))
+	for key, value := range appErr.Metadata {
+		out[key] = value
+	}
+	return out
+}
+
+func syncFailureDefaultMessage(taskType adminplusdomain.ExtensionTaskType) string {
+	switch taskType {
+	case adminplusdomain.ExtensionTaskTypeFetchBalance:
+		return "supplier balance sync failed"
+	case adminplusdomain.ExtensionTaskTypeFetchGroups:
+		return "supplier groups sync failed"
+	case adminplusdomain.ExtensionTaskTypeFetchRates:
+		return "supplier rates sync failed"
+	case adminplusdomain.ExtensionTaskTypeFetchAnnouncements:
+		return "supplier announcements sync failed"
+	case adminplusdomain.ExtensionTaskTypeFetchUsageCosts:
+		return "supplier usage costs sync failed"
+	case adminplusdomain.ExtensionTaskTypeFetchHealth:
+		return "supplier health sync failed"
+	case adminplusdomain.ExtensionTaskTypeCheckChannels:
+		return "supplier channel check failed"
+	default:
+		return "supplier task sync failed"
+	}
+}
+
+func syncFailureOutcome(code string) string {
+	switch strings.ToUpper(strings.TrimSpace(code)) {
+	case "SUPPLIER_SESSION_NOT_FOUND",
+		"SUPPLIER_SESSION_EXPIRED",
+		"SUPPLIER_SESSION_DECRYPT_FAILED",
+		"SUPPLIER_SESSION_PERMISSION_DENIED",
+		"LOGIN_CREDENTIAL_INVALID",
+		"LOGIN_CAPTCHA_REQUIRED",
+		"LOGIN_MFA_REQUIRED",
+		"BROWSER_FALLBACK_REQUIRED",
+		"BROWSER_CHALLENGE_REQUIRED":
+		return "manual_required"
+	default:
+		return "failed"
+	}
+}
+
+func syncFailureSuggestion(code string) string {
+	switch strings.ToUpper(strings.TrimSpace(code)) {
+	case "SUPPLIER_SESSION_NOT_FOUND", "SUPPLIER_SESSION_EXPIRED", "SUPPLIER_SESSION_DECRYPT_FAILED":
+		return "重新一键登录或使用 Chrome 插件采集会话后重试。"
+	case "SUPPLIER_SESSION_PERMISSION_DENIED":
+		return "供应商会话无权读取该接口，请重新登录、检查账号权限或改用插件采集最新会话。"
+	case "SUPPLIER_SESSION_PROBE_FAILED":
+		return "供应商接口超时或不可达，请检查供应商地址、网络出口和前置防护后重试。"
+	case "SUPPLIER_SESSION_PROBE_HTML", "SUPPLIER_SESSION_PROBE_BAD_STATUS", "SUPPLIER_DIRECT_LOGIN_UPSTREAM_HTML", "SUPPLIER_DIRECT_LOGIN_UPSTREAM_ORIGIN_ERROR":
+		return "供应商前置层返回了 HTML/源站异常，请检查 Cloudflare/Nginx/风控策略或改用浏览器会话。"
+	case "LOGIN_CREDENTIAL_INVALID":
+		return "供应商登录凭据无效，请更新账号密码或 token 后重试。"
+	case "LOGIN_CAPTCHA_REQUIRED", "BROWSER_CHALLENGE_REQUIRED", "BROWSER_FALLBACK_REQUIRED":
+		return "供应商要求浏览器验证，请使用一键登录或插件采集会话。"
+	case "LOGIN_MFA_REQUIRED":
+		return "供应商要求二次验证，请人工完成登录或使用插件采集会话。"
+	default:
+		return "查看供应商地址、登录凭据、会话权限和上游防护策略后重试。"
+	}
+}
+
 func isSessionRefreshableError(err error) bool {
 	if err == nil {
 		return false
@@ -1660,7 +1798,14 @@ func reasonCodeFromText(reason string) string {
 		"SUPPLIER_SESSION_EXPIRED",
 		"SUPPLIER_SESSION_DECRYPT_FAILED",
 		"SUPPLIER_SESSION_PERMISSION_DENIED",
+		"SUPPLIER_SESSION_PROBE_FAILED",
+		"SUPPLIER_SESSION_PROBE_HTML",
+		"SUPPLIER_SESSION_PROBE_BAD_STATUS",
+		"SUPPLIER_SESSION_PROFILE_INVALID",
 		"SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED",
+		"SUPPLIER_DIRECT_LOGIN_UPSTREAM_HTML",
+		"SUPPLIER_DIRECT_LOGIN_UPSTREAM_ORIGIN_ERROR",
+		"SUPPLIER_DIRECT_LOGIN_FAILED",
 		"LOGIN_CREDENTIAL_INVALID",
 		"LOGIN_CAPTCHA_REQUIRED",
 		"LOGIN_MFA_REQUIRED",

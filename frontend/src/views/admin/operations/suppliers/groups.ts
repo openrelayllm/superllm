@@ -1,16 +1,19 @@
 import { groupsAPI } from '@/api/admin/groups'
 import { enableSupplierChannelScheduling, getSupplierProvisionJob, listSupplierChannelChecks, listSupplierKeys, listSupplierGroups, pauseSupplierChannelScheduling, probeSupplierChannel, provisionSupplierKey, syncSupplierChannelChecks } from '@/api/admin/adminPlus'
 import type { AdminGroup } from '@/types'
-import type { Supplier, SupplierChannelCheckSnapshot, SupplierGroup, SupplierProvisionStatus } from '@/api/admin/adminPlus'
+import type { Supplier, SupplierChannelCheckResult, SupplierChannelCheckSnapshot, SupplierGroup, SupplierProvisionStatus } from '@/api/admin/adminPlus'
 import type { QuickProvisionBestChannelOptions } from './types'
 import { ctxFn, ctxValue } from './ctxProxy'
 export function attachSupplierGroups(ctx: any) {
   const appStore = ctxValue(ctx, 'appStore')
   const channelScheduleDialogOpen = ctxValue(ctx, 'channelScheduleDialogOpen')
+  const channelProbeDialogOpen = ctxValue(ctx, 'channelProbeDialogOpen')
   const moreMenuOpen = ctxValue(ctx, 'moreMenuOpen')
   const bulkChannelChecksSyncing = ctxValue(ctx, 'bulkChannelChecksSyncing')
   const groupsSupplier = ctxValue(ctx, 'groupsSupplier')
   const channelScheduleSupplier = ctxValue(ctx, 'channelScheduleSupplier')
+  const channelProbeSupplier = ctxValue(ctx, 'channelProbeSupplier')
+  const channelProbeSnapshot = ctxValue(ctx, 'channelProbeSnapshot')
   const supplierGroups = ctxValue(ctx, 'supplierGroups')
   const supplierKeys = ctxValue(ctx, 'supplierKeys')
   const supplierChannelChecks = ctxValue(ctx, 'supplierChannelChecks')
@@ -32,6 +35,7 @@ export function attachSupplierGroups(ctx: any) {
   const channelProtocol = ctxFn(ctx, 'channelProtocol')
   const upsertSupplierBestChannelSnapshot = ctxFn(ctx, 'upsertSupplierBestChannelSnapshot')
   const groupChannelCheck = ctxFn(ctx, 'groupChannelCheck')
+  const groupKey = ctxFn(ctx, 'groupKey')
   const limeProvisionActionKey = ctxFn(ctx, 'limeProvisionActionKey')
   const channelHasLocalBinding = ctxFn(ctx, 'channelHasLocalBinding')
   const channelIsAvailable = ctxFn(ctx, 'channelIsAvailable')
@@ -215,27 +219,84 @@ export function attachSupplierGroups(ctx: any) {
     return new Promise((resolve) => window.setTimeout(resolve, ms))
   }
 
-  async function probeGroupChannel(group: SupplierGroup) {
-    if (!groupsSupplier.value || channelCheckActionKey.value) return
-    const actionKey = `probe:${group.id}`
-    channelCheckActionKey.value = actionKey
-    channelCheckError.value = ''
-    try {
-      const result = await probeSupplierChannel(groupsSupplier.value.id, {
-        supplier_group_id: group.id,
-        auto_pause_on_failure: true
-      })
-      mergeChannelCheckSnapshots(result.items)
-      await loadBestChannelChecks([groupsSupplier.value.id])
-      appStore.showSuccess('渠道复测完成')
-    } catch (error) {
-      channelCheckError.value = (error as { message?: string }).message || '渠道复测失败'
-      appStore.showError(channelCheckError.value)
-    } finally {
-      if (channelCheckActionKey.value === actionKey) {
-        channelCheckActionKey.value = ''
-      }
+  function openBestChannelProbeDialog(supplier: Supplier) {
+    const snapshot = supplierBestChannel(supplier.id)
+    if (!snapshot) {
+      void syncSupplierChannelFromRow(supplier)
+      return
     }
+    if (!channelHasLocalBinding(snapshot)) {
+      appStore.showError('该渠道还没有本地账号绑定，请先开通账号后再测速')
+      return
+    }
+    channelProbeSupplier.value = supplier
+    channelProbeSnapshot.value = snapshot
+    channelProbeDialogOpen.value = true
+  }
+
+  function openGroupChannelProbeDialog(group: SupplierGroup) {
+    if (!groupsSupplier.value) return
+    const key = groupKey(group)
+    const localAccountID = Number(key?.local_sub2api_account_id || 0)
+    if (!localAccountID) {
+      appStore.showError('该渠道还没有本地账号绑定，请先开通账号后再测速')
+      return
+    }
+    const current = groupChannelCheck(group.id)
+    channelProbeSupplier.value = groupsSupplier.value
+    channelProbeSnapshot.value = {
+      id: current?.id || 0,
+      supplier_id: groupsSupplier.value.id,
+      supplier_group_id: group.id,
+      supplier_key_id: current?.supplier_key_id || key?.id,
+      supplier_account_id: current?.supplier_account_id,
+      local_sub2api_account_id: current?.local_sub2api_account_id || localAccountID,
+      external_group_id: current?.external_group_id || group.external_group_id,
+      group_name: current?.group_name || group.name,
+      provider_family: current?.provider_family || group.provider_family,
+      channel_monitor_id: current?.channel_monitor_id,
+      channel_name: current?.channel_name,
+      channel_provider: current?.channel_provider,
+      primary_model: current?.primary_model,
+      remote_status: current?.remote_status || 'unknown',
+      probe_model: current?.probe_model || '',
+      probe_status: current?.probe_status || 'untested',
+      recommended: current?.recommended || false,
+      effective_rate_multiplier: current?.effective_rate_multiplier || group.effective_rate_multiplier,
+      first_token_ms: current?.first_token_ms || 0,
+      duration_ms: current?.duration_ms || 0,
+      status_code: current?.status_code || 0,
+      error_class: current?.error_class,
+      error_message: current?.error_message,
+      local_account_schedulable: current?.local_account_schedulable || false,
+      captured_at: current?.captured_at || group.updated_at || group.last_seen_at,
+      created_at: current?.created_at || group.created_at
+    }
+    channelProbeDialogOpen.value = true
+  }
+
+  function closeChannelProbeDialog() {
+    channelProbeDialogOpen.value = false
+    channelProbeSupplier.value = null
+    channelProbeSnapshot.value = null
+  }
+
+  async function runChannelProbeFromDialog(modelID: string): Promise<SupplierChannelCheckResult> {
+    if (!channelProbeSupplier.value || !channelProbeSnapshot.value) {
+      throw new Error('未选择测速渠道')
+    }
+    const result = await probeSupplierChannel(channelProbeSupplier.value.id, {
+      supplier_group_id: channelProbeSnapshot.value.supplier_group_id,
+      auto_pause_on_failure: true,
+      probe_model: modelID
+    })
+    mergeChannelCheckSnapshots(result.items)
+    await loadBestChannelChecks([channelProbeSupplier.value.id])
+    const updated = result.items.find((item) => item.supplier_group_id === channelProbeSnapshot.value?.supplier_group_id)
+    if (updated) {
+      channelProbeSnapshot.value = updated
+    }
+    return result
   }
 
   async function setGroupChannelScheduling(group: SupplierGroup, schedulable: boolean) {
@@ -516,7 +577,10 @@ export function attachSupplierGroups(ctx: any) {
     refreshChannelChecksAfterJobs,
     waitProvisionJobTerminal,
     sleep,
-    probeGroupChannel,
+    openBestChannelProbeDialog,
+    openGroupChannelProbeDialog,
+    closeChannelProbeDialog,
+    runChannelProbeFromDialog,
     setGroupChannelScheduling,
     handleGroupScheduleAction,
     openBestChannelScheduleDialog,

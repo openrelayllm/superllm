@@ -88,6 +88,44 @@ func TestWriteConfigFileKeepsDefaultUserConcurrency(t *testing.T) {
 	}
 }
 
+func TestWriteConfigFileIncludesSub2APIIntegration(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	redisDB := 1
+
+	if err := writeConfigFile(&SetupConfig{
+		Sub2API: Sub2APIConfig{
+			ReadonlyDatabaseURL:  "postgresql://readonly:secret@db:5432/sub2api?sslmode=disable",
+			ReadonlyRedisURL:     "redis://redis:6379/1",
+			ReadonlyRedisDB:      &redisDB,
+			AdminBaseURL:         "https://sub2api.example",
+			AdminAPIKey:          "admin-secret",
+			AllowEmbeddedGateway: true,
+		},
+	}); err != nil {
+		t.Fatalf("writeConfigFile() error = %v", err)
+	}
+
+	data, err := os.ReadFile(GetConfigFilePath())
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"sub2api:",
+		"readonly_database_url: postgresql://readonly:secret@db:5432/sub2api?sslmode=disable",
+		"readonly_redis_url: redis://redis:6379/1",
+		"readonly_redis_db: 1",
+		"admin_plus:",
+		"sub2api_admin_base_url: https://sub2api.example",
+		"sub2api_admin_api_key: admin-secret",
+		"allow_embedded_sub2api_gateway: true",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("config missing %q, got:\n%s", want, content)
+		}
+	}
+}
+
 func TestBuildDatabaseConnectionDSNsUsesPostgresForBootstrap(t *testing.T) {
 	cfg := &DatabaseConfig{
 		Host:     "db",

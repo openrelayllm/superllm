@@ -246,6 +246,7 @@ export interface SupplierChannelCheckResult {
 export interface ProbeSupplierChannelPayload {
   supplier_group_id?: number
   auto_pause_on_failure?: boolean
+  probe_model?: string
   first_token_threshold_ms?: number
   total_latency_threshold_ms?: number
 }
@@ -253,6 +254,7 @@ export interface ProbeSupplierChannelPayload {
 export interface SyncSupplierChannelsPayload {
   candidate_limit?: number
   auto_pause_on_failure?: boolean
+  probe_model?: string
   first_token_threshold_ms?: number
   total_latency_threshold_ms?: number
 }
@@ -274,6 +276,12 @@ export interface LoginSupplierSessionResponse {
   balance_snapshot?: BalanceSnapshot
   balance_event?: BalanceEvent | null
   diagnostics?: Record<string, unknown>
+  balance_sync_error?: {
+    code?: string
+    message?: string
+    raw_error?: string
+    metadata?: Record<string, string>
+  }
 }
 
 export interface UpsertSupplierBrowserSessionPayload {
@@ -1074,6 +1082,25 @@ export interface SchedulerStepRecord {
   locked_until?: string | null
   started_at?: string | null
   finished_at?: string | null
+  operation_logs?: SchedulerAttemptRecord[]
+}
+
+export interface SchedulerAttemptRecord {
+  id: number
+  step_id: number
+  run_id: string
+  supplier_id: number
+  task_type: ExtensionTaskType | string
+  status: string
+  worker_id?: string
+  attempt_no: number
+  started_at?: string | null
+  finished_at: string
+  duration_ms: number
+  error_code?: string
+  error_message?: string
+  request_snapshot?: Record<string, unknown>
+  response_snapshot?: Record<string, unknown>
 }
 
 export interface SchedulerRunDetail {
@@ -1177,13 +1204,56 @@ export interface NotificationDelivery {
   event_id: number
   supplier_id: number
   dedupe_key: string
-  status: 'sending' | 'succeeded' | 'failed'
+  status: 'sending' | 'succeeded' | 'failed' | 'suppressed'
   attempts: number
   last_error?: string
   payload?: Record<string, unknown>
   sent_at?: string | null
   created_at: string
   updated_at: string
+}
+
+export interface NotificationRule {
+  event_type: string
+  label: string
+  description: string
+  enabled: boolean
+  severity: 'info' | 'warning' | 'critical' | string
+  quiet_window_minutes: number
+  dedupe_scope: string
+  notify_recovery: boolean
+  threshold?: string
+}
+
+export interface NotificationChannelSettings {
+  enabled: boolean
+  webhook_url?: string
+  webhook_secret?: string
+  webhook_host?: string
+  webhook_configured: boolean
+  secret_configured: boolean
+  config_source: 'database' | 'environment' | string
+  last_test_at?: string | null
+  last_test_status?: string
+  last_test_error?: string
+}
+
+export interface NotificationSettings {
+  feishu: NotificationChannelSettings
+  rules: NotificationRule[]
+}
+
+export interface NotificationCenterStatus {
+  feishu_configured: boolean
+  feishu_enabled: boolean
+  open_rules: number
+  total_rules: number
+  total_deliveries: number
+  succeeded: number
+  failed: number
+  sending: number
+  suppressed: number
+  last_delivery_at?: string | null
 }
 
 export interface SupplierSignal {
@@ -1718,7 +1788,32 @@ export async function updateActionRecommendationStatus(id: number, status: Actio
   return data
 }
 
-export async function listNotificationDeliveries(params?: { supplier_id?: number; status?: string; channel?: string; event_type?: string } & AdminPlusPaginationParams) {
+export async function getNotificationCenterStatus(): Promise<NotificationCenterStatus> {
+  const { data } = await apiClient.get<NotificationCenterStatus>('/admin-plus/notifications/center/status')
+  return data
+}
+
+export async function getNotificationSettings(): Promise<NotificationSettings> {
+  const { data } = await apiClient.get<NotificationSettings>('/admin-plus/notifications/settings')
+  return data
+}
+
+export async function updateNotificationSettings(payload: NotificationSettings): Promise<NotificationSettings> {
+  const { data } = await apiClient.put<NotificationSettings>('/admin-plus/notifications/settings', payload)
+  return data
+}
+
+export async function testNotification(payload?: { text?: string }): Promise<NotificationDelivery> {
+  const { data } = await apiClient.post<NotificationDelivery>('/admin-plus/notifications/test', payload || {})
+  return data
+}
+
+export async function retryNotificationDelivery(id: number): Promise<NotificationDelivery> {
+  const { data } = await apiClient.post<NotificationDelivery>(`/admin-plus/notifications/deliveries/${id}/retry`)
+  return data
+}
+
+export async function listNotificationDeliveries(params?: { supplier_id?: number; status?: NotificationDelivery['status'] | ''; channel?: string; event_type?: string } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<NotificationDelivery>>('/admin-plus/notifications/deliveries', { params })
   return data
 }
@@ -1806,6 +1901,11 @@ export const adminPlusAPI = {
   generateActions,
   listActionRecommendations,
   updateActionRecommendationStatus,
+  getNotificationCenterStatus,
+  getNotificationSettings,
+  updateNotificationSettings,
+  testNotification,
+  retryNotificationDelivery,
   listNotificationDeliveries
 }
 

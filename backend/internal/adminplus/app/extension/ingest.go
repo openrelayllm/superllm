@@ -133,40 +133,6 @@ func (p *IngestProcessor) processSessionBundle(ctx context.Context, task *adminp
 			return nil, err
 		}
 	}
-	if p.balances != nil && p.balances.CanSyncFromSession() {
-		synced, err := p.balances.SyncFromSession(ctx, balancesapp.SyncFromSessionInput{
-			SupplierID: task.SupplierID,
-		})
-		if err != nil {
-			out["balance_probe_error"] = err.Error()
-		} else if synced != nil {
-			var balanceCents any
-			var balanceCurrency string
-			if synced.Probe != nil {
-				if synced.Probe.BalanceCents != nil {
-					balanceCents = *synced.Probe.BalanceCents
-				}
-				balanceCurrency = synced.Probe.BalanceCurrency
-			}
-			out["balance_probe"] = map[string]any{
-				"system_type":   synced.SystemType,
-				"origin":        synced.Origin,
-				"api_base_url":  synced.APIBaseURL,
-				"synced_at":     synced.SyncedAt,
-				"balance_cents": balanceCents,
-				"currency":      balanceCurrency,
-			}
-			if synced.Snapshot != nil {
-				out["balance_snapshot_id"] = synced.Snapshot.ID
-				out["balance_cents"] = synced.Snapshot.BalanceCents
-				out["balance_currency"] = synced.Snapshot.Currency
-			}
-			if synced.Event != nil {
-				out["balance_event_id"] = synced.Event.ID
-				out["balance_event_type"] = string(synced.Event.Type)
-			}
-		}
-	}
 	delete(result, "session_bundle")
 	result["session_summary"] = out["session_summary"]
 	return out, nil

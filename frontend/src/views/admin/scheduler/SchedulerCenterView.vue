@@ -108,7 +108,7 @@
                     <td class="px-4 py-3"><span class="badge" :class="runStatusClass(run.status)">{{ runStatusLabel(run.status) }}</span></td>
                     <td class="px-4 py-3 text-sm text-gray-500 dark:text-dark-400">{{ run.supplier_count }}</td>
                     <td class="px-4 py-3 text-sm text-gray-500 dark:text-dark-400">{{ run.succeeded_steps }}/{{ run.total_steps }}</td>
-                    <td class="px-4 py-3 text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(run.requested_at) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-500 dark:text-dark-400">{{ runPrimaryTime(run) }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -176,7 +176,7 @@
           <h2 class="text-lg font-semibold text-gray-900 dark:text-white">运行记录</h2>
         </div>
         <div class="overflow-x-auto">
-          <table class="w-full min-w-[1120px] divide-y divide-gray-200 dark:divide-dark-700">
+          <table class="w-full min-w-[1260px] divide-y divide-gray-200 dark:divide-dark-700">
             <thead class="bg-gray-50 dark:bg-dark-800">
               <tr>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">Run</th>
@@ -184,6 +184,7 @@
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">触发</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">状态</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">Step</th>
+                <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">时间</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">耗时</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">错误</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">操作</th>
@@ -191,7 +192,7 @@
             </thead>
             <tbody class="divide-y divide-gray-100 bg-white dark:divide-dark-700 dark:bg-dark-900">
               <tr v-if="runs.length === 0">
-                <td colspan="8" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无运行记录。点击“刷新余额”会创建一条真实 run。</td>
+                <td colspan="9" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无运行记录。点击“刷新余额”会创建一条真实 run。</td>
               </tr>
               <tr v-for="run in runs" :key="run.id">
                 <td class="px-4 py-4 font-mono text-xs text-gray-500 dark:text-dark-400">{{ run.id }}</td>
@@ -199,6 +200,11 @@
                 <td class="px-4 py-4 text-sm text-gray-500 dark:text-dark-400">{{ run.trigger_type }}</td>
                 <td class="px-4 py-4"><span class="badge" :class="runStatusClass(run.status)">{{ runStatusLabel(run.status) }}</span></td>
                 <td class="px-4 py-4 text-sm text-gray-500 dark:text-dark-400">{{ run.succeeded_steps }}/{{ run.total_steps }} 成功，{{ run.failed_steps }} 失败</td>
+                <td class="px-4 py-4 text-sm text-gray-500 dark:text-dark-400">
+                  <div>请求 {{ runPrimaryTime(run) }}</div>
+                  <div v-if="run.started_at" class="mt-1 text-xs text-gray-400 dark:text-dark-500">开始 {{ formatDateTime(run.started_at) || '-' }}</div>
+                  <div v-if="run.finished_at" class="mt-1 text-xs text-gray-400 dark:text-dark-500">完成 {{ formatDateTime(run.finished_at) || '-' }}</div>
+                </td>
                 <td class="px-4 py-4 text-sm text-gray-500 dark:text-dark-400">{{ run.duration_ms }} ms</td>
                 <td class="px-4 py-4 text-sm text-gray-500 dark:text-dark-400">{{ run.error_message || '-' }}</td>
                 <td class="px-4 py-4">
@@ -654,8 +660,12 @@ async function runSupplierAutomationAction(supplier: SchedulerSupplierStatus, ac
   runningSupplierActionKey.value = key
   try {
     if (action === 'login_session') {
-      await loginSupplierSession(supplier.supplier_id)
-      appStore.showSuccess('已完成供应商直登')
+      const result = await loginSupplierSession(supplier.supplier_id)
+      if (result.balance_sync_error) {
+        appStore.showWarning('已完成供应商直登，余额读取失败，调度中心会继续重试')
+      } else {
+        appStore.showSuccess('已完成供应商直登')
+      }
       await loadPage()
       return
     }
@@ -758,6 +768,10 @@ function normalizedSettingsPayload(): SchedulerSettings {
     default_enabled_task_types: [...settingsForm.default_enabled_task_types],
     high_cost_task_types: [...settingsForm.high_cost_task_types]
   }
+}
+
+function runPrimaryTime(run: SchedulerRunSummary): string {
+  return formatDateTime(run.requested_at) || formatDateTime(run.started_at) || formatDateTime(run.finished_at) || '-'
 }
 
 onMounted(loadPage)

@@ -184,12 +184,6 @@ h2 {
   color: #027a48;
 }
 
-.result.partial {
-  border-color: #fedf89;
-  background: #fffaeb;
-  color: #b54708;
-}
-
 .result.failed {
   border-color: #fecdca;
   background: #fff1f3;
@@ -218,11 +212,6 @@ h2 {
   color: #027a48;
 }
 
-.result.partial .result-badge {
-  background: #fef0c7;
-  color: #b54708;
-}
-
 .result.failed .result-badge {
   background: #ffe4e8;
   color: #b42318;
@@ -248,10 +237,6 @@ h2 {
 
 .result.succeeded .result-meta {
   color: #027a48;
-}
-
-.result.partial .result-meta {
-  color: #b54708;
 }
 
 .actions {

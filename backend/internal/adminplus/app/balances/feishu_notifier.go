@@ -11,22 +11,28 @@ import (
 )
 
 type FeishuNotifier struct {
-	sender *notifications.Feishu
+	service *notifications.Service
 }
 
 func NewFeishuNotifierFromEnv(repo notifications.Repository) *FeishuNotifier {
-	sender := notifications.NewFeishuFromEnv(repo)
-	if sender == nil {
+	if repo == nil {
 		return nil
 	}
-	return &FeishuNotifier{sender: sender}
+	return &FeishuNotifier{service: notifications.NewService(repo)}
+}
+
+func NewFeishuNotifier(service *notifications.Service) *FeishuNotifier {
+	if service == nil {
+		return nil
+	}
+	return &FeishuNotifier{service: service}
 }
 
 func (n *FeishuNotifier) NotifyBalanceEvent(ctx context.Context, event *adminplusdomain.BalanceEvent, snapshot *adminplusdomain.BalanceSnapshot) error {
-	if n == nil || n.sender == nil || event == nil {
+	if n == nil || n.service == nil || event == nil {
 		return nil
 	}
-	return n.sender.SendEvent(ctx, notifications.Event{
+	return n.service.Dispatch(ctx, notifications.DispatchInput{
 		Type:       "balance." + string(event.Type),
 		ID:         event.ID,
 		SupplierID: event.SupplierID,

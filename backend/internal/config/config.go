@@ -67,6 +67,8 @@ type Config struct {
 	Turnstile               TurnstileConfig               `mapstructure:"turnstile"`
 	Database                DatabaseConfig                `mapstructure:"database"`
 	Redis                   RedisConfig                   `mapstructure:"redis"`
+	Sub2API                 Sub2APIIntegrationConfig      `mapstructure:"sub2api"`
+	AdminPlus               AdminPlusConfig               `mapstructure:"admin_plus"`
 	Ops                     OpsConfig                     `mapstructure:"ops"`
 	JWT                     JWTConfig                     `mapstructure:"jwt"`
 	Totp                    TotpConfig                    `mapstructure:"totp"`
@@ -154,6 +156,18 @@ type UpdateConfig struct {
 	// 支持 http/https/socks5/socks5h 协议
 	// 例如: "http://127.0.0.1:7890", "socks5://127.0.0.1:1080"
 	ProxyURL string `mapstructure:"proxy_url"`
+}
+
+type Sub2APIIntegrationConfig struct {
+	ReadonlyDatabaseURL string `mapstructure:"readonly_database_url"`
+	ReadonlyRedisURL    string `mapstructure:"readonly_redis_url"`
+	ReadonlyRedisDB     int    `mapstructure:"readonly_redis_db"`
+}
+
+type AdminPlusConfig struct {
+	Sub2APIAdminBaseURL         string `mapstructure:"sub2api_admin_base_url"`
+	Sub2APIAdminAPIKey          string `mapstructure:"sub2api_admin_api_key"`
+	AllowEmbeddedSub2APIGateway bool   `mapstructure:"allow_embedded_sub2api_gateway"`
 }
 
 type IdempotencyConfig struct {
@@ -1376,12 +1390,14 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	viper.AddConfigPath(".")
 	// 4. Config subdirectory
 	viper.AddConfigPath("./config")
-	// 5. System config directory
+	// 5. System config directories
+	viper.AddConfigPath("/etc/sub2api-admin-plus")
 	viper.AddConfigPath("/etc/sub2api")
 
 	// 环境变量支持
 	viper.AutomaticEnv()
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	bindSub2APIIntegrationEnv()
 
 	// 默认值
 	setDefaults()
@@ -1448,6 +1464,10 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	cfg.OIDC.UsePKCEExplicit = hasExplicitConfigOrEnv("oidc_connect.use_pkce", "OIDC_CONNECT_USE_PKCE")
 	cfg.OIDC.ValidateIDTokenExplicit = hasExplicitConfigOrEnv("oidc_connect.validate_id_token", "OIDC_CONNECT_VALIDATE_ID_TOKEN")
 	cfg.Dashboard.KeyPrefix = strings.TrimSpace(cfg.Dashboard.KeyPrefix)
+	cfg.Sub2API.ReadonlyDatabaseURL = strings.TrimSpace(cfg.Sub2API.ReadonlyDatabaseURL)
+	cfg.Sub2API.ReadonlyRedisURL = strings.TrimSpace(cfg.Sub2API.ReadonlyRedisURL)
+	cfg.AdminPlus.Sub2APIAdminBaseURL = strings.TrimSpace(cfg.AdminPlus.Sub2APIAdminBaseURL)
+	cfg.AdminPlus.Sub2APIAdminAPIKey = strings.TrimSpace(cfg.AdminPlus.Sub2APIAdminAPIKey)
 	cfg.CORS.AllowedOrigins = normalizeStringSlice(cfg.CORS.AllowedOrigins)
 	cfg.Security.ResponseHeaders.AdditionalAllowed = normalizeStringSlice(cfg.Security.ResponseHeaders.AdditionalAllowed)
 	cfg.Security.ResponseHeaders.ForceRemove = normalizeStringSlice(cfg.Security.ResponseHeaders.ForceRemove)
@@ -1528,6 +1548,19 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+func bindSub2APIIntegrationEnv() {
+	for _, key := range []string{
+		"sub2api.readonly_database_url",
+		"sub2api.readonly_redis_url",
+		"sub2api.readonly_redis_db",
+		"admin_plus.sub2api_admin_base_url",
+		"admin_plus.sub2api_admin_api_key",
+		"admin_plus.allow_embedded_sub2api_gateway",
+	} {
+		_ = viper.BindEnv(key)
+	}
 }
 
 func setDefaults() {
@@ -1710,6 +1743,15 @@ func setDefaults() {
 	viper.SetDefault("redis.pool_size", 1024)
 	viper.SetDefault("redis.min_idle_conns", 128)
 	viper.SetDefault("redis.enable_tls", false)
+
+	// Sub2API integration. Environment keys map to SUB2API_READONLY_* and
+	// ADMIN_PLUS_SUB2API_ADMIN_* through the Viper env replacer.
+	viper.SetDefault("sub2api.readonly_database_url", "")
+	viper.SetDefault("sub2api.readonly_redis_url", "")
+	viper.SetDefault("sub2api.readonly_redis_db", -1)
+	viper.SetDefault("admin_plus.sub2api_admin_base_url", "")
+	viper.SetDefault("admin_plus.sub2api_admin_api_key", "")
+	viper.SetDefault("admin_plus.allow_embedded_sub2api_gateway", false)
 
 	// Ops (vNext)
 	viper.SetDefault("ops.enabled", true)
@@ -2864,6 +2906,7 @@ func GetServerAddress() string {
 	v.SetConfigType("yaml")
 	v.AddConfigPath(".")
 	v.AddConfigPath("./config")
+	v.AddConfigPath("/etc/sub2api-admin-plus")
 	v.AddConfigPath("/etc/sub2api")
 
 	// Support SERVER_HOST and SERVER_PORT environment variables

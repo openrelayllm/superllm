@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -95,7 +96,9 @@ func (c *SessionProfileClient) DirectLogin(ctx context.Context, in ports.DirectL
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_FAILED", "failed to request supplier login endpoint").WithCause(err)
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_FAILED", "failed to request supplier login endpoint").
+			WithCause(err).
+			WithMetadata(map[string]string{"endpoint": loginEndpoint})
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -103,17 +106,17 @@ func (c *SessionProfileClient) DirectLogin(ctx context.Context, in ports.DirectL
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, infraerrors.New(resp.StatusCode, "LOGIN_CREDENTIAL_INVALID", "supplier direct login credential is invalid")
+		return nil, withHTTPDiagnostics(infraerrors.New(resp.StatusCode, "LOGIN_CREDENTIAL_INVALID", "supplier direct login credential is invalid"), loginEndpoint, resp.StatusCode, resp.Header.Get("Content-Type"), data)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, classifyDirectLoginFailure(resp.StatusCode, data)
+		return nil, withHTTPDiagnostics(classifyDirectLoginFailure(resp.StatusCode, data), loginEndpoint, resp.StatusCode, resp.Header.Get("Content-Type"), data)
 	}
 	token, refreshToken, expiresAt, raw, err := parseSub2APILoginResponse(data)
 	if err != nil {
-		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_RESPONSE_INVALID", "supplier login response is invalid").WithCause(err)
+		return nil, withHTTPDiagnostics(infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_RESPONSE_INVALID", "supplier login response is invalid").WithCause(err), loginEndpoint, resp.StatusCode, resp.Header.Get("Content-Type"), data)
 	}
 	if token == "" {
-		return nil, classifyDirectLoginFailure(resp.StatusCode, data)
+		return nil, withHTTPDiagnostics(classifyDirectLoginFailure(resp.StatusCode, data), loginEndpoint, resp.StatusCode, resp.Header.Get("Content-Type"), data)
 	}
 	capturedAt := c.now().UTC()
 	bundle := buildDirectLoginSessionBundle(ports.DirectLoginInput{
@@ -171,26 +174,16 @@ func (c *SessionProfileClient) directLoginFromToken(ctx context.Context, in port
 		Origin:     origin,
 		APIBaseURL: apiBaseURL,
 	}, strings.TrimSpace(in.Token), "", capturedAt, nil)
-	probe, err := c.ProbeSub2APIUserProfile(ctx, ports.SessionProbeInput{
-		SupplierID: in.SupplierID,
-		Origin:     origin,
-		APIBaseURL: apiBaseURL,
-		Bundle:     bundle,
-	})
-	if err != nil {
-		return nil, err
-	}
-	diagnostics := map[string]any{"token_probe": "ok"}
-	if probe != nil {
-		diagnostics["profile_status"] = probe.Status
-	}
 	return &ports.DirectLoginResult{
 		SupplierID:    in.SupplierID,
 		Origin:        origin,
 		APIBaseURL:    apiBaseURL,
 		SessionBundle: bundle,
 		CapturedAt:    capturedAt,
-		Diagnostics:   diagnostics,
+		Diagnostics: map[string]any{
+			"login_method":  "access_token",
+			"token_present": true,
+		},
 	}, nil
 }
 
@@ -210,7 +203,9 @@ func (c *SessionProfileClient) ProbeSub2APIUserProfile(ctx context.Context, in p
 	applySessionHeaders(req, in.Bundle)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_SESSION_PROBE_FAILED", "failed to probe supplier session").WithCause(err)
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_SESSION_PROBE_FAILED", "failed to probe supplier session").
+			WithCause(err).
+			WithMetadata(map[string]string{"endpoint": endpoint})
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -218,15 +213,18 @@ func (c *SessionProfileClient) ProbeSub2APIUserProfile(ctx context.Context, in p
 	if err != nil {
 		return nil, err
 	}
+	if looksLikeHTMLResponse(strings.ToLower(string(data))) {
+		return nil, withHTTPDiagnostics(infraerrors.New(http.StatusBadGateway, "SUPPLIER_SESSION_PROBE_HTML", "supplier profile endpoint returned an HTML response"), endpoint, resp.StatusCode, resp.Header.Get("Content-Type"), data)
+	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, infraerrors.New(resp.StatusCode, "SUPPLIER_SESSION_PERMISSION_DENIED", supplierPermissionDeniedMessage("supplier session cannot access user profile", data))
+		return nil, withHTTPDiagnostics(infraerrors.New(resp.StatusCode, "SUPPLIER_SESSION_PERMISSION_DENIED", supplierPermissionDeniedMessage("supplier session cannot access user profile", data)), endpoint, resp.StatusCode, resp.Header.Get("Content-Type"), data)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_SESSION_PROBE_BAD_STATUS", "supplier profile endpoint returned non-success status")
+		return nil, withHTTPDiagnostics(infraerrors.New(http.StatusBadGateway, "SUPPLIER_SESSION_PROBE_BAD_STATUS", "supplier profile endpoint returned non-success status"), endpoint, resp.StatusCode, resp.Header.Get("Content-Type"), data)
 	}
 	profile, raw, err := parseSub2APIProfile(data)
 	if err != nil {
-		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_SESSION_PROFILE_INVALID", "supplier profile response is invalid").WithCause(err)
+		return nil, withHTTPDiagnostics(infraerrors.New(http.StatusBadGateway, "SUPPLIER_SESSION_PROFILE_INVALID", "supplier profile response is invalid").WithCause(err), endpoint, resp.StatusCode, resp.Header.Get("Content-Type"), data)
 	}
 	balanceCents := int64(math.Round(profile.Balance * 100))
 	if balanceCents < 0 {
@@ -435,6 +433,55 @@ func isCloudflareOriginFailure(statusCode int, lowerBody string) bool {
 func looksLikeHTMLResponse(lowerBody string) bool {
 	trimmed := strings.TrimSpace(lowerBody)
 	return strings.HasPrefix(trimmed, "<!doctype html") || strings.HasPrefix(trimmed, "<html")
+}
+
+func withHTTPDiagnostics(err error, endpoint string, statusCode int, contentType string, body []byte) error {
+	if err == nil {
+		return nil
+	}
+	var appErr *infraerrors.ApplicationError
+	if !errors.As(err, &appErr) {
+		return err
+	}
+	metadata := make(map[string]string, len(appErr.Metadata)+5)
+	for key, value := range appErr.Metadata {
+		metadata[key] = value
+	}
+	if strings.TrimSpace(endpoint) != "" {
+		metadata["endpoint"] = endpoint
+	}
+	if statusCode > 0 {
+		metadata["status_code"] = strconv.Itoa(statusCode)
+	}
+	if strings.TrimSpace(contentType) != "" {
+		metadata["content_type"] = strings.TrimSpace(contentType)
+	}
+	if len(body) > 0 {
+		lower := strings.ToLower(string(body))
+		if looksLikeHTMLResponse(lower) {
+			metadata["body_type"] = "html"
+		} else if json.Valid(body) {
+			metadata["body_type"] = "json"
+		} else {
+			metadata["body_type"] = "text"
+		}
+		if excerpt := responseExcerpt(body, 240); excerpt != "" {
+			metadata["body_excerpt"] = excerpt
+		}
+	}
+	return appErr.WithMetadata(metadata)
+}
+
+func responseExcerpt(body []byte, limit int) string {
+	text := strings.TrimSpace(string(body))
+	if text == "" {
+		return ""
+	}
+	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
+	if len(text) <= limit {
+		return text
+	}
+	return text[:limit]
 }
 
 func supplierPermissionDeniedMessage(base string, data []byte) string {

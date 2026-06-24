@@ -319,6 +319,75 @@ func TestServiceSyncUsesProviderTypeFromSessionBundleForBalanceOnlyNewAPI(t *tes
 	require.Equal(t, "USD", result.Snapshot.Currency)
 }
 
+func TestServiceSyncNotifiesCostReconcileAnomalyWhenDeltaExceedsThreshold(t *testing.T) {
+	now := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
+	repo := &anomalyCostRepository{
+		MemoryRepository: NewMemoryRepository(),
+		deltaCents:       ptrInt64(-250),
+	}
+	session := &stubCostSessionReader{}
+	funding := &stubCostFundingReader{result: &ports.ReadFundingTransactionsResult{
+		SupplierID:   7,
+		ProviderType: "sub2api",
+		Items: []ports.ProviderFundingTransaction{
+			{
+				ExternalID:  "order-1",
+				Status:      "paid",
+				Currency:    "USD",
+				AmountCents: 10000,
+			},
+		},
+	}}
+	notifier := &stubCostNotifier{}
+	svc := NewServiceWithDependenciesAndNotifier(repo, notifier, session, funding, nil, nil, nil, nil)
+	svc.now = func() time.Time { return now }
+
+	result, err := svc.Sync(context.Background(), SyncInput{
+		SupplierID:                 7,
+		IncludeFundingTransactions: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Snapshot)
+	require.Len(t, notifier.snapshots, 1)
+	require.Equal(t, int64(7), notifier.snapshots[0].SupplierID)
+	require.NotNil(t, notifier.snapshots[0].BalanceDeltaCents)
+	require.Equal(t, int64(-250), *notifier.snapshots[0].BalanceDeltaCents)
+}
+
+func TestServiceSyncDoesNotNotifyCostReconcileAnomalyBelowThreshold(t *testing.T) {
+	now := time.Date(2026, 6, 22, 9, 30, 0, 0, time.UTC)
+	repo := &anomalyCostRepository{
+		MemoryRepository: NewMemoryRepository(),
+		deltaCents:       ptrInt64(50),
+	}
+	session := &stubCostSessionReader{}
+	funding := &stubCostFundingReader{result: &ports.ReadFundingTransactionsResult{
+		SupplierID:   7,
+		ProviderType: "sub2api",
+		Items: []ports.ProviderFundingTransaction{
+			{
+				ExternalID:  "order-1",
+				Status:      "paid",
+				Currency:    "USD",
+				AmountCents: 10000,
+			},
+		},
+	}}
+	notifier := &stubCostNotifier{}
+	svc := NewServiceWithDependenciesAndNotifier(repo, notifier, session, funding, nil, nil, nil, nil)
+	svc.now = func() time.Time { return now }
+
+	result, err := svc.Sync(context.Background(), SyncInput{
+		SupplierID:                 7,
+		IncludeFundingTransactions: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Snapshot)
+	require.Empty(t, notifier.snapshots)
+}
+
 func TestServiceSyncTurnsRefundedFundingIntoDebit(t *testing.T) {
 	repo := NewMemoryRepository()
 	now := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
@@ -551,6 +620,36 @@ func (s *stubCostSupplierLookup) Get(_ context.Context, id int64) (*adminplusdom
 	return &out, nil
 }
 
+type stubCostNotifier struct {
+	snapshots []*adminplusdomain.SupplierCostSnapshot
+}
+
+func (n *stubCostNotifier) NotifyCostReconcileAnomaly(_ context.Context, snapshot *adminplusdomain.SupplierCostSnapshot) error {
+	n.snapshots = append(n.snapshots, cloneSnapshot(snapshot))
+	return nil
+}
+
+type anomalyCostRepository struct {
+	*MemoryRepository
+	deltaCents *int64
+}
+
+func (r *anomalyCostRepository) RefreshSnapshot(ctx context.Context, supplierID int64, currency string, capturedAt time.Time) (*adminplusdomain.SupplierCostSnapshot, error) {
+	snapshot, err := r.MemoryRepository.RefreshSnapshot(ctx, supplierID, currency, capturedAt)
+	if err != nil || snapshot == nil || r.deltaCents == nil {
+		return snapshot, err
+	}
+	delta := *r.deltaCents
+	actual := snapshot.ExpectedBalanceCents + delta
+	snapshot.ActualBalanceCents = &actual
+	snapshot.BalanceDeltaCents = &delta
+	return cloneSnapshot(snapshot), nil
+}
+
+func ptrInt64(value int64) *int64 {
+	return &value
+}
+
 func findEntitlementByExternalID(t *testing.T, items []*adminplusdomain.SupplierEntitlementTransaction, externalID string) *adminplusdomain.SupplierEntitlementTransaction {
 	t.Helper()
 	for _, item := range items {
@@ -563,7 +662,9 @@ func findEntitlementByExternalID(t *testing.T, items []*adminplusdomain.Supplier
 }
 
 var _ Repository = (*MemoryRepository)(nil)
+var _ Repository = (*anomalyCostRepository)(nil)
 var _ SessionReader = (*stubCostSessionReader)(nil)
 var _ ports.SessionFundingAdapter = (*stubCostFundingReader)(nil)
 var _ ports.SessionEntitlementAdapter = (*stubCostEntitlementReader)(nil)
 var _ SupplierLookup = (*stubCostSupplierLookup)(nil)
+var _ Notifier = (*stubCostNotifier)(nil)

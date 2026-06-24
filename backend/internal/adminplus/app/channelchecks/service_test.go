@@ -76,6 +76,34 @@ func TestServiceCheckAutoPausesFailedChannel(t *testing.T) {
 	require.Equal(t, []int64{201}, repo.pausedAccountIDs)
 }
 
+func TestServiceCheckUsesRequestedProbeModel(t *testing.T) {
+	repo := newFakeChannelCheckRepository()
+	repo.candidates = []*Candidate{fakeCandidate(7, 101, 0.7, 201, true)}
+	var receivedModel string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		receivedModel, _ = body["model"].(string)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	healthRepo := &fakeChannelHealthRepository{baseURL: server.URL}
+	svc := NewService(repo, nil, nil, healthapp.NewService(healthRepo))
+
+	result, err := svc.Check(context.Background(), CheckInput{
+		SupplierID:      7,
+		SupplierGroupID: 101,
+		ProbeModel:      "gpt-5.5",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Items, 1)
+	require.Equal(t, "gpt-5.5", receivedModel)
+	require.Equal(t, "gpt-5.5", result.Items[0].ProbeModel)
+}
+
 func TestServiceSetSchedulingEnsuresMissingLocalGroupBinding(t *testing.T) {
 	repo := newFakeChannelCheckRepository()
 	repo.candidates = []*Candidate{fakeCandidate(7, 101, 0.7, 201, false)}
@@ -140,7 +168,7 @@ func TestServiceListBestReturnsBestChannelPerProtocol(t *testing.T) {
 	require.Equal(t, "gemini", snapshotProtocolKey(items[2]))
 }
 
-func TestServiceListBestPrefersCurrentLowestCandidate(t *testing.T) {
+func TestServiceListBestPrefersAvailableOverLowerUntestedCandidate(t *testing.T) {
 	repo := newFakeChannelCheckRepository()
 	now := time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC)
 	repo.candidates = []*Candidate{
@@ -162,11 +190,35 @@ func TestServiceListBestPrefersCurrentLowestCandidate(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, items, 1)
+	require.Equal(t, int64(102), items[0].SupplierGroupID)
+	require.Equal(t, 0.1, items[0].EffectiveRateMultiplier)
+	require.Equal(t, adminplusdomain.SupplierChannelProbeStatusAvailable, items[0].ProbeStatus)
+}
+
+func TestServiceListBestReturnsLowestCurrentCandidateWhenNoAvailable(t *testing.T) {
+	repo := newFakeChannelCheckRepository()
+	now := time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC)
+	repo.candidates = []*Candidate{
+		fakeCandidate(7, 101, 0.04, 201, false),
+		fakeCandidate(7, 102, 0.1, 202, true),
+	}
+	failedLowest := fakeSnapshot(1, 7, 101, "openai", "limited", 0.04, false, now)
+	failedLowest.ProbeStatus = adminplusdomain.SupplierChannelProbeStatusRequestError
+	failedLowest.ErrorClass = "request_error"
+	failedLowest.ErrorMessage = "upstream request failed"
+	untestedHigher := fakeSnapshot(2, 7, 102, "openai", "plus", 0.1, false, now.Add(time.Second))
+	untestedHigher.ProbeStatus = adminplusdomain.SupplierChannelProbeStatusUntested
+	repo.snapshots = []*adminplusdomain.SupplierChannelCheckSnapshot{failedLowest, untestedHigher}
+	svc := NewService(repo, nil, nil, nil)
+	svc.now = func() time.Time { return now.Add(2 * time.Second) }
+
+	items, err := svc.ListBest(context.Background(), []int64{7})
+
+	require.NoError(t, err)
+	require.Len(t, items, 1)
 	require.Equal(t, int64(101), items[0].SupplierGroupID)
 	require.Equal(t, 0.04, items[0].EffectiveRateMultiplier)
-	require.Equal(t, int64(201), items[0].LocalSub2APIAccountID)
-	require.Equal(t, adminplusdomain.SupplierChannelProbeStatusUntested, items[0].ProbeStatus)
-	require.Empty(t, items[0].ErrorMessage)
+	require.Equal(t, adminplusdomain.SupplierChannelProbeStatusRequestError, items[0].ProbeStatus)
 }
 
 type fakeChannelCheckRepository struct {

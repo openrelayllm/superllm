@@ -321,8 +321,8 @@
                 type="button"
                 class="btn btn-secondary btn-sm"
                 :disabled="rowChannelCheckSupplierID === row.id"
-                title="使用 GPT-5.4 Mini 检测最低倍率候选渠道，失败时自动暂停本地调度"
-                @click="syncSupplierChannelFromRow(row)"
+                title="选择模型并测试最低倍率候选渠道，成功后刷新首 token 和总耗时"
+                @click="openBestChannelProbeDialog(row)"
               >
                 <Icon name="beaker" size="xs" :class="{ 'animate-spin': rowChannelCheckSupplierID === row.id }" />
                 {{ rowChannelCheckSupplierID === row.id ? '提交中' : '检测' }}
@@ -651,6 +651,7 @@ const {
   openEditDialog,
   openGroupsDialog,
   loginSupplierFromRow,
+  openBestChannelProbeDialog,
   syncSupplierChannelFromRow,
   syncSelectedChannelChecks,
   openBestChannelScheduleDialog,

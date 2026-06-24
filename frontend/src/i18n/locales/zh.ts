@@ -198,6 +198,9 @@ export default {
       password: '密码',
       databaseName: '数据库名称',
       sslMode: 'SSL 模式',
+      dedicatedWarningTitle: '请使用独立的 Admin Plus 数据库',
+      dedicatedWarningBody:
+        '不要指向现有 Sub2API 生产主库。推荐数据库名和用户为 sub2api_admin_plus，并确保该用户拥有 public schema 的建表权限。',
       passwordPlaceholder: '密码',
       ssl: {
         disable: '禁用',
@@ -217,6 +220,22 @@ export default {
       enableTls: '启用 TLS',
       enableTlsHint: '连接 Redis 时使用 TLS（公共 CA 证书）'
     },
+    sub2api: {
+      title: 'Sub2API 集成',
+      description: '连接已有 Sub2API 实例，用于读取账号池和执行账号开通',
+      integrationTitle: 'Admin Plus 是 Sub2API 的补充管理面',
+      integrationBody:
+        '这些配置不会替代 Admin Plus 主库。只读数据库和只读 Redis 用于读取真实 Sub2API 运行数据；Admin API 用于把供应商 Key 开通到真实 Sub2API。',
+      readonlyDatabaseUrl: 'Sub2API 只读数据库 URL（可选）',
+      readonlyDatabaseHint: '建议使用只读账号，并授予 accounts、groups、account_groups、usage_logs 等表的 SELECT 权限。',
+      readonlyRedisUrl: 'Sub2API 只读 Redis URL（可选）',
+      readonlyRedisDb: 'Sub2API Redis DB（可选）',
+      adminBaseUrl: 'Sub2API Admin API 地址（可选）',
+      adminApiKey: 'Sub2API Admin API Key',
+      adminApiKeyPlaceholder: '与 Sub2API 后台 API Key 一致',
+      allowEmbeddedGateway: '允许本进程兼容回退',
+      allowEmbeddedGatewayHint: '仅建议本地开发启用；生产应配置真实 Sub2API Admin API。'
+    },
     admin: {
       title: '管理员账户',
       description: '创建本地开发管理员账户',
@@ -232,7 +251,10 @@ export default {
       description: '检查 Admin Plus 配置并完成安装',
       database: '数据库',
       redis: 'Redis',
-      adminEmail: '管理员邮箱'
+      adminEmail: '管理员邮箱',
+      sub2api: 'Sub2API 集成',
+      sub2apiConfigured: '已配置 Sub2API 连接',
+      sub2apiSkipped: '暂未配置，可安装后在配置文件或环境变量中补充'
     },
     status: {
       testing: '测试中...',

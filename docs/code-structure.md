@@ -297,7 +297,7 @@ PATCH  /api/v1/admin-plus/actions/recommendations/:id/status
 - 每日账单自动导出文件下载、上传和解析。
 - Sub2API 窗口成本、深度 Channel Monitor 指标和动作执行写入适配。
 - 确认后调用 Sub2API Admin API 执行动作建议。
-- 多通道通知、失败重试策略和操作审计闭环。
+- 多通道通知和操作审计闭环。
 
 余额监控规则：
 
@@ -386,7 +386,7 @@ Chrome 插件任务规则：
 - 发送前写入 `admin_plus_notification_deliveries`，同一业务事件同一通道通过 `dedupe_key` 去重。
 - 费率、健康和公告等高频事件使用窗口化 `dedupe_key` 限流，避免同一事件窗口重复刷屏。
 - 通知成功或失败都会记录投递状态，不回滚业务快照或事件。
-- 当前尚未完成多通道和失败重试策略。
+- 通知中心已提供飞书配置、测试诊断、规则开关、防打扰、投递记录和失败投递重试；当前尚未完成多通道通知。
 
 ### 3.2 当前治理分类
 
@@ -843,7 +843,7 @@ backend/internal/adminplus/
   app/
     sub2api/                 # 已落地：本地 Sub2API accounts / usage_logs / Redis 运行态只读查询
     scheduler/               # 已落地基础任务生成；待补超时回收、失败重试可视化和审计
-    notifications/           # 已落地飞书发送、SQL 投递审计、事件级去重、窗口限流、对账异常通知和查询接口；待补多通道和失败重试策略
+    notifications/           # 已落地飞书发送、SQL 投递审计、事件级去重、窗口限流、对账异常通知、测试诊断、查询接口和失败重试；待补多通道通知
     audit/                   # 待开发：凭据使用、动作确认、外部写操作审计
   adapters/
     sub2api/
@@ -866,5 +866,5 @@ frontend/src/views/admin/operations/
 - `SUB2API_READONLY_REDIS_URL` 或 `SUB2API_READONLY_REDIS_DB` 只读读取并发 key，不写、不删、不 flush。
 - scheduler 生成的任务必须持久化、可重试、可审计。
 - Chrome 插件完成真实网页登录和页面数据回传前，不能把费率/余额/账单自动采集标记为完成。
-- 飞书通知已经覆盖余额、费率、健康、公告和对账异常事件，并具备 SQL 投递审计、事件级去重、窗口限流和通知记录页面；完成闭环前必须补多通道和失败重试策略。
+- 飞书通知已经覆盖余额、费率、健康、公告和对账异常事件，并具备 SQL 投递审计、事件级去重、窗口限流、通知记录页面、测试诊断和失败投递重试；完成多通道前仍按单飞书通道运行。
 - 动作建议执行前必须有管理员确认，执行时必须调用本地 Sub2API Admin API，并记录执行前后快照。

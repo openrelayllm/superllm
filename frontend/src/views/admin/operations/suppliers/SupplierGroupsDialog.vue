@@ -227,11 +227,11 @@
           <button
             type="button"
             class="btn btn-secondary btn-sm h-8 px-2"
-            :disabled="isChannelCheckActionRunning(`probe:${row.id}`)"
-            title="使用 GPT-5.4 Mini 真实复测该渠道，失败时自动暂停本地调度"
-            @click="probeGroupChannel(row)"
+            :disabled="!groupHasLocalBinding(row)"
+            title="选择模型并真实复测该渠道，成功后刷新首 Token 和总耗时"
+            @click="openGroupChannelProbeDialog(row)"
           >
-            <Icon name="beaker" size="sm" :class="{ 'animate-spin': isChannelCheckActionRunning(`probe:${row.id}`) }" />
+            <Icon name="beaker" size="sm" />
             复测
           </button>
           <button
@@ -349,7 +349,7 @@ const {
   closeGroupsDialog,
   loadCurrentGroups,
   syncCurrentChannelChecks,
-  probeGroupChannel,
+  openGroupChannelProbeDialog,
   handleGroupScheduleAction,
   openProvisionDialog,
   openRepairDialog,

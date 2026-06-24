@@ -293,6 +293,7 @@ const adminNavItems = computed((): NavItem[] => [
     icon: OperationsIcon,
     children: [
       { path: '/admin/scheduler', label: '工作台', icon: OperationsIcon },
+      { path: '/admin/scheduler/notifications', label: '通知中心', icon: OperationsIcon },
       { path: '/admin/collection/sessions', label: '采集会话', icon: OperationsIcon }
     ]
   },
@@ -373,6 +374,9 @@ function isNavGroupExpanded(path: string): boolean {
 }
 
 function isActive(path: string): boolean {
+  if (path === '/admin/scheduler') {
+    return route.path === path
+  }
   return route.path === path || route.path.startsWith(path + '/')
 }
 

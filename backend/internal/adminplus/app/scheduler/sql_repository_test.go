@@ -241,7 +241,7 @@ func TestSQLRepositoryCompleteStepWritesAttempt(t *testing.T) {
 	repo := NewSQLRepository(db)
 	finishedAt := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	mock.ExpectExec("WITH current_step AS").
-		WithArgs(int64(9), "succeeded", 1, "", finishedAt).
+		WithArgs(int64(9), "succeeded", 1, "", finishedAt, "", "", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := repo.CompleteStep(context.Background(), 9, "succeeded", 1, "", finishedAt)

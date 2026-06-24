@@ -413,8 +413,9 @@ export function attachPresentationStatus(ctx: any) {
 
   function directLoginErrorMessage(error: unknown): string {
     const code = extractApiErrorCode(error)
+    const diagnostic = errorMetadataDiagnostic(error)
     if (code && ['SUPPLIER_DIRECT_LOGIN_UPSTREAM_ORIGIN_ERROR', 'SUPPLIER_DIRECT_LOGIN_UPSTREAM_HTML', 'SUPPLIER_DIRECT_LOGIN_SETTINGS_BAD_STATUS', 'SUPPLIER_DIRECT_LOGIN_BAD_STATUS'].includes(code)) {
-      return '供应商站点返回源站或前置层异常，后端直登失败；请稍后重试，或使用 Chrome 插件采集会话'
+      return withDiagnostic('供应商站点返回源站或前置层异常，后端直登失败；请稍后重试，或使用 Chrome 插件采集会话', diagnostic)
     }
     if (code && ['LOGIN_CAPTCHA_REQUIRED', 'LOGIN_MFA_REQUIRED', 'BROWSER_FALLBACK_REQUIRED'].includes(code)) {
       return '供应商登录需要验证码、2FA 或浏览器上下文，请使用 Chrome 插件采集会话'
@@ -437,9 +438,9 @@ export function attachPresentationStatus(ctx: any) {
     const rawMessage = (error as { message?: string }).message || ''
     const normalizedMessage = rawMessage.toLowerCase()
     if (normalizedMessage.includes('cloudflare') || normalizedMessage.includes('origin web server') || normalizedMessage.includes('invalid or incomplete response')) {
-      return '供应商站点返回源站或前置层异常，后端直登失败；请稍后重试，或使用 Chrome 插件采集会话'
+      return withDiagnostic('供应商站点返回源站或前置层异常，后端直登失败；请稍后重试，或使用 Chrome 插件采集会话', diagnostic)
     }
-    return (error as { message?: string }).message || '后端直登失败'
+    return withDiagnostic((error as { message?: string }).message || '后端直登失败', diagnostic)
   }
 
   function isBalanceProbeError(error: unknown): boolean {
@@ -467,6 +468,28 @@ export function attachPresentationStatus(ctx: any) {
 
   function errorMessage(error: unknown, fallback: string): string {
     return (error as { message?: string })?.message || fallback
+  }
+
+  function errorMetadataDiagnostic(error: unknown): string {
+    const metadata = (error as { metadata?: Record<string, unknown> })?.metadata
+    if (!metadata || typeof metadata !== 'object') return ''
+    const keys = ['endpoint', 'status_code', 'content_type', 'body_type', 'body_excerpt']
+    return keys
+      .map((key) => {
+        const value = metadata[key]
+        return typeof value === 'string' && value.trim() ? `${key}: ${trimDiagnostic(value)}` : ''
+      })
+      .filter(Boolean)
+      .join(' · ')
+  }
+
+  function trimDiagnostic(value: string): string {
+    const text = value.replace(/\s+/g, ' ').trim()
+    return text.length > 160 ? `${text.slice(0, 157)}...` : text
+  }
+
+  function withDiagnostic(message: string, diagnostic: string): string {
+    return diagnostic ? `${message}（${diagnostic}）` : message
   }
 
   function channelStatusErrorMessage(error: unknown): string {

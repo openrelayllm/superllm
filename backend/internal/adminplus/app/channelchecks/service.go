@@ -30,6 +30,7 @@ type CheckInput struct {
 	SupplierGroupID         int64
 	CandidateLimit          int
 	AutoPauseOnFailure      bool
+	ProbeModel              string
 	FirstTokenThresholdMS   int64
 	TotalLatencyThresholdMS int64
 }
@@ -126,6 +127,10 @@ func (s *Service) Check(ctx context.Context, in CheckInput) (*CheckResult, error
 	if candidateLimit > 10 {
 		candidateLimit = 10
 	}
+	probeModel := strings.TrimSpace(in.ProbeModel)
+	if probeModel == "" {
+		probeModel = DefaultProbeModel
+	}
 
 	candidates, err := s.repo.ListCandidates(ctx, in.SupplierID)
 	if err != nil {
@@ -167,7 +172,7 @@ func (s *Service) Check(ctx context.Context, in CheckInput) (*CheckResult, error
 			items = append(items, created)
 			continue
 		}
-		s.applyProbe(ctx, snapshot, candidate, firstThreshold, totalThreshold)
+		s.applyProbe(ctx, snapshot, candidate, probeModel, firstThreshold, totalThreshold)
 		created, err := s.saveAndMaybePause(ctx, snapshot, in.AutoPauseOnFailure)
 		if err != nil {
 			return nil, err
@@ -244,7 +249,7 @@ func (s *Service) ListBest(ctx context.Context, supplierIDs []int64) ([]*adminpl
 		candidates = filterCandidates(candidates, 0)
 		if len(candidates) > 0 {
 			for _, protocolItems := range groupSnapshotsByProtocol(projectCandidateSnapshots(candidates, latestByGroup, now)) {
-				if selected := chooseLowestCurrent(protocolItems); selected != nil {
+				if selected := chooseBestOrLowestCurrent(protocolItems); selected != nil {
 					out = append(out, selected)
 				}
 			}
@@ -362,19 +367,23 @@ func (s *Service) readRemoteMonitors(ctx context.Context, supplierID int64) ([]p
 	return result.Items, nil
 }
 
-func (s *Service) applyProbe(ctx context.Context, snapshot *adminplusdomain.SupplierChannelCheckSnapshot, candidate *Candidate, firstThreshold int64, totalThreshold int64) {
+func (s *Service) applyProbe(ctx context.Context, snapshot *adminplusdomain.SupplierChannelCheckSnapshot, candidate *Candidate, probeModel string, firstThreshold int64, totalThreshold int64) {
 	if s == nil || s.healthService == nil || snapshot == nil || candidate == nil {
 		return
+	}
+	model := strings.TrimSpace(probeModel)
+	if model == "" {
+		model = DefaultProbeModel
 	}
 	result, err := s.healthService.ProbeOpenAIResponses(ctx, healthapp.ProbeInput{
 		SupplierID:                   candidate.SupplierID,
 		SupplierAccountID:            candidate.SupplierAccountID,
-		Model:                        DefaultProbeModel,
+		Model:                        model,
 		FirstTokenThresholdMS:        firstThreshold,
 		TotalLatencyThresholdMS:      totalThreshold,
 		ConcurrencySaturationPercent: 100,
 	})
-	snapshot.ProbeModel = DefaultProbeModel
+	snapshot.ProbeModel = model
 	if err != nil {
 		snapshot.ProbeStatus = adminplusdomain.SupplierChannelProbeStatusProbeFailed
 		snapshot.ErrorClass = firstNonEmpty(infraerrors.Reason(err), "probe_failed")
@@ -549,6 +558,13 @@ func chooseBestOrLatest(items []*adminplusdomain.SupplierChannelCheckSnapshot) *
 		return items[i].ID > items[j].ID
 	})
 	return items[0]
+}
+
+func chooseBestOrLowestCurrent(items []*adminplusdomain.SupplierChannelCheckSnapshot) *adminplusdomain.SupplierChannelCheckSnapshot {
+	if best := chooseBest(items); best != nil {
+		return best
+	}
+	return chooseLowestCurrent(items)
 }
 
 func chooseLowestCurrent(items []*adminplusdomain.SupplierChannelCheckSnapshot) *adminplusdomain.SupplierChannelCheckSnapshot {

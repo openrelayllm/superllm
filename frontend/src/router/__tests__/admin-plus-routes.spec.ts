@@ -26,6 +26,7 @@ describe('adminPlusRoutes', () => {
       '/admin/suppliers',
       '/admin/supplier-bindings',
       '/admin/scheduler',
+      '/admin/scheduler/notifications',
       '/admin/collection/scheduler',
       '/admin/collection/plugin-tasks',
       '/admin/collection/sessions',
@@ -99,6 +100,7 @@ describe('adminPlusRoutes', () => {
         '/admin/suppliers',
         '/admin/supplier-bindings',
         '/admin/scheduler',
+        '/admin/scheduler/notifications',
         '/admin/collection/sessions',
         '/admin/finance/costs',
         '/admin/finance/usage-costs',
@@ -107,7 +109,7 @@ describe('adminPlusRoutes', () => {
       ].includes(route.path)
     )
 
-    expect(adminRoutes).toHaveLength(9)
+    expect(adminRoutes).toHaveLength(10)
     for (const route of adminRoutes) {
       expect(route.meta?.requiresAuth).toBe(true)
       expect(route.meta?.requiresAdmin).toBe(true)
@@ -139,10 +141,10 @@ describe('adminPlusRoutes', () => {
         ['/admin/operations/extension-tasks', '/admin/collection/sessions'],
         ['/admin/operations/billing', '/admin/finance/costs'],
         ['/admin/automation/actions', '/admin/suppliers'],
-        ['/admin/automation/notifications', '/admin/suppliers'],
+        ['/admin/automation/notifications', '/admin/scheduler/notifications'],
         ['/admin/automation/audits', '/admin/suppliers'],
         ['/admin/operations/actions', '/admin/suppliers'],
-        ['/admin/operations/notifications', '/admin/suppliers']
+        ['/admin/operations/notifications', '/admin/scheduler/notifications']
       ]
     )
 

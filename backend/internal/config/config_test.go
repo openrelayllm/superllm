@@ -81,6 +81,40 @@ func TestLoadDefaultSchedulingConfig(t *testing.T) {
 	}
 }
 
+func TestLoadSub2APIIntegrationFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("SUB2API_READONLY_DATABASE_URL", "postgresql://readonly:secret@db:5432/sub2api?sslmode=disable")
+	t.Setenv("SUB2API_READONLY_REDIS_URL", "redis://redis:6379/1")
+	t.Setenv("SUB2API_READONLY_REDIS_DB", "1")
+	t.Setenv("ADMIN_PLUS_SUB2API_ADMIN_BASE_URL", "https://sub2api.example")
+	t.Setenv("ADMIN_PLUS_SUB2API_ADMIN_API_KEY", "admin-secret")
+	t.Setenv("ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Sub2API.ReadonlyDatabaseURL != "postgresql://readonly:secret@db:5432/sub2api?sslmode=disable" {
+		t.Fatalf("ReadonlyDatabaseURL = %q", cfg.Sub2API.ReadonlyDatabaseURL)
+	}
+	if cfg.Sub2API.ReadonlyRedisURL != "redis://redis:6379/1" {
+		t.Fatalf("ReadonlyRedisURL = %q", cfg.Sub2API.ReadonlyRedisURL)
+	}
+	if cfg.Sub2API.ReadonlyRedisDB != 1 {
+		t.Fatalf("ReadonlyRedisDB = %d, want 1", cfg.Sub2API.ReadonlyRedisDB)
+	}
+	if cfg.AdminPlus.Sub2APIAdminBaseURL != "https://sub2api.example" {
+		t.Fatalf("Sub2APIAdminBaseURL = %q", cfg.AdminPlus.Sub2APIAdminBaseURL)
+	}
+	if cfg.AdminPlus.Sub2APIAdminAPIKey != "admin-secret" {
+		t.Fatalf("Sub2APIAdminAPIKey = %q", cfg.AdminPlus.Sub2APIAdminAPIKey)
+	}
+	if !cfg.AdminPlus.AllowEmbeddedSub2APIGateway {
+		t.Fatalf("AllowEmbeddedSub2APIGateway = false, want true")
+	}
+}
+
 func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	resetViperWithJWTSecret(t)
 

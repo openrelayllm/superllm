@@ -22,7 +22,7 @@
       </div>
 
       <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-dark-700">
-        <table class="w-full min-w-[1180px] divide-y divide-gray-200 dark:divide-dark-700">
+        <table class="w-full min-w-[1320px] divide-y divide-gray-200 dark:divide-dark-700">
           <thead class="bg-gray-50 dark:bg-dark-800">
             <tr>
               <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">Step</th>
@@ -31,6 +31,7 @@
               <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">状态</th>
               <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">Attempt</th>
               <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">结果</th>
+              <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">时间</th>
               <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">错误/原因</th>
               <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">下次重试</th>
               <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">操作</th>
@@ -38,7 +39,7 @@
           </thead>
           <tbody class="divide-y divide-gray-100 bg-white dark:divide-dark-700 dark:bg-dark-900">
             <tr v-if="detail.steps.length === 0">
-              <td colspan="9" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无 step 明细</td>
+              <td colspan="10" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无 step 明细</td>
             </tr>
             <tr v-for="step in detail.steps" :key="step.id">
               <td class="px-4 py-3 font-mono text-xs text-gray-500 dark:text-dark-400">{{ step.id }}</td>
@@ -47,6 +48,10 @@
               <td class="px-4 py-3"><span class="badge" :class="runStatusClass(step.status)">{{ runStatusLabel(step.status) }}</span></td>
               <td class="px-4 py-3 text-sm text-gray-500 dark:text-dark-400">{{ step.attempts }}/{{ step.max_attempts }}</td>
               <td class="px-4 py-3 text-sm text-gray-500 dark:text-dark-400">{{ step.result_count }}</td>
+              <td class="px-4 py-3 text-sm text-gray-500 dark:text-dark-400">
+                <div>{{ formatDateTime(step.started_at) || '-' }}</div>
+                <div v-if="step.finished_at" class="mt-1 text-xs text-gray-400 dark:text-dark-500">完成 {{ formatDateTime(step.finished_at) }}</div>
+              </td>
               <td class="max-w-[280px] px-4 py-3 text-sm text-gray-500 dark:text-dark-400">
                 <button
                   v-if="step.reason"
@@ -118,6 +123,31 @@
         </div>
       </dl>
 
+      <div class="rounded-lg border border-gray-200 dark:border-dark-700">
+        <div class="border-b border-gray-100 px-3 py-2 dark:border-dark-700">
+          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">操作日志</p>
+        </div>
+        <div v-if="selectedOperationLogs.length === 0" class="px-3 py-4 text-sm text-gray-500 dark:text-dark-400">暂无 attempt 日志</div>
+        <div v-else class="divide-y divide-gray-100 dark:divide-dark-700">
+          <div v-for="log in selectedOperationLogs" :key="log.id" class="grid gap-3 px-3 py-3 md:grid-cols-[120px_minmax(0,1fr)]">
+            <div class="space-y-1 text-xs text-gray-500 dark:text-dark-400">
+              <p class="font-mono">#{{ log.attempt_no }}</p>
+              <p>开始 {{ formatDateTime(log.started_at) || '-' }}</p>
+              <p>完成 {{ formatDateTime(log.finished_at) || '-' }}</p>
+              <p>{{ log.duration_ms }} ms</p>
+            </div>
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="badge" :class="runStatusClass(log.status)">{{ runStatusLabel(log.status) }}</span>
+                <span v-if="log.error_code" class="font-mono text-xs text-rose-600 dark:text-rose-300">{{ log.error_code }}</span>
+              </div>
+              <p v-if="log.error_message" class="mt-2 break-words text-sm font-medium text-gray-900 dark:text-gray-100">{{ log.error_message }}</p>
+              <pre v-if="log.response_snapshot" class="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-700 dark:bg-dark-800 dark:text-dark-200">{{ formatSnapshot(log.response_snapshot) }}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
         <p class="text-xs text-gray-500 dark:text-dark-400">完整错误</p>
         <pre class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-700 dark:bg-dark-800 dark:text-dark-200">{{ selectedRawReason }}</pre>
@@ -160,10 +190,12 @@ interface StepFailureReason {
   login_message?: string
   suggestion?: string
   raw_error?: string
+  metadata?: Record<string, string>
 }
 
 const selectedFailure = computed(() => parseReason(selectedStep.value?.reason))
 const selectedRawReason = computed(() => selectedStep.value?.reason || '-')
+const selectedOperationLogs = computed(() => selectedStep.value?.operation_logs || [])
 const selectedReasonRows = computed(() => {
   const step = selectedStep.value
   const reason = selectedFailure.value
@@ -175,6 +207,7 @@ const selectedReasonRows = computed(() => {
     { label: '错误码', value: firstText(reason.login_code, reason.code, codeFromText(step.reason || '')) },
     { label: '错误信息', value: firstText(reason.login_message, reason.message, plainReason(step.reason || '')) },
     { label: '建议操作', value: reason.suggestion || suggestionFromCode(firstText(reason.login_code, reason.code, codeFromText(step.reason || ''))) },
+    { label: '上游诊断', value: metadataSummary(reason.metadata) },
     { label: 'Attempt', value: `${step.attempts}/${step.max_attempts}` },
     { label: '下次重试', value: formatDateTime(step.next_attempt_at) || '-' }
   ]
@@ -237,13 +270,28 @@ function stageLabel(value?: string): string {
   return {
     session_precheck: '会话预检',
     session_refresh: '自动登录',
-    session_refresh_after_sync: '采集后会话刷新'
+    session_refresh_after_sync: '采集后会话刷新',
+    supplier_groups_sync: '分组同步',
+    supplier_rates_sync: '倍率同步',
+    supplier_balance_sync: '余额同步',
+    supplier_announcements_sync: '公告同步',
+    supplier_usage_costs_sync: '用量对账',
+    supplier_health_sync: '健康检测',
+    supplier_channel_check: '渠道检测'
   }[value || ''] || value || '-'
 }
 
 function actionLabel(value?: string): string {
   return {
-    direct_login: '自动登录'
+    direct_login: '自动登录',
+    sync_groups: '同步分组',
+    sync_rates: '同步倍率',
+    sync_balance: '同步余额',
+    sync_announcements: '同步公告',
+    sync_usage_costs: '同步用量',
+    sync_health: '健康检测',
+    check_channels: '检测渠道',
+    sync: '同步'
   }[value || ''] || value || '-'
 }
 
@@ -260,7 +308,13 @@ function suggestionFromCode(code?: string): string {
     SUPPLIER_SESSION_NOT_FOUND: '当前没有可用会话，请配置登录凭据后重试，或使用插件采集会话。',
     SUPPLIER_SESSION_EXPIRED: '当前会话已过期，请重新登录或使用插件刷新会话。',
     SUPPLIER_SESSION_DECRYPT_FAILED: '会话解密失败，请重新一键登录或使用插件采集会话。',
+    SUPPLIER_SESSION_PROBE_FAILED: '供应商接口超时或不可达，请检查供应商地址、网络出口和前置防护后重试。',
+    SUPPLIER_SESSION_PROBE_HTML: '供应商 profile 接口返回 HTML，通常是 Cloudflare/Nginx/风控页面，请检查前置层策略。',
+    SUPPLIER_SESSION_PROBE_BAD_STATUS: '供应商 profile 接口返回非成功状态，请检查会话权限和供应商接口。',
+    SUPPLIER_SESSION_PROFILE_INVALID: '供应商 profile 返回结构异常，请检查供应商程序版本和接口兼容性。',
     SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED: '补充供应商登录账号密码或 access token 后重试。',
+    SUPPLIER_DIRECT_LOGIN_UPSTREAM_HTML: '供应商登录接口返回 HTML，通常是前置层或风控页面，请改用浏览器会话或调整防护策略。',
+    SUPPLIER_DIRECT_LOGIN_UPSTREAM_ORIGIN_ERROR: '供应商前置层或源站返回异常，请检查 Cloudflare/Nginx/源站健康。',
     LOGIN_CREDENTIAL_INVALID: '供应商登录凭据无效，请更新账号密码或 token 后重试。',
     LOGIN_CAPTCHA_REQUIRED: '供应商要求验证码，请使用一键登录或插件采集会话后重试。',
     LOGIN_MFA_REQUIRED: '供应商要求二次验证，请人工完成登录或使用插件采集会话。',
@@ -268,6 +322,23 @@ function suggestionFromCode(code?: string): string {
     BROWSER_CHALLENGE_REQUIRED: '供应商要求浏览器验证，请使用一键登录或插件采集会话。',
     PASSWORD_LOGIN_DISABLED: '供应商关闭密码登录，请改用 token 或插件采集会话。'
   }[code || ''] || '查看供应商地址、登录凭据和上游防护策略后重试。'
+}
+
+function metadataSummary(metadata?: Record<string, string>): string {
+  if (!metadata) return ''
+  return Object.entries(metadata)
+    .filter(([, value]) => value)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(' · ')
+}
+
+function formatSnapshot(value?: Record<string, unknown>): string {
+  if (!value) return ''
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
 }
 
 function firstText(...values: Array<string | undefined | null>): string {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -53,6 +54,20 @@ func NewSub2APIHTTPGatewayFromEnv(client *http.Client) (*Sub2APIHTTPGateway, err
 
 func ShouldUseSub2APIHTTPGatewayFromEnv() bool {
 	return strings.TrimSpace(os.Getenv(sub2APIAdminBaseURLEnv)) != "" && strings.TrimSpace(os.Getenv(sub2APIAdminAPIKeyEnv)) != ""
+}
+
+func NewSub2APIHTTPGatewayFromConfig(cfg *config.Config, client *http.Client) (*Sub2APIHTTPGateway, error) {
+	if cfg == nil {
+		return NewSub2APIHTTPGatewayFromEnv(client)
+	}
+	return NewSub2APIHTTPGateway(cfg.AdminPlus.Sub2APIAdminBaseURL, cfg.AdminPlus.Sub2APIAdminAPIKey, client)
+}
+
+func ShouldUseSub2APIHTTPGatewayFromConfig(cfg *config.Config) bool {
+	if cfg == nil {
+		return ShouldUseSub2APIHTTPGatewayFromEnv()
+	}
+	return strings.TrimSpace(cfg.AdminPlus.Sub2APIAdminBaseURL) != "" && strings.TrimSpace(cfg.AdminPlus.Sub2APIAdminAPIKey) != ""
 }
 
 func (g *Sub2APIHTTPGateway) CreateAccount(ctx context.Context, input *service.CreateAccountInput) (*service.Account, error) {

@@ -97,25 +97,44 @@ type SchedulerRunDetail struct {
 	Steps []SchedulerStepRecord `json:"steps"`
 }
 
+type SchedulerAttemptRecord struct {
+	ID               int64             `json:"id"`
+	StepID           int64             `json:"step_id"`
+	RunID            string            `json:"run_id"`
+	SupplierID       int64             `json:"supplier_id"`
+	TaskType         ExtensionTaskType `json:"task_type"`
+	Status           string            `json:"status"`
+	WorkerID         string            `json:"worker_id,omitempty"`
+	AttemptNo        int               `json:"attempt_no"`
+	StartedAt        *time.Time        `json:"started_at,omitempty"`
+	FinishedAt       time.Time         `json:"finished_at"`
+	DurationMS       int64             `json:"duration_ms"`
+	ErrorCode        string            `json:"error_code,omitempty"`
+	ErrorMessage     string            `json:"error_message,omitempty"`
+	RequestSnapshot  map[string]any    `json:"request_snapshot,omitempty"`
+	ResponseSnapshot map[string]any    `json:"response_snapshot,omitempty"`
+}
+
 type SchedulerStepRecord struct {
-	ID              int64             `json:"id"`
-	RunID           string            `json:"run_id"`
-	SupplierID      int64             `json:"supplier_id"`
-	SupplierName    string            `json:"supplier_name"`
-	TaskType        ExtensionTaskType `json:"task_type"`
-	Action          string            `json:"action"`
-	Status          string            `json:"status"`
-	ScheduleKey     string            `json:"schedule_key"`
-	ExtensionTaskID int64             `json:"extension_task_id,omitempty"`
-	ResultCount     int               `json:"result_count"`
-	Reason          string            `json:"reason,omitempty"`
-	Attempts        int               `json:"attempts"`
-	MaxAttempts     int               `json:"max_attempts"`
-	NextAttemptAt   *time.Time        `json:"next_attempt_at,omitempty"`
-	LockedBy        string            `json:"locked_by,omitempty"`
-	LockedUntil     *time.Time        `json:"locked_until,omitempty"`
-	StartedAt       *time.Time        `json:"started_at,omitempty"`
-	FinishedAt      *time.Time        `json:"finished_at,omitempty"`
+	ID              int64                    `json:"id"`
+	RunID           string                   `json:"run_id"`
+	SupplierID      int64                    `json:"supplier_id"`
+	SupplierName    string                   `json:"supplier_name"`
+	TaskType        ExtensionTaskType        `json:"task_type"`
+	Action          string                   `json:"action"`
+	Status          string                   `json:"status"`
+	ScheduleKey     string                   `json:"schedule_key"`
+	ExtensionTaskID int64                    `json:"extension_task_id,omitempty"`
+	ResultCount     int                      `json:"result_count"`
+	Reason          string                   `json:"reason,omitempty"`
+	Attempts        int                      `json:"attempts"`
+	MaxAttempts     int                      `json:"max_attempts"`
+	NextAttemptAt   *time.Time               `json:"next_attempt_at,omitempty"`
+	LockedBy        string                   `json:"locked_by,omitempty"`
+	LockedUntil     *time.Time               `json:"locked_until,omitempty"`
+	StartedAt       *time.Time               `json:"started_at,omitempty"`
+	FinishedAt      *time.Time               `json:"finished_at,omitempty"`
+	OperationLogs   []SchedulerAttemptRecord `json:"operation_logs,omitempty"`
 }
 
 type SchedulerSupplierStatus struct {

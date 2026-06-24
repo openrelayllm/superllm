@@ -28,7 +28,7 @@ func TestSQLRepositoryCreateDelivery(t *testing.T) {
 	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
 
 	mock.ExpectQuery(`INSERT INTO admin_plus_notification_deliveries`).
-		WithArgs("feishu", "balance.low_balance", int64(21), int64(7), "feishu:balance.low_balance:21", "sending", sqlmock.AnyArg()).
+		WithArgs("feishu", "balance.low_balance", int64(21), int64(7), "feishu:balance.low_balance:21", "sending", "", sqlmock.AnyArg()).
 		WillReturnRows(newNotificationDeliveryRows().AddRow(
 			int64(1),
 			"feishu",
