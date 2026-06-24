@@ -668,12 +668,6 @@ func siteDiscoveryClassifyProgressEvent(current int, total int, item *adminplusd
 	}
 }
 
-func (s *Service) classifyCandidates(ctx context.Context, candidates []*adminplusdomain.SiteDiscoveryItem, probeInterfaces bool, probePages bool) {
-	for item := range s.classifyCandidatesStream(ctx, candidates, probeInterfaces, probePages) {
-		_ = item
-	}
-}
-
 func (s *Service) classifyCandidatesStream(ctx context.Context, candidates []*adminplusdomain.SiteDiscoveryItem, probeInterfaces bool, probePages bool) <-chan *adminplusdomain.SiteDiscoveryItem {
 	results := make(chan *adminplusdomain.SiteDiscoveryItem)
 	if len(candidates) == 0 {
