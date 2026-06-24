@@ -32,6 +32,19 @@ The Sub2API readonly database user should have only `SELECT` on the required run
 | `install.sh` | Binary installer/upgrader. Downloads pinned GitHub Release assets like the upstream Sub2API installer |
 | `config.example.yaml` | Example runtime configuration |
 
+## Build, Release, And Deployment Channels
+
+Build, release, and deployment are intentionally separated:
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `Build Artifacts` | push, pull request, tag, or manual dispatch | Compile Linux `amd64` and `arm64` binary archives and upload CI artifacts. It does not publish a GitHub Release, Docker image, or deployment. |
+| `GitHub Release` | manual dispatch only | Publish an existing annotated tag to GitHub Release with Linux binary assets and `checksums.txt`. |
+| `DockerHub` | manual dispatch only | Build and push DockerHub images from a selected git ref. |
+| `Deploy Railway` | manual dispatch only | Deploy a selected container image to Railway. Railway is one deployment channel, not the release pipeline. |
+
+Systemd script deployment consumes GitHub Release assets through `install.sh`; it is independent from DockerHub and Railway.
+
 ## Recommended Docker Deployment
 
 ```bash
@@ -100,7 +113,7 @@ For the systemd binary deployment:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/openrelayllm/sub2api-admin-plus/main/deploy/install.sh | sudo bash -s -- upgrade
-curl -sSL https://raw.githubusercontent.com/openrelayllm/sub2api-admin-plus/main/deploy/install.sh | sudo bash -s -- upgrade -v v0.11.1
+curl -sSL https://raw.githubusercontent.com/openrelayllm/sub2api-admin-plus/main/deploy/install.sh | sudo bash -s -- upgrade -v v0.11.3
 ```
 
 The upgrader also recognizes the old inherited layout `/opt/sub2api/sub2api` + `sub2api.service`, backs up the old binary, installs the new `/opt/sub2api-admin-plus/sub2api-admin-plus`, and disables the legacy service without deleting the old directory.
@@ -116,7 +129,7 @@ docker compose logs -f admin-plus
 For a pinned release image, set `ADMIN_PLUS_IMAGE` in `.env`:
 
 ```env
-ADMIN_PLUS_IMAGE=ghcr.io/openrelayllm/sub2api-admin-plus:0.3.0
+ADMIN_PLUS_IMAGE=wutongci/sub2api-admin-plus:0.11.3
 ```
 
 ## Backups

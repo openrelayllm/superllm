@@ -1,0 +1,100 @@
+name: Deploy Railway
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Container image to deploy, for example wutongci/sub2api-admin-plus:0.11.3'
+        required: true
+        default: 'wutongci/sub2api-admin-plus:0.11.3'
+        type: string
+      service_id:
+        description: 'Railway service ID; falls back to vars.RAILWAY_SERVICE_ID'
+        required: false
+        type: string
+      environment_id:
+        description: 'Railway environment ID; falls back to vars.RAILWAY_ENVIRONMENT_ID'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      IMAGE: ${{ inputs.image }}
+      SERVICE_ID_INPUT: ${{ inputs.service_id }}
+      ENVIRONMENT_ID_INPUT: ${{ inputs.environment_id }}
+      SERVICE_ID_VAR: ${{ vars.RAILWAY_SERVICE_ID }}
+      ENVIRONMENT_ID_VAR: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+    steps:
+      - name: Deploy image to Railway
+        run: |
+          set -euo pipefail
+
+          SERVICE_ID="${SERVICE_ID_INPUT:-$SERVICE_ID_VAR}"
+          ENVIRONMENT_ID="${ENVIRONMENT_ID_INPUT:-$ENVIRONMENT_ID_VAR}"
+
+          if [ -z "${RAILWAY_TOKEN}" ]; then
+            echo "RAILWAY_TOKEN secret is required"
+            exit 1
+          fi
+          if [ -z "${SERVICE_ID}" ] || [ -z "${ENVIRONMENT_ID}" ]; then
+            echo "Railway service_id and environment_id are required"
+            exit 1
+          fi
+
+          update_payload="$(jq -n \
+            --arg serviceId "$SERVICE_ID" \
+            --arg environmentId "$ENVIRONMENT_ID" \
+            --arg image "$IMAGE" \
+            '{query:"mutation UpdateSource($serviceId:String!,$environmentId:String!,$input:ServiceInstanceUpdateInput!){ serviceInstanceUpdate(serviceId:$serviceId, environmentId:$environmentId, input:$input) }", variables:{serviceId:$serviceId,environmentId:$environmentId,input:{source:{image:$image}}}}')"
+
+          update_response="$(curl -fsS "https://backboard.railway.com/graphql/v2" \
+            -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data-binary "$update_payload")"
+          echo "$update_response" | jq -e 'if .errors then .errors | halt_error(1) else .data.serviceInstanceUpdate end' >/dev/null
+
+          deploy_payload="$(jq -n \
+            --arg serviceId "$SERVICE_ID" \
+            --arg environmentId "$ENVIRONMENT_ID" \
+            '{query:"mutation Deploy($serviceId:String!,$environmentId:String!){ serviceInstanceDeployV2(serviceId:$serviceId, environmentId:$environmentId) }", variables:{serviceId:$serviceId,environmentId:$environmentId}}')"
+
+          deploy_response="$(curl -fsS "https://backboard.railway.com/graphql/v2" \
+            -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data-binary "$deploy_payload")"
+          echo "$deploy_response" | jq -e 'if .errors then .errors | halt_error(1) else .data.serviceInstanceDeployV2 end' >/dev/null
+          DEPLOYMENT_ID="$(echo "$deploy_response" | jq -r '.data.serviceInstanceDeployV2')"
+
+          echo "Railway deployment started: ${DEPLOYMENT_ID}"
+
+          for attempt in $(seq 1 60); do
+            status_payload="$(jq -n --arg id "$DEPLOYMENT_ID" \
+              '{query:"query Deployment($id:String!){ deployment(id:$id){ id status meta updatedAt } }", variables:{id:$id}}')"
+            status_response="$(curl -fsS "https://backboard.railway.com/graphql/v2" \
+              -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data-binary "$status_payload")"
+            STATUS="$(echo "$status_response" | jq -r '.data.deployment.status')"
+            DEPLOYED_IMAGE="$(echo "$status_response" | jq -r '.data.deployment.meta.image // empty')"
+            echo "Railway status: ${STATUS} image=${DEPLOYED_IMAGE}"
+
+            case "$STATUS" in
+              SUCCESS)
+                exit 0
+                ;;
+              FAILED|CRASHED|REMOVED)
+                exit 1
+                ;;
+            esac
+
+            sleep 10
+          done
+
+          echo "Railway deployment did not finish before timeout"
+          exit 1

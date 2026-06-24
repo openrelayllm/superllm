@@ -1,25 +1,30 @@
-name: GitHub Release
+name: Build Artifacts
 
 on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Annotated tag to publish, for example v0.11.3'
-        required: true
+      version:
+        description: 'Optional build version override, for example 0.11.3'
+        required: false
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout tag
+      - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ inputs.tag }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -51,25 +56,20 @@ jobs:
       - name: Verify Go version
         run: go version | grep -q 'go1.26.4'
 
-      - name: Set release version
+      - name: Set build version
+        id: version
         run: |
-          VERSION="${{ inputs.tag }}"
-          VERSION="${VERSION#v}"
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+            VERSION="${VERSION#v}"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="$(tr -d '\r\n' < backend/cmd/server/VERSION)"
+          fi
+
           echo "$VERSION" > backend/cmd/server/VERSION
-          echo "Publishing GitHub Release for $VERSION"
-
-      - name: Fetch tags with annotations
-        run: git fetch --tags --force
-
-      - name: Get tag message
-        id: tag_message
-        run: |
-          TAG_NAME="${{ inputs.tag }}"
-          TAG_MESSAGE="$(git tag -l --format='%(contents:body)' "$TAG_NAME")"
-
-          echo "message<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$TAG_MESSAGE" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set repository metadata
         id: repo
@@ -77,15 +77,25 @@ jobs:
           echo "owner_lower=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
           echo "name=${{ github.event.repository.name }}" >> "$GITHUB_OUTPUT"
 
-      - name: Publish Linux binary release
+      - name: Build Linux binary artifacts
         uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'
-          args: release --clean --skip=validate
+          args: release --snapshot --clean --skip=publish --skip=validate
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_MESSAGE: ${{ steps.tag_message.outputs.message }}
+          TAG_MESSAGE: Snapshot build
           GITHUB_REPO_OWNER: ${{ github.repository_owner }}
           GITHUB_REPO_OWNER_LOWER: ${{ steps.repo.outputs.owner_lower }}
           GITHUB_REPO_NAME: ${{ steps.repo.outputs.name }}
           DOCKERHUB_USERNAME: skip
+
+      - name: Upload Linux binary artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: sub2api-admin-plus-${{ steps.version.outputs.version }}-linux
+          path: |
+            dist/*.tar.gz
+            dist/checksums.txt
+            dist/metadata.json
+          if-no-files-found: error
