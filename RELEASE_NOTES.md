@@ -1,6 +1,6 @@
 # Release Notes
 
-## v0.11.2 - 2026-06-24
+## v0.11.3 - 2026-06-24
 
 ### 新增
 
@@ -16,7 +16,7 @@
 
 ### 发布
 
-- 更新版本号到 `0.11.2`。
-- 修复 CI lint 中的 nil slice 判断与 `Rows.Close()` 错误处理问题。
+- 更新版本号到 `0.11.3`。
+- 修复 CI lint 中的 nil slice 判断与所有已暴露 `Rows.Close()` 错误处理问题。
 - GitHub Release 继续只发布 Linux 产物：`linux_amd64`、`linux_arm64` 和 `checksums.txt`。
 - DockerHub 镜像继续由 GitHub Actions 发布，不依赖本地 Docker。

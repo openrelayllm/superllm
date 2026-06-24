@@ -24,7 +24,7 @@ func (r *SQLRepository) SupplierLatestSteps(ctx context.Context) (map[int64]map[
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make(map[int64]map[adminplusdomain.ExtensionTaskType]adminplusdomain.SchedulerStepRecord)
 	for rows.Next() {
 		step, err := scanStepRecord(rows)
