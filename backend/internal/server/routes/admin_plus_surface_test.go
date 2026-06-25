@@ -14,10 +14,12 @@ import (
 	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
+	mailverificationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
 	notificationsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	schedulerapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
+	sitediscoveryapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sitediscovery"
 	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	suppliergroupsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
 	supplierkeysapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/supplierkeys"
@@ -41,6 +43,8 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 	v1 := router.Group("/api/v1")
 	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	mailVerificationService := mailverificationapp.NewService(mailverificationapp.NewMemoryRepository(), nil, nil, nil)
+	siteDiscoveryService := sitediscoveryapp.NewService(nil, supplierService, extensionService, mailVerificationService, nil, nil)
 	sessionService := sessionsapp.NewServiceWithDependencies(
 		sessionsapp.NewMemoryRepository(),
 		routeSurfaceSessionCipher{},
@@ -71,22 +75,24 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 			System:    &adminhandler.SystemHandler{},
 		},
 		AdminPlus: &handler.AdminPlusHandlers{
-			Supplier:      adminplushandler.NewSupplierHandler(supplierService),
-			SupplierGroup: adminplushandler.NewSupplierGroupHandler(supplierGroupService),
-			SupplierKey:   adminplushandler.NewSupplierKeyHandler(supplierKeyService),
-			Rate:          adminplushandler.NewRateHandler(ratesapp.NewServiceWithDependencies(newRouteSurfaceRateRepository(), nil, sessionService, &routeSurfaceRateReader{})),
-			Balance:       adminplushandler.NewBalanceHandler(balancesapp.NewService(balancesapp.NewMemoryRepository())),
-			Announcement:  adminplushandler.NewAnnouncementHandler(announcementsapp.NewService(announcementsapp.NewMemoryRepository())),
-			Health:        adminplushandler.NewHealthHandler(healthapp.NewService(healthapp.NewMemoryRepository())),
-			Notification:  adminplushandler.NewNotificationHandler(notificationService),
-			UsageCost:     adminplushandler.NewUsageCostHandler(usagecostsapp.NewServiceWithDependencies(usagecostsapp.NewMemoryRepository(), sessionService, &routeSurfaceUsageCostReader{})),
-			Cost:          adminplushandler.NewCostHandler(costsapp.NewService(costsapp.NewMemoryRepository())),
-			ChannelCheck:  adminplushandler.NewChannelCheckHandler(channelchecksapp.NewService(nil, supplierService, sessionService, healthapp.NewService(healthapp.NewMemoryRepository()))),
-			Extension:     adminplushandler.NewExtensionHandler(extensionService, nil),
-			Session:       adminplushandler.NewSessionHandler(sessionService, nil),
-			Scheduler:     adminplushandler.NewSchedulerHandler(schedulerapp.NewService(supplierService, extensionService)),
-			Action:        adminplushandler.NewActionHandler(actionsapp.NewRuleService()),
-			Sub2API:       adminplushandler.NewSub2APIHandler(sub2apiapp.NewService(newRouteSurfaceSub2APIRepository(), newRouteSurfaceSub2APIRuntimeReader())),
+			Supplier:         adminplushandler.NewSupplierHandler(supplierService),
+			SupplierGroup:    adminplushandler.NewSupplierGroupHandler(supplierGroupService),
+			SupplierKey:      adminplushandler.NewSupplierKeyHandler(supplierKeyService),
+			Rate:             adminplushandler.NewRateHandler(ratesapp.NewServiceWithDependencies(newRouteSurfaceRateRepository(), nil, sessionService, &routeSurfaceRateReader{})),
+			Balance:          adminplushandler.NewBalanceHandler(balancesapp.NewService(balancesapp.NewMemoryRepository())),
+			Announcement:     adminplushandler.NewAnnouncementHandler(announcementsapp.NewService(announcementsapp.NewMemoryRepository())),
+			Health:           adminplushandler.NewHealthHandler(healthapp.NewService(healthapp.NewMemoryRepository())),
+			Notification:     adminplushandler.NewNotificationHandler(notificationService),
+			UsageCost:        adminplushandler.NewUsageCostHandler(usagecostsapp.NewServiceWithDependencies(usagecostsapp.NewMemoryRepository(), sessionService, &routeSurfaceUsageCostReader{})),
+			Cost:             adminplushandler.NewCostHandler(costsapp.NewService(costsapp.NewMemoryRepository())),
+			ChannelCheck:     adminplushandler.NewChannelCheckHandler(channelchecksapp.NewService(nil, supplierService, sessionService, healthapp.NewService(healthapp.NewMemoryRepository()))),
+			Extension:        adminplushandler.NewExtensionHandler(extensionService, nil),
+			SiteDiscovery:    adminplushandler.NewSiteDiscoveryHandler(siteDiscoveryService),
+			MailVerification: adminplushandler.NewMailVerificationHandler(mailVerificationService),
+			Session:          adminplushandler.NewSessionHandler(sessionService, nil),
+			Scheduler:        adminplushandler.NewSchedulerHandler(schedulerapp.NewService(supplierService, extensionService)),
+			Action:           adminplushandler.NewActionHandler(actionsapp.NewRuleService()),
+			Sub2API:          adminplushandler.NewSub2APIHandler(sub2apiapp.NewService(newRouteSurfaceSub2APIRepository(), newRouteSurfaceSub2APIRuntimeReader())),
 		},
 	}
 
@@ -188,6 +194,15 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"POST /api/v1/admin-plus/notifications/test",
 		"GET /api/v1/admin-plus/notifications/deliveries",
 		"POST /api/v1/admin-plus/notifications/deliveries/:id/retry",
+		"GET /api/v1/admin-plus/mails/oauth/config",
+		"PUT /api/v1/admin-plus/mails/oauth/config",
+		"POST /api/v1/admin-plus/mails/oauth/authorize",
+		"POST /api/v1/admin-plus/mails/oauth/exchange",
+		"GET /api/v1/admin-plus/mails/credentials",
+		"POST /api/v1/admin-plus/mails/credentials",
+		"POST /api/v1/admin-plus/mails/credentials/:id/check",
+		"POST /api/v1/admin-plus/mails/verification-code/read",
+		"POST /api/v1/admin-plus/mails/verification-code/send-test",
 		"POST /api/v1/admin-plus/usage-costs/lines/import",
 		"GET /api/v1/admin-plus/usage-costs/lines",
 		"GET /api/v1/admin-plus/costs/ledger-overview",
@@ -197,6 +212,8 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin-plus/extension/tasks",
 		"POST /api/v1/admin-plus/extension/tasks/claim",
 		"POST /api/v1/admin-plus/extension/tasks/:id/heartbeat",
+		"POST /api/v1/admin-plus/extension/tasks/:id/registration-credential",
+		"POST /api/v1/admin-plus/extension/tasks/:id/registration-verification-code/read",
 		"POST /api/v1/admin-plus/extension/tasks/:id/complete",
 		"POST /api/v1/admin-plus/extension/tasks/:id/fail",
 		"GET /api/v1/admin-plus/scheduler/status",

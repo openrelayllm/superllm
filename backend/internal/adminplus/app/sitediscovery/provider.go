@@ -13,5 +13,6 @@ var ProviderSet = wire.NewSet(
 	UseCredentialCipher,
 	NewSQLRepository,
 	wire.Bind(new(Repository), new(*SQLRepository)),
+	NewRegistrationProcessor,
 	NewService,
 )

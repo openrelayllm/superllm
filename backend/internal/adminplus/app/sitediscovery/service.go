@@ -14,6 +14,7 @@ import (
 	"time"
 
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
+	mailverificationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -35,6 +36,10 @@ const (
 type CredentialCipher interface {
 	Encrypt(plaintext string) (string, error)
 	Decrypt(ciphertext string) (string, error)
+}
+
+type RegistrationMailReader interface {
+	ReadVerificationCodeForEmail(ctx context.Context, in mailverificationapp.ReadVerificationCodeForEmailInput) (*mailverificationapp.ReadVerificationCodeResult, error)
 }
 
 type RunInput struct {
@@ -101,6 +106,15 @@ type RegisterCredentialView struct {
 	Password     string                       `json:"password"`
 }
 
+type ReadRegistrationVerificationCodeInput struct {
+	TaskID              int64
+	DeviceID            string
+	LeaseToken          string
+	TriggeredAt         *time.Time
+	TimeoutSeconds      int
+	PollIntervalSeconds int
+}
+
 type Repository interface {
 	GetSettings(ctx context.Context) (*adminplusdomain.SiteDiscoverySettings, error)
 	UpdateSettings(ctx context.Context, settings adminplusdomain.SiteDiscoverySettings) (*adminplusdomain.SiteDiscoverySettings, error)
@@ -114,6 +128,7 @@ type Repository interface {
 	UpsertRegistrationCredential(ctx context.Context, credential *adminplusdomain.SupplierRegistrationCredential) (*adminplusdomain.SupplierRegistrationCredential, error)
 	UpdateRegistrationTask(ctx context.Context, credentialID int64, taskID int64, status adminplusdomain.SupplierRegistrationStatus, attemptedAt time.Time) (*adminplusdomain.SupplierRegistrationCredential, error)
 	GetRegistrationCredentialByTaskID(ctx context.Context, taskID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.SiteDiscoveryItem, error)
+	CompleteRegistration(ctx context.Context, credentialID int64, supplierID int64, status adminplusdomain.SupplierRegistrationStatus, errorCode string, errorMessage string, attemptedAt time.Time) (*adminplusdomain.SupplierRegistrationCredential, error)
 	ListRecommendations(ctx context.Context, threshold float64, limit int) ([]*adminplusdomain.SiteDiscoveryRecommendation, error)
 }
 
@@ -121,12 +136,13 @@ type Service struct {
 	repo      Repository
 	suppliers *suppliersapp.Service
 	extension *extensionapp.Service
+	mail      RegistrationMailReader
 	cipher    CredentialCipher
 	client    *http.Client
 	now       func() time.Time
 }
 
-func NewService(repo Repository, suppliers *suppliersapp.Service, extension *extensionapp.Service, cipher CredentialCipher, client *http.Client) *Service {
+func NewService(repo Repository, suppliers *suppliersapp.Service, extension *extensionapp.Service, mail RegistrationMailReader, cipher CredentialCipher, client *http.Client) *Service {
 	if client == nil {
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
@@ -134,6 +150,7 @@ func NewService(repo Repository, suppliers *suppliersapp.Service, extension *ext
 		repo:      repo,
 		suppliers: suppliers,
 		extension: extension,
+		mail:      mail,
 		cipher:    cipher,
 		client:    client,
 		now:       time.Now,
@@ -419,7 +436,7 @@ func (s *Service) RegisterItem(ctx context.Context, itemID int64) (*adminplusdom
 	if strings.TrimSpace(settings.RegistrationEmail) == "" {
 		return nil, nil, badRequest("SITE_DISCOVERY_REGISTRATION_EMAIL_REQUIRED", "registration email is required")
 	}
-	item, err := s.ImportItem(ctx, itemID)
+	item, err := s.requireSupportedItem(ctx, itemID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -437,7 +454,7 @@ func (s *Service) RegisterItem(ctx context.Context, itemID int64) (*adminplusdom
 	now := s.now().UTC()
 	credential, err := s.repo.UpsertRegistrationCredential(ctx, &adminplusdomain.SupplierRegistrationCredential{
 		DiscoveryID:        item.ID,
-		SupplierID:         item.SupplierID,
+		SupplierID:         0,
 		Email:              settings.RegistrationEmail,
 		PasswordCiphertext: encrypted,
 		PasswordConfigured: true,
@@ -449,7 +466,7 @@ func (s *Service) RegisterItem(ctx context.Context, itemID int64) (*adminplusdom
 		return nil, nil, err
 	}
 	task, err := s.extension.CreateTask(ctx, extensionapp.CreateTaskInput{
-		SupplierID:  item.SupplierID,
+		SupplierID:  0,
 		Type:        adminplusdomain.ExtensionTaskTypeRegisterSupplier,
 		ScheduleKey: registrationScheduleKey(item.ID, now),
 		Priority:    50,
@@ -511,6 +528,44 @@ func (s *Service) GetTaskRegistrationCredential(ctx context.Context, taskID int6
 	}, nil
 }
 
+func (s *Service) ReadTaskRegistrationVerificationCode(ctx context.Context, in ReadRegistrationVerificationCodeInput) (*mailverificationapp.ReadVerificationCodeResult, error) {
+	if s == nil || s.repo == nil || s.extension == nil || s.mail == nil {
+		return nil, internalError("site discovery registration mail dependencies are not configured")
+	}
+	task, err := s.extension.LeasedTask(ctx, in.TaskID, in.DeviceID, in.LeaseToken)
+	if err != nil {
+		return nil, err
+	}
+	if task.Type != adminplusdomain.ExtensionTaskTypeRegisterSupplier {
+		return nil, badRequest("SITE_DISCOVERY_REGISTRATION_TASK_REQUIRED", "extension task is not a registration task")
+	}
+	credential, item, err := s.repo.GetRegistrationCredentialByTaskID(ctx, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	if credential == nil || item == nil {
+		return nil, infraerrors.New(http.StatusNotFound, "SITE_DISCOVERY_REGISTRATION_CREDENTIAL_NOT_FOUND", "registration credential not found")
+	}
+	triggeredAt := s.now().UTC().Add(-2 * time.Minute)
+	if in.TriggeredAt != nil && !in.TriggeredAt.IsZero() {
+		triggeredAt = in.TriggeredAt.UTC()
+	}
+	return s.mail.ReadVerificationCodeForEmail(ctx, mailverificationapp.ReadVerificationCodeForEmailInput{
+		Provider:            mailverificationapp.ProviderGmail,
+		Email:               credential.Email,
+		ClaimKey:            "registration_task:" + stringFromInt64(task.ID),
+		To:                  credential.Email,
+		Keywords:            []string{"验证码", "verification code", "security code", "login code", "code"},
+		SupplierType:        item.ProviderType,
+		ExpectedPurpose:     mailverificationapp.PurposeEmailVerification,
+		SiteName:            "",
+		TriggeredAt:         &triggeredAt,
+		TimeoutSeconds:      normalizeRegistrationCodeTimeout(in.TimeoutSeconds),
+		PollIntervalSeconds: normalizeRegistrationCodePollInterval(in.PollIntervalSeconds),
+		MaxResults:          10,
+	})
+}
+
 func (s *Service) ListRecommendations(ctx context.Context, limit int) ([]*adminplusdomain.SiteDiscoveryRecommendation, error) {
 	settings, err := s.GetSettings(ctx)
 	if err != nil {
@@ -520,6 +575,29 @@ func (s *Service) ListRecommendations(ctx context.Context, limit int) ([]*adminp
 		limit = 100
 	}
 	return s.repo.ListRecommendations(ctx, settings.LowRateThreshold, limit)
+}
+
+func normalizeRegistrationCodeTimeout(seconds int) int {
+	if seconds <= 0 {
+		return 90
+	}
+	if seconds > 120 {
+		return 120
+	}
+	return seconds
+}
+
+func normalizeRegistrationCodePollInterval(seconds int) int {
+	if seconds <= 0 {
+		return 5
+	}
+	if seconds < 2 {
+		return 2
+	}
+	if seconds > 30 {
+		return 30
+	}
+	return seconds
 }
 
 func (s *Service) requireSupportedItem(ctx context.Context, itemID int64) (*adminplusdomain.SiteDiscoveryItem, error) {
@@ -1275,6 +1353,11 @@ func hasClass(n *html.Node, className string) bool {
 
 func mapValue(value map[string]any, key string) map[string]any {
 	raw, _ := value[key].(map[string]any)
+	return raw
+}
+
+func boolValue(value map[string]any, key string) bool {
+	raw, _ := value[key].(bool)
 	return raw
 }
 

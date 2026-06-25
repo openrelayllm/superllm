@@ -18,6 +18,7 @@ describe('AppSidebar Admin Plus navigation', () => {
     expect(componentSource).toContain("path: '/admin/scheduler'")
     expect(componentSource).toContain("path: '/admin/collection/sessions'")
     expect(componentSource).toContain("path: '/admin/collection/site-discovery'")
+    expect(componentSource).toContain("path: '/admin/mails'")
     expect(componentSource).toContain("path: '/admin/site-catalog'")
     expect(componentSource).toContain("path: '/admin/finance/costs'")
     expect(componentSource).toContain("path: '/admin/finance/usage-costs'")

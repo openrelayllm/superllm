@@ -11,8 +11,23 @@ const stepLabel = document.querySelector('#stepLabel')
 const stepTitle = document.querySelector('#stepTitle')
 const stepText = document.querySelector('#stepText')
 const contextPanel = document.querySelector('#contextPanel')
-const configPanel = document.querySelector('#configPanel')
+const sitePanel = document.querySelector('#sitePanel')
+const candidatePanel = document.querySelector('#candidatePanel')
 const adminPlusBaseURLEl = document.querySelector('#adminPlusBaseURL')
+const saveEndpointAction = document.querySelector('#saveEndpointAction')
+const connectEndpointAction = document.querySelector('#connectEndpointAction')
+const supplierTypeEl = document.querySelector('#supplierType')
+const supplierNameEl = document.querySelector('#supplierName')
+const supplierContactEl = document.querySelector('#supplierContact')
+const supplierUsernameEl = document.querySelector('#supplierUsername')
+const supplierPasswordEl = document.querySelector('#supplierPassword')
+const togglePasswordAction = document.querySelector('#togglePasswordAction')
+const supplierTokenEl = document.querySelector('#supplierToken')
+const supplierNotesEl = document.querySelector('#supplierNotes')
+const passwordHintEl = document.querySelector('#passwordHint')
+const readCredentialAction = document.querySelector('#readCredentialAction')
+const confidenceEl = document.querySelector('#confidence')
+const evidenceEl = document.querySelector('#evidence')
 const lastResultPanel = document.querySelector('#lastResultPanel')
 const lastResultBadge = document.querySelector('#lastResultBadge')
 const lastResultTitle = document.querySelector('#lastResultTitle')
@@ -21,6 +36,8 @@ const lastResultDetail = document.querySelector('#lastResultDetail')
 
 let state = null
 let identification = null
+let candidate = null
+let candidateFormScope = ''
 let lastCaptureResult = null
 let busy = false
 let primaryHandler = connectFromActiveTab
@@ -29,12 +46,19 @@ let secondaryHandler = openAdminPlus
 primaryAction.addEventListener('click', () => guard(primaryHandler))
 secondaryAction.addEventListener('click', () => guard(secondaryHandler))
 registrationAction.addEventListener('click', () => guard(runRegistrationTask))
+saveEndpointAction.addEventListener('click', () => guard(saveBaseURLOnly))
+connectEndpointAction.addEventListener('click', () => guard(connectFromActiveTab))
 adminPlusBaseURLEl.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') {
     event.preventDefault()
     guard(saveBaseURLOnly)
   }
 })
+supplierTypeEl.addEventListener('change', () => {
+  renderCandidatePanel()
+})
+readCredentialAction.addEventListener('click', () => guard(readCredentialFromPage))
+togglePasswordAction.addEventListener('click', togglePasswordVisibility)
 
 init().catch(showError)
 
@@ -49,8 +73,10 @@ async function refresh() {
     lastCaptureResult = await sendMessage({ type: 'capture:last-result' })
     if (state.connection.status === 'connected') {
       identification = await sendMessage({ type: 'site:identify' })
+      candidate = identification?.candidate || null
     } else {
       identification = null
+      candidate = null
     }
     render()
     if (!lastCaptureResult) writeStatus('')
@@ -87,16 +113,23 @@ async function saveBaseURLOnly() {
   }
 }
 
-async function capture() {
-  if (!identification || !['matched', 'unknown'].includes(identification.status)) {
+async function capture(options = {}) {
+  if (!identification) {
     throw Object.assign(new Error('当前网站不可上报'), { reason: 'SUPPLIER_SITE_NOT_MATCHED' })
   }
   const startedAt = Date.now()
   setBusy(true)
   try {
     writeStatus('')
-    const supplierID = identification.supplier?.id
-    const result = await sendMessage({ type: 'session:capture', supplierID, autoCreate: identification.status === 'unknown' })
+    const currentCandidate = options.candidate || await collectCurrentCandidate(Boolean(options.includeSensitive))
+    const supplierID = options.supplierID || currentCandidate.supplier_id || identification.supplier?.id || 0
+    const result = await sendMessage({
+      type: 'session:capture',
+      supplierID,
+      autoCreate: true,
+      candidate: currentCandidate,
+      credentials: options.credentials || currentCandidate.credential
+    })
     lastCaptureResult = await sendMessage({ type: 'capture:last-result' })
     await refresh()
     writeStatus('')
@@ -119,6 +152,10 @@ async function runRegistrationTask() {
   try {
     writeStatus('正在领取注册任务...', 'neutral')
     const result = await sendMessage({ type: 'registration:run-next' })
+    if (result.status === 'running') {
+      writeStatus(result.message || '已有注册任务正在执行', 'neutral')
+      return
+    }
     if (result.status === 'waiting_manual_verification') {
       writeStatus(result.message || '需要人工完成验证码或邮箱验证', 'failed')
       await refresh()
@@ -149,6 +186,7 @@ function render() {
   renderRegistrationAction(connected)
 
   if (!connected) {
+    hideSitePanels()
     renderStep({
       index: 1,
       label: '连接',
@@ -158,71 +196,318 @@ function render() {
       primaryText: '连接后台',
       primary: connectFromActiveTab,
       secondaryText: '保存地址',
-      secondary: saveBaseURLOnly,
-      config: true
+      secondary: saveBaseURLOnly
     })
     return
   }
 
-  const status = identification?.status || 'unknown'
-  const host = identification?.activeTab?.host || state?.activeTab?.host || '-'
-  if (status === 'matched') {
-    const loggedOut = identification?.supplierLogin?.status === 'logged_out'
-    renderStep({
-      index: loggedOut ? 2 : 3,
-      label: loggedOut ? '登录供应商' : '上报',
-      title: loggedOut ? '先完成供应商登录' : '上报当前会话',
-      text: loggedOut ? '在当前网页完成登录后刷新状态。' : '只上报 token、cookie 和页面上下文。',
-      context: { host, supplier: identification.supplier?.name || '-' },
-      primaryText: loggedOut ? '刷新状态' : '上报当前会话',
-      primary: loggedOut ? refresh : capture,
-      secondaryText: '打开 Admin Plus',
-      secondary: openAdminPlus
-    })
-    return
-  }
-
-  if (status === 'unknown') {
+  const site = identification?.activeTab || state?.activeTab || {}
+  const siteStatus = identification?.status || 'unsupported'
+  const candidateStatus = candidate?.status || (identification?.supplier ? 'identified' : 'unsupported')
+  const resolvedStatus = identification?.supplier ? 'identified' : siteStatus
+  if (siteStatus === 'ambiguous') {
     renderStep({
       index: 2,
-      label: '新供应商',
-      title: '创建供应商并上报',
-      text: '确认后创建 browser_only 供应商，并保存当前会话。',
-      context: { host, supplier: '新供应商' },
-      primaryText: '创建并上报',
-      primary: capture,
-      secondaryText: '刷新状态',
-      secondary: refresh
-    })
-    return
-  }
-
-  if (status === 'ambiguous') {
-    renderStep({
-      index: 2,
-      label: '需确认',
-      title: '匹配多个供应商',
-      text: '请切换到更具体的供应商后台页面。',
-      context: { host, supplier: '多个供应商' },
+      label: '需处理',
+      title: '供应商已存在多个候选',
+      text: '当前站点匹配多个供应商，已停止自动创建和更新，请在后台人工处理。',
+      context: { host: site.host || '-', supplier: '多个供应商' },
       primaryText: '刷新状态',
       primary: refresh,
       secondaryText: '打开 Admin Plus',
       secondary: openAdminPlus
     })
+    renderSitePanel(site, 'ambiguous')
+    candidatePanel.classList.add('hidden')
     return
   }
 
   renderStep({
-    index: 2,
-    label: '不可用',
-    title: status === 'unsupported' ? '供应商未启用' : '当前页面不可识别',
-    text: identification?.message || '请打开供应商后台页面后刷新。',
-    context: { host, supplier: '-' },
-    primaryText: '刷新状态',
-    primary: refresh,
-    secondaryText: '打开 Admin Plus',
-    secondary: openAdminPlus
+    index: resolvedStatus === 'identified' ? 2 : 2,
+    label: resolvedStatus === 'identified' ? '已识别' : candidateStatus === 'needs_type_selection' ? '需选择' : '待识别',
+    title: resolvedStatus === 'identified' ? '供应商已识别' : candidateStatus === 'needs_type_selection' ? '无法判断系统类型，请选择' : '当前页面未匹配供应商',
+    text: resolvedStatus === 'identified'
+      ? '已识别到供应商，确认后可继续上报当前会话。'
+      : candidateStatus === 'needs_type_selection'
+        ? '页面特征不足，先选择系统类型，再补录账号密码。'
+        : '可以先采集页面候选信息，确认后保存供应商和登录凭据。',
+    context: { host: site.host || '-', supplier: identification?.supplier?.name || candidate?.defaults?.name || '-' },
+    primaryText: resolvedStatus === 'identified' ? '仅上报当前会话' : '保存供应商凭据',
+    primary: resolvedStatus === 'identified' ? capture : saveSupplierCredential,
+    secondaryText: '刷新状态',
+    secondary: refresh
   })
+
+  renderSitePanel(site, resolvedStatus)
+  renderCandidatePanel()
+}
+
+function renderSitePanel(site, resolvedStatus) {
+  if (!sitePanel) return
+  sitePanel.classList.toggle('hidden', false)
+  siteHostEl.textContent = site.host || '-'
+  supplierTextEl.textContent = identification?.supplier?.name || candidate?.defaults?.name || '-'
+  statusEl.textContent = ''
+  if (resolvedStatus === 'ambiguous') {
+    writeStatus('供应商已存在多个候选，请人工处理', 'failed')
+  } else if (candidate?.status === 'identified' || resolvedStatus === 'identified') {
+    writeStatus(identification?.message || '供应商已识别，已忽略创建/更新', 'success')
+  } else if (candidate?.status === 'needs_type_selection') {
+    writeStatus('无法判断系统类型，请选择', 'neutral')
+  } else {
+    writeStatus(identification?.message || '当前页面未匹配已配置供应商', 'neutral')
+  }
+}
+
+function renderCandidatePanel() {
+  const visible = Boolean(identification && state?.connection?.status === 'connected' && !identification?.supplier)
+  candidatePanel.classList.toggle('hidden', !visible)
+  if (!visible) return
+
+  const nextScope = candidateFormScopeKey()
+  if (nextScope !== candidateFormScope) {
+    candidateFormScope = nextScope
+    clearCandidateForm()
+  }
+
+  const defaults = candidate?.defaults || {}
+  const credential = candidate?.credential || {}
+  const currentType = supplierTypeEl.value || candidate?.provider_type || ''
+  supplierTypeEl.value = currentType || ''
+  supplierNameEl.value = supplierNameEl.value || defaults.name || identification?.activeTab?.title || identification?.activeTab?.host || ''
+  supplierContactEl.value = supplierContactEl.value || defaults.contact || credential.username || ''
+  supplierUsernameEl.value = supplierUsernameEl.value || credential.username || ''
+  supplierTokenEl.value = supplierTokenEl.value || credential.token || ''
+  supplierNotesEl.value = supplierNotesEl.value || buildNotes()
+  confidenceEl.textContent = formatConfidence(candidate?.confidence || 0)
+  evidenceEl.textContent = (candidate?.evidence || []).join(' · ') || '无明显指纹'
+
+  const password = supplierPasswordEl.value
+  passwordHintEl.textContent = credential.password_present ? '密码只会在点击读取页面凭据或创建时读取。' : '无法自动读取密码，请手动输入。'
+  if (!password && credential.password_present) {
+    passwordHintEl.textContent = '页面存在密码输入框，点击读取页面凭据或创建时会尝试读取。'
+  }
+
+  const needsType = !candidate?.provider_type || supplierTypeEl.value === ''
+  primaryAction.textContent = identification?.supplier ? '仅上报当前会话' : '保存供应商凭据'
+  primaryHandler = identification?.supplier ? capture : saveSupplierCredential
+  secondaryHandler = refresh
+  secondaryAction.textContent = '刷新状态'
+  primaryAction.disabled = busy || (!identification?.supplier && needsType)
+  secondaryAction.disabled = busy
+  readCredentialAction.disabled = busy
+}
+
+async function readCredentialFromPage() {
+  setBusy(true)
+  try {
+    const pageCandidate = await readPageCandidate(true)
+    const credential = pageCandidate?.credential || {}
+    candidate = pageCandidate || candidate
+    candidateFormScope = candidateFormScopeKey()
+    if (credential.username) {
+      supplierUsernameEl.value = credential.username
+      if (!supplierContactEl.value) supplierContactEl.value = credential.username
+    }
+    if (credential.password) {
+      supplierPasswordEl.value = credential.password
+    }
+    if (credential.token) {
+      supplierTokenEl.value = credential.token
+    }
+    if (!credential.username && !credential.password && !credential.token) {
+      writeStatus(credentialReadFailureMessage(credential), 'failed')
+      return
+    }
+    renderCandidatePanel()
+    writeStatus(credential.password ? '已读取页面凭据' : '已读取部分页面凭据，密码仍需手动填写', 'success')
+  } finally {
+    setBusy(false)
+  }
+}
+
+function credentialReadFailureMessage(credential) {
+  const debug = credential?.debug || {}
+  if (debug.password_input_count > 0 && !debug.password_value_present) {
+    return '找到密码输入框，但页面没有暴露密码值，请手动填写'
+  }
+  if (debug.input_count > 0) {
+    return '页面表单没有暴露可读取的账号、密码或 Token，请手动填写'
+  }
+  return '未找到可读取的登录表单，请手动填写'
+}
+
+async function saveSupplierCredential() {
+  const currentCandidate = await collectCurrentCandidate(true)
+  if (!currentCandidate.provider_type) {
+    throw Object.assign(new Error('无法判断系统类型，请选择'), { reason: 'SUPPLIER_TYPE_REQUIRED' })
+  }
+  setBusy(true)
+  try {
+    writeStatus('正在检查供应商', 'neutral')
+    let report = null
+    if (!currentCandidate.credential.username || !currentCandidate.credential.password) {
+      report = await reportCandidate(currentCandidate, false).catch((error) => {
+        if (error?.reason === 'SUPPLIER_SITE_NOT_MATCHED') return null
+        throw error
+      })
+    }
+    if (!report?.already_exists) {
+      if (!currentCandidate.credential.username) {
+        throw Object.assign(new Error('请填写账号'), { reason: 'SUPPLIER_USERNAME_REQUIRED' })
+      }
+      if (!currentCandidate.credential.password) {
+        throw Object.assign(new Error('无法自动读取密码，请手动输入'), { reason: 'SUPPLIER_PASSWORD_REQUIRED' })
+      }
+      writeStatus('正在保存供应商和登录凭据', 'neutral')
+      report = await reportCandidate(currentCandidate, true)
+      if (report?.created && !report.credential_saved) {
+        throw Object.assign(new Error('供应商已创建，但凭据未保存，已停止上报'), { reason: 'SUPPLIER_CREDENTIAL_SAVE_FAILED' })
+      }
+    }
+    writeStatus(
+      report?.already_exists
+        ? '供应商已存在，本次已忽略创建/更新；登录后可仅上报当前会话'
+        : '已保存到供应商列表；登录供应商后台后再上报当前会话',
+      'success'
+    )
+    await refresh()
+  } finally {
+    setBusy(false)
+  }
+}
+
+async function reportCandidate(currentCandidate, autoCreate) {
+  return sendMessage({
+    type: 'supplier:report-candidate',
+    payload: buildReportPayload(currentCandidate, { autoCreate })
+  })
+}
+
+async function collectCurrentCandidate(includeSensitive = false) {
+  const pageCandidate = includeSensitive ? await readPageCandidate(true).catch(() => null) : null
+  return collectCandidateForm(pageCandidate || candidate || {}, includeSensitive)
+}
+
+async function readPageCandidate(includeSensitive = false) {
+  const response = await sendMessage({
+    type: 'site:collect-candidate',
+    includeSensitive
+  })
+  return response || null
+}
+
+function collectCandidateForm(sourceCandidate = candidate || {}, includeSensitive = false) {
+  const defaults = sourceCandidate?.defaults || {}
+  const page = sourceCandidate?.page || {}
+  const sourceCredential = sourceCandidate?.credential || {}
+  const formPassword = String(supplierPasswordEl.value || '').trim()
+  const livePassword = includeSensitive ? String(sourceCredential.password || '').trim() : ''
+  return {
+    provider_type: normalizeProviderType(supplierTypeEl.value || sourceCandidate?.provider_type || ''),
+    name: String(supplierNameEl.value || defaults.name || page.title || page.host || '').trim(),
+    contact: String(supplierContactEl.value || defaults.contact || supplierUsernameEl.value || '').trim(),
+    credential: {
+      username: String(supplierUsernameEl.value || sourceCredential.username || '').trim(),
+      password: formPassword || livePassword,
+      token: String(supplierTokenEl.value || sourceCredential.token || '').trim()
+    },
+    notes: String(supplierNotesEl.value || buildNotes()).trim(),
+    page,
+    defaults,
+    evidence: Array.isArray(sourceCandidate?.evidence) ? sourceCandidate.evidence : [],
+    confidence: Number(sourceCandidate?.confidence || 0),
+    supplier_id: Number(sourceCandidate?.supplier_id || 0)
+  }
+}
+
+function buildReportPayload(currentCandidate, options = {}) {
+  const page = currentCandidate.page || {}
+  const defaults = currentCandidate.defaults || {}
+  const credential = currentCandidate.credential || {}
+  const providerType = currentCandidate.provider_type || ''
+  return {
+    device_id: state?.connection?.deviceID || '',
+    auto_create_supplier: options.autoCreate !== false,
+    provider_type: providerType,
+    system_type: providerType,
+    type: providerType,
+    supplier_type: providerType,
+    name: currentCandidate.name || defaults.name || page.title || page.host || '当前供应商',
+    contact: currentCandidate.contact || credential.username || '',
+    supplier_kind: defaults.supplier_kind || 'relay',
+    runtime_status: defaults.runtime_status || 'monitor_only',
+    health_status: defaults.health_status || 'normal',
+    balance_cents: Number(defaults.balance_cents || 0),
+    balance_currency: defaults.balance_currency || 'USD',
+    recharge_multiplier: Number(defaults.recharge_multiplier || 1),
+    dashboard_url: defaults.dashboard_url || page.url || page.origin || '',
+    api_base_url: defaults.api_base_url || page.origin || '',
+    third_party_recharge_url: defaults.third_party_recharge_url || '',
+    local_recharge_url: defaults.local_recharge_url || '',
+    source_host: page.host || '',
+    source_url: page.url || '',
+    origin: page.origin || '',
+    browser_login_enabled: true,
+    browser_login_username: credential.username || '',
+    browser_login_password: credential.password || '',
+    browser_login_token: credential.token || '',
+    notes: currentCandidate.notes || 'created from Chrome plugin',
+    page_context: {
+      title: page.title || '',
+      url: page.url || '',
+      host: page.host || '',
+      identification_evidence: Array.isArray(currentCandidate.evidence) ? currentCandidate.evidence : []
+    }
+  }
+}
+
+function candidateFormScopeKey() {
+  const site = identification?.activeTab || {}
+  const page = candidate?.page || {}
+  return [
+    identification?.supplier?.id || '',
+    site.origin || page.origin || '',
+    site.host || page.host || ''
+  ].join('|')
+}
+
+function clearCandidateForm() {
+  supplierTypeEl.value = ''
+  supplierNameEl.value = ''
+  supplierContactEl.value = ''
+  supplierUsernameEl.value = ''
+  supplierPasswordEl.value = ''
+  supplierPasswordEl.type = 'password'
+  togglePasswordAction.textContent = '显示'
+  supplierTokenEl.value = ''
+  supplierNotesEl.value = ''
+}
+
+function hideSitePanels() {
+  sitePanel.classList.add('hidden')
+  candidatePanel.classList.add('hidden')
+}
+
+function buildNotes() {
+  const evidence = Array.isArray(candidate?.evidence) ? candidate.evidence.slice(0, 6) : []
+  const pieces = ['created from Chrome plugin']
+  if (candidate?.provider_type) pieces.push(`type:${candidate.provider_type}`)
+  if (evidence.length > 0) pieces.push(`evidence:${evidence.join('|')}`)
+  return pieces.join(' · ')
+}
+
+function normalizeProviderType(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'newapi' || normalized === 'new-api') return 'new_api'
+  if (normalized === 'sub2api' || normalized === 'sub2-api') return 'sub2api'
+  return normalized
+}
+
+function formatConfidence(value) {
+  const num = Number(value || 0)
+  if (!Number.isFinite(num) || num <= 0) return '置信度 0%'
+  return `置信度 ${(num * 100).toFixed(0)}%`
 }
 
 function renderRegistrationAction(connected) {
@@ -240,7 +525,6 @@ function renderStep(config) {
     supplierTextEl.textContent = config.context.supplier || '-'
   }
   contextPanel.classList.toggle('hidden', !config.context)
-  configPanel.classList.toggle('hidden', !config.config)
   primaryAction.textContent = config.primaryText
   secondaryAction.textContent = config.secondaryText
   primaryHandler = config.primary
@@ -298,12 +582,6 @@ function sendMessage(message) {
   return Promise.resolve(globalThis.adminPlusHandleMessage(message, { source: 'popup' }))
 }
 
-function throwMessage(response) {
-  const error = new Error(response.error?.message || 'operation failed')
-  error.reason = response.error?.reason
-  throw error
-}
-
 function showError(error) {
   if (error?.reason === 'ADMIN_PLUS_LOGIN_REQUIRED') return writeStatus('请先打开并登录 Admin Plus 后台页', 'failed')
   if (error?.reason === 'ADMIN_PLUS_PAGE_REQUIRED') return writeStatus('请切换到 Admin Plus 后台页', 'failed')
@@ -311,6 +589,11 @@ function showError(error) {
   if (error?.reason === 'ADMIN_PLUS_NOT_CONNECTED') return writeStatus('请先连接 Admin Plus', 'failed')
   if (error?.reason === 'EXTENSION_TASK_NOT_AVAILABLE') return writeStatus('暂无待执行注册任务', 'failed')
   if (error?.reason === 'SUPPLIER_LOGIN_REQUIRED') return writeStatus('请先在供应商页面登录', 'failed')
+  if (error?.reason === 'SUPPLIER_TYPE_REQUIRED') return writeStatus('无法判断系统类型，请选择', 'failed')
+  if (error?.reason === 'SUPPLIER_USERNAME_REQUIRED') return writeStatus('请填写账号', 'failed')
+  if (error?.reason === 'SUPPLIER_PASSWORD_REQUIRED') return writeStatus('无法自动读取密码，请手动输入', 'failed')
+  if (error?.reason === 'SUPPLIER_CREDENTIAL_SAVE_FAILED') return writeStatus('供应商凭据未保存，已停止上报', 'failed')
+  if (error?.reason === 'SUPPLIER_SITE_AMBIGUOUS') return writeStatus('供应商已存在多个候选，请人工处理', 'failed')
   writeStatus(error.message || String(error), 'failed')
 }
 
@@ -334,6 +617,16 @@ function setBusy(nextBusy) {
   primaryAction.disabled = nextBusy
   secondaryAction.disabled = nextBusy
   registrationAction.disabled = nextBusy || state?.connection?.status !== 'connected'
+  saveEndpointAction.disabled = nextBusy
+  connectEndpointAction.disabled = nextBusy
+  togglePasswordAction.disabled = nextBusy
+  if (readCredentialAction) readCredentialAction.disabled = nextBusy
+}
+
+function togglePasswordVisibility() {
+  const visible = supplierPasswordEl.type === 'text'
+  supplierPasswordEl.type = visible ? 'password' : 'text'
+  togglePasswordAction.textContent = visible ? '显示' : '隐藏'
 }
 
 function guard(action) {

@@ -16,6 +16,16 @@
         <span id="connectionBadge" class="pill neutral">未连接</span>
       </header>
 
+      <section id="endpointPanel" class="config compact">
+        <label for="adminPlusBaseURL">Admin Plus 上报地址</label>
+        <input id="adminPlusBaseURL" type="url" placeholder="http://localhost:8080" autocomplete="url" />
+        <div class="inline-actions">
+          <button id="saveEndpointAction" type="button">保存地址</button>
+          <button id="connectEndpointAction" type="button" class="secondary">连接当前环境</button>
+        </div>
+        <p class="hint">切换环境后需要重新连接该环境的后台登录态。</p>
+      </section>
+
       <section class="step">
         <div class="step-index" id="stepIndex">1</div>
         <div class="step-body">
@@ -36,6 +46,65 @@
         </div>
       </section>
 
+      <section id="sitePanel" class="context hidden">
+        <div class="context-row">
+          <span>识别结果</span>
+          <strong id="confidence">-</strong>
+        </div>
+        <div class="context-row">
+          <span>指纹证据</span>
+          <strong id="evidence">-</strong>
+        </div>
+      </section>
+
+      <section id="candidatePanel" class="config hidden">
+        <div class="field">
+          <label for="supplierType">系统类型</label>
+          <select id="supplierType">
+            <option value="">请选择</option>
+            <option value="sub2api">Sub2API</option>
+            <option value="new_api">New API</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="supplierName">供应商名称</label>
+          <input id="supplierName" type="text" autocomplete="organization" />
+        </div>
+
+        <div class="field">
+          <label for="supplierContact">联系人</label>
+          <input id="supplierContact" type="text" autocomplete="username" />
+        </div>
+
+        <div class="field-grid">
+          <div class="field">
+            <label for="supplierUsername">账号</label>
+            <input id="supplierUsername" type="text" autocomplete="username" />
+          </div>
+          <div class="field">
+            <label for="supplierPassword">密码</label>
+            <div class="password-control">
+              <input id="supplierPassword" type="password" autocomplete="current-password" />
+              <button id="togglePasswordAction" type="button" class="inline-toggle">显示</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="supplierToken">临时 Token</label>
+          <input id="supplierToken" type="text" autocomplete="off" />
+        </div>
+
+        <div class="field">
+          <label for="supplierNotes">备注</label>
+          <textarea id="supplierNotes" rows="3"></textarea>
+        </div>
+
+        <p id="passwordHint" class="hint"></p>
+        <button id="readCredentialAction" type="button" class="secondary">读取页面凭据</button>
+      </section>
+
       <section id="lastResultPanel" class="result hidden">
         <div class="result-head">
           <span id="lastResultBadge" class="result-badge">-</span>
@@ -43,12 +112,6 @@
         </div>
         <div id="lastResultMeta" class="result-meta"></div>
         <div id="lastResultDetail" class="result-detail hidden"></div>
-      </section>
-
-      <section id="configPanel" class="config hidden">
-        <label for="adminPlusBaseURL">Admin Plus 后端地址</label>
-        <input id="adminPlusBaseURL" type="url" placeholder="http://localhost:8080" autocomplete="url" />
-        <p class="hint">本地开发通常填后端端口。先打开并登录后台，再连接。</p>
       </section>
 
       <div class="actions">

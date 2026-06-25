@@ -37,7 +37,7 @@ func (r *SQLRepository) CreateTask(ctx context.Context, task *adminplusdomain.Ex
 			available_after, payload, result, error_code, error_message,
 			created_at, updated_at, finished_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '{}'::jsonb, $14, $15, $16, $17, $18)
+		VALUES (NULLIF($1, 0), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '{}'::jsonb, $14, $15, $16, $17, $18)
 		RETURNING id, supplier_id, type, schedule_key, status, priority, attempts, max_attempts,
 			device_id, lease_token, lease_expires_at, last_heartbeat_at,
 			available_after, payload, result, error_code, error_message,
@@ -80,7 +80,7 @@ func (r *SQLRepository) CreateTaskIfAbsent(ctx context.Context, task *adminplusd
 			available_after, payload, result, error_code, error_message,
 			created_at, updated_at, finished_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '{}'::jsonb, $14, $15, $16, $17, $18)
+		VALUES (NULLIF($1, 0), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '{}'::jsonb, $14, $15, $16, $17, $18)
 		ON CONFLICT (schedule_key) WHERE schedule_key <> '' DO NOTHING
 		RETURNING id, supplier_id, type, schedule_key, status, priority, attempts, max_attempts,
 			device_id, lease_token, lease_expires_at, last_heartbeat_at,
@@ -312,12 +312,13 @@ type extensionTaskScanner interface {
 
 func scanExtensionTask(scanner extensionTaskScanner) (*adminplusdomain.ExtensionTask, error) {
 	var task adminplusdomain.ExtensionTask
+	var supplierID sql.NullInt64
 	var taskType, scheduleKey, status string
 	var leaseExpiresAt, lastHeartbeatAt, finishedAt sql.NullTime
 	var payload, result []byte
 	err := scanner.Scan(
 		&task.ID,
-		&task.SupplierID,
+		&supplierID,
 		&taskType,
 		&scheduleKey,
 		&status,
@@ -339,6 +340,9 @@ func scanExtensionTask(scanner extensionTaskScanner) (*adminplusdomain.Extension
 	)
 	if err != nil {
 		return nil, err
+	}
+	if supplierID.Valid {
+		task.SupplierID = supplierID.Int64
 	}
 	task.Type = adminplusdomain.ExtensionTaskType(taskType)
 	task.ScheduleKey = scheduleKey

@@ -203,6 +203,128 @@ func TestExtensionHandlerCreateCaptureSessionTask(t *testing.T) {
 	require.NotEmpty(t, body.Data.LeaseToken)
 	require.Equal(t, 1, body.Data.MaxAttempts)
 	require.Equal(t, "relay.example.com", body.Data.Payload.SourceHost)
+
+	missingSupplier := performJSON(t, router, http.MethodPost, "/extension/session/capture-task", `{
+		"device_id": "chrome-1",
+		"lease_ttl_seconds": 60,
+		"url": "https://relay.example.com/dashboard"
+	}`)
+	require.Equal(t, http.StatusBadRequest, missingSupplier.Code, missingSupplier.Body.String())
+	require.Contains(t, missingSupplier.Body.String(), "SUPPLIER_ID_REQUIRED")
+}
+
+func TestExtensionHandlerReportSupplierCandidateCreatesSupplierWithCredential(t *testing.T) {
+	router := newOperationsHandlerTestRouter()
+
+	reported := performJSON(t, router, http.MethodPost, "/extension/suppliers/report-candidate", `{
+		"device_id": "chrome-1",
+		"name": "AI Pixel",
+		"kind": "relay",
+		"type": "new_api",
+		"runtime_status": "monitor_only",
+		"health_status": "normal",
+		"dashboard_url": "https://pixel.example.com/dashboard",
+		"api_base_url": "https://pixel.example.com",
+		"source_url": "https://pixel.example.com/dashboard",
+		"source_host": "pixel.example.com",
+		"contact": "ops",
+		"notes": "from extension",
+		"balance_cents": 1234,
+		"balance_currency": "USD",
+		"recharge_multiplier": 2,
+		"browser_login_enabled": true,
+		"browser_login_username": "pixel@example.com",
+		"browser_login_password": "pixel-secret",
+		"browser_login_token": "pixel-token"
+	}`)
+	require.Equal(t, http.StatusOK, reported.Code, reported.Body.String())
+	var reportBody struct {
+		Data struct {
+			SupplierID      int64  `json:"supplier_id"`
+			SupplierName    string `json:"supplier_name"`
+			Created         bool   `json:"created"`
+			CredentialSaved bool   `json:"credential_saved"`
+			MaskedUsername  string `json:"masked_username"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(reported.Body.Bytes(), &reportBody))
+	require.Greater(t, reportBody.Data.SupplierID, int64(1))
+	require.Equal(t, "AI Pixel", reportBody.Data.SupplierName)
+	require.True(t, reportBody.Data.Created)
+	require.True(t, reportBody.Data.CredentialSaved)
+	require.Equal(t, "pi***@example.com", reportBody.Data.MaskedUsername)
+
+	created := performJSON(t, router, http.MethodPost, "/extension/session/capture-task", `{
+		"supplier_id": `+strconv.FormatInt(reportBody.Data.SupplierID, 10)+`,
+		"device_id": "chrome-1",
+		"lease_ttl_seconds": 60
+	}`)
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	var createdBody struct {
+		Data struct {
+			ID         int64  `json:"id"`
+			LeaseToken string `json:"lease_token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &createdBody))
+
+	credential := performJSON(t, router, http.MethodPost, "/extension/tasks/"+strconv.FormatInt(createdBody.Data.ID, 10)+"/browser-credential", `{
+		"device_id": "chrome-1",
+		"lease_token": "`+createdBody.Data.LeaseToken+`"
+	}`)
+	require.Equal(t, http.StatusOK, credential.Code, credential.Body.String())
+	require.Contains(t, credential.Body.String(), `"username":"pixel@example.com"`)
+	require.Contains(t, credential.Body.String(), `"password":"pixel-secret"`)
+	require.Contains(t, credential.Body.String(), `"token":"pixel-token"`)
+}
+
+func TestExtensionHandlerReportSupplierCandidateIgnoresExistingSupplierWithoutUpdating(t *testing.T) {
+	router := newOperationsHandlerTestRouter()
+
+	reported := performJSON(t, router, http.MethodPost, "/extension/suppliers/report-candidate", `{
+		"device_id": "chrome-1",
+		"name": "Changed Relay",
+		"type": "new_api",
+		"dashboard_url": "https://relay.example.com/changed",
+		"api_base_url": "https://relay.example.com/changed-api",
+		"source_url": "https://relay.example.com/admin/accounts",
+		"source_host": "relay.example.com",
+		"balance_cents": 999999,
+		"browser_login_enabled": true,
+		"browser_login_username": "changed@example.com",
+		"browser_login_password": "changed-secret",
+		"browser_login_token": "changed-token"
+	}`)
+	require.Equal(t, http.StatusOK, reported.Code, reported.Body.String())
+	require.Contains(t, reported.Body.String(), `"supplier_id":1`)
+	require.Contains(t, reported.Body.String(), `"already_exists":true`)
+	require.Contains(t, reported.Body.String(), `"ignored":true`)
+	require.Contains(t, reported.Body.String(), `"credential_saved":false`)
+
+	created := performJSON(t, router, http.MethodPost, "/extension/session/capture-task", `{
+		"supplier_id": 1,
+		"device_id": "chrome-1",
+		"lease_ttl_seconds": 60
+	}`)
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	var createdBody struct {
+		Data struct {
+			ID         int64  `json:"id"`
+			LeaseToken string `json:"lease_token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &createdBody))
+
+	credential := performJSON(t, router, http.MethodPost, "/extension/tasks/"+strconv.FormatInt(createdBody.Data.ID, 10)+"/browser-credential", `{
+		"device_id": "chrome-1",
+		"lease_token": "`+createdBody.Data.LeaseToken+`"
+	}`)
+	require.Equal(t, http.StatusOK, credential.Code, credential.Body.String())
+	require.Contains(t, credential.Body.String(), `"supplier_name":"Relay"`)
+	require.Contains(t, credential.Body.String(), `"username":"ops@example.com"`)
+	require.Contains(t, credential.Body.String(), `"password":"secret"`)
+	require.NotContains(t, credential.Body.String(), "changed-secret")
+	require.NotContains(t, credential.Body.String(), "changed-token")
 }
 
 func TestSupplierHandlerMatchSite(t *testing.T) {
@@ -372,7 +494,7 @@ func TestSupplierSessionProbeReadsProfileAndRecordsBalance(t *testing.T) {
 	require.NotContains(t, probed.Body.String(), "secret-cookie")
 }
 
-func TestCaptureSessionAutoCreatesSupplierWithoutSyncingBalance(t *testing.T) {
+func TestCaptureSessionUsesReportedSupplierWithoutSyncingBalance(t *testing.T) {
 	profileCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -399,15 +521,34 @@ func TestCaptureSessionAutoCreatesSupplierWithoutSyncingBalance(t *testing.T) {
 
 	router := newOperationsHandlerTestRouterWithAutoSessionBalanceSync("", "")
 
+	reported := performJSON(t, router, http.MethodPost, "/extension/suppliers/report-candidate", `{
+		"device_id": "chrome-1",
+		"name": "AI Pixel",
+		"type": "sub2api",
+		"dashboard_url": "`+server.URL+`/dashboard",
+		"api_base_url": "`+server.URL+`",
+		"source_url": "`+server.URL+`/dashboard",
+		"source_host": "`+strings.TrimPrefix(server.URL, "http://")+`",
+		"auto_create_supplier": true
+	}`)
+	require.Equal(t, http.StatusOK, reported.Code, reported.Body.String())
+	var reportBody struct {
+		Data struct {
+			SupplierID int64 `json:"supplier_id"`
+			Created    bool  `json:"created"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(reported.Body.Bytes(), &reportBody))
+	require.Greater(t, reportBody.Data.SupplierID, int64(1))
+	require.True(t, reportBody.Data.Created)
+
 	created := performJSON(t, router, http.MethodPost, "/extension/session/capture-task", `{
+		"supplier_id": `+strconv.FormatInt(reportBody.Data.SupplierID, 10)+`,
 		"device_id": "chrome-1",
 		"lease_ttl_seconds": 60,
 		"url": "`+server.URL+`/dashboard",
 		"dashboard_url": "`+server.URL+`/dashboard",
-		"api_base_url": "`+server.URL+`",
-		"host": "`+strings.TrimPrefix(server.URL, "http://")+`",
-		"auto_create_supplier": true,
-		"page_context": {"title": "AI Pixel"}
+		"api_base_url": "`+server.URL+`"
 	}`)
 	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
 	var body struct {
@@ -419,8 +560,8 @@ func TestCaptureSessionAutoCreatesSupplierWithoutSyncingBalance(t *testing.T) {
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &body))
-	require.Greater(t, body.Data.SupplierID, int64(1))
-	require.Equal(t, true, body.Data.Payload["supplier_auto_created"])
+	require.Equal(t, reportBody.Data.SupplierID, body.Data.SupplierID)
+	require.NotContains(t, body.Data.Payload, "supplier_auto_created")
 
 	completed := performJSON(t, router, http.MethodPost, "/extension/tasks/"+strconv.FormatInt(body.Data.ID, 10)+"/complete", `{
 		"device_id": "chrome-1",
@@ -1227,7 +1368,7 @@ func newOperationsHandlerTestRouterWithDependencies(dashboardURL string, apiBase
 	if autoSessionBalanceSync {
 		ingestBalanceService = balanceService
 	}
-	processor := extensionapp.NewIngestProcessorWithCipher(nil, ingestBalanceService, nil, nil, nil, sessionSvc, plainSessionCipher{})
+	processor := extensionapp.NewIngestProcessorWithCipher(nil, ingestBalanceService, nil, nil, nil, sessionSvc, plainSessionCipher{}, nil)
 	extensionHandler := NewExtensionHandler(extensionapp.NewServiceWithDependencies(extensionapp.NewMemoryRepository(), processor, supplierSvc), supplierSvc)
 	actionHandler := NewActionHandler(actionsapp.NewRuleService())
 	notificationRepo := notificationsapp.NewMemoryRepository()
@@ -1271,6 +1412,7 @@ func newOperationsHandlerTestRouterWithDependencies(dashboardURL string, apiBase
 	router.GET("/costs/suppliers", costHandler.ListSupplierSummaries)
 	router.POST("/extension/tasks", extensionHandler.CreateTask)
 	router.POST("/extension/tasks/claim", extensionHandler.ClaimTask)
+	router.POST("/extension/suppliers/report-candidate", extensionHandler.ReportSupplierCandidate)
 	router.POST("/extension/session/capture-task", extensionHandler.CreateCaptureSessionTask)
 	router.GET("/extension/manifest", extensionHandler.Manifest)
 	router.GET("/extension/package.zip", extensionHandler.DownloadPackage)

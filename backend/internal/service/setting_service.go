@@ -2278,6 +2278,73 @@ func (s *SettingService) GetEmailOAuthProviderConfig(ctx context.Context, provid
 	return cfg, nil
 }
 
+type EmailOAuthProviderSettingsUpdate struct {
+	Enabled             bool
+	ClientID            string
+	ClientSecret        string
+	RedirectURL         string
+	FrontendRedirectURL string
+}
+
+func (s *SettingService) SetEmailOAuthProviderSettings(ctx context.Context, provider string, update EmailOAuthProviderSettingsUpdate) error {
+	if s == nil || s.settingRepo == nil {
+		return infraerrors.InternalServer("SETTING_SERVICE_NOT_CONFIGURED", "setting service is not configured")
+	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider != "google" {
+		return infraerrors.NotFound("OAUTH_PROVIDER_NOT_FOUND", "oauth provider not found")
+	}
+	update.ClientID = strings.TrimSpace(update.ClientID)
+	update.ClientSecret = strings.TrimSpace(update.ClientSecret)
+	update.RedirectURL = strings.TrimSpace(update.RedirectURL)
+	update.FrontendRedirectURL = strings.TrimSpace(update.FrontendRedirectURL)
+	if update.ClientID == "" {
+		return infraerrors.BadRequest("OAUTH_CLIENT_ID_REQUIRED", "oauth client id is required")
+	}
+	if update.RedirectURL != "" {
+		if err := config.ValidateAbsoluteHTTPURL(update.RedirectURL); err != nil {
+			return infraerrors.BadRequest("OAUTH_REDIRECT_URL_INVALID", "oauth redirect url must be an absolute http(s) URL")
+		}
+	}
+	if update.FrontendRedirectURL != "" {
+		if err := config.ValidateFrontendRedirectURL(update.FrontendRedirectURL); err != nil {
+			return infraerrors.BadRequest("OAUTH_FRONTEND_REDIRECT_URL_INVALID", "oauth frontend redirect url is invalid")
+		}
+	}
+	updates := map[string]string{
+		SettingKeyGoogleOAuthEnabled:  strconv.FormatBool(update.Enabled),
+		SettingKeyGoogleOAuthClientID: update.ClientID,
+	}
+	if update.ClientSecret != "" {
+		updates[SettingKeyGoogleOAuthClientSecret] = update.ClientSecret
+	}
+	if update.RedirectURL != "" {
+		updates[SettingKeyGoogleOAuthRedirectURL] = update.RedirectURL
+	}
+	if update.FrontendRedirectURL != "" {
+		updates[SettingKeyGoogleOAuthFrontendRedirectURL] = update.FrontendRedirectURL
+	}
+	return s.settingRepo.SetMultiple(ctx, updates)
+}
+
+func (s *SettingService) SetGoogleOAuthClientCredentials(ctx context.Context, clientID, clientSecret string) error {
+	if s == nil || s.settingRepo == nil {
+		return infraerrors.InternalServer("SETTING_SERVICE_NOT_CONFIGURED", "setting service is not configured")
+	}
+	clientID = strings.TrimSpace(clientID)
+	clientSecret = strings.TrimSpace(clientSecret)
+	if clientID == "" {
+		return infraerrors.BadRequest("OAUTH_CLIENT_ID_REQUIRED", "oauth client id is required")
+	}
+	updates := map[string]string{
+		SettingKeyGoogleOAuthClientID: clientID,
+	}
+	if clientSecret != "" {
+		updates[SettingKeyGoogleOAuthClientSecret] = clientSecret
+	}
+	return s.settingRepo.SetMultiple(ctx, updates)
+}
+
 // IsRegistrationEnabled 检查是否开放注册
 func (s *SettingService) IsRegistrationEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyRegistrationEnabled)

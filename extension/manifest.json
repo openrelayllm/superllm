@@ -34,6 +34,7 @@
         "<all_urls>"
       ],
       "js": [
+        "src/content/site-probe.js",
         "src/content/newapi.js",
         "src/content/sub2api.js"
       ],

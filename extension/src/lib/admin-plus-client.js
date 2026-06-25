@@ -25,6 +25,9 @@ export class AdminPlusClient {
         origin: payload.source_origin || '',
         dashboard_url: payload.dashboard_url || '',
         api_base_url: payload.api_base_url || '',
+        type: payload.supplier_type || payload.provider_type || '',
+        supplier_type: payload.supplier_type || payload.provider_type || '',
+        provider_type: payload.provider_type || payload.supplier_type || '',
         third_party_recharge_url: payload.third_party_recharge_url || '',
         local_recharge_url: payload.local_recharge_url || '',
         auto_create_supplier: payload.auto_create_supplier,
@@ -35,7 +38,11 @@ export class AdminPlusClient {
   }
 
   async createDiscoveredSupplier(payload) {
-    return this.request('/api/v1/admin-plus/suppliers/from-site-candidate', {
+    return this.reportSupplierCandidate(payload)
+  }
+
+  async reportSupplierCandidate(payload) {
+    return this.request('/api/v1/admin-plus/extension/suppliers/report-candidate', {
       method: 'POST',
       body: payload
     })
@@ -79,6 +86,19 @@ export class AdminPlusClient {
       body: {
         device_id: task.device_id,
         lease_token: task.lease_token
+      }
+    })
+  }
+
+  async registrationVerificationCode(task, options = {}) {
+    return this.request(`/api/v1/admin-plus/extension/tasks/${task.id}/registration-verification-code/read`, {
+      method: 'POST',
+      body: {
+        device_id: task.device_id,
+        lease_token: task.lease_token,
+        triggered_at: options.triggeredAt || null,
+        timeout_seconds: Number(options.timeoutSeconds || 90),
+        poll_interval_seconds: Number(options.pollIntervalSeconds || 5)
       }
     })
   }

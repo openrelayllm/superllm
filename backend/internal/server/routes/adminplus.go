@@ -19,7 +19,6 @@ func RegisterAdminPlusRoutes(
 			suppliers.GET("", h.AdminPlus.Supplier.List)
 			suppliers.POST("", h.AdminPlus.Supplier.Create)
 			suppliers.POST("/site-match", h.AdminPlus.Supplier.MatchSite)
-			suppliers.POST("/from-site-candidate", h.AdminPlus.Supplier.CreateFromSiteCandidate)
 			suppliers.GET("/:id", h.AdminPlus.Supplier.Get)
 			suppliers.PUT("/:id", h.AdminPlus.Supplier.Update)
 			suppliers.DELETE("/:id", h.AdminPlus.Supplier.Delete)
@@ -141,6 +140,19 @@ func RegisterAdminPlusRoutes(
 			notifications.POST("/deliveries/:id/retry", h.AdminPlus.Notification.RetryDelivery)
 		}
 
+		mails := adminPlus.Group("/mails")
+		{
+			mails.GET("/oauth/config", h.AdminPlus.MailVerification.OAuthSettings)
+			mails.PUT("/oauth/config", h.AdminPlus.MailVerification.UpdateOAuthSettings)
+			mails.POST("/oauth/authorize", h.AdminPlus.MailVerification.AuthorizeURL)
+			mails.POST("/oauth/exchange", h.AdminPlus.MailVerification.ExchangeCode)
+			mails.GET("/credentials", h.AdminPlus.MailVerification.ListCredentials)
+			mails.POST("/credentials", h.AdminPlus.MailVerification.SaveCredential)
+			mails.POST("/credentials/:id/check", h.AdminPlus.MailVerification.CheckCredential)
+			mails.POST("/verification-code/read", h.AdminPlus.MailVerification.ReadVerificationCode)
+			mails.POST("/verification-code/send-test", h.AdminPlus.MailVerification.SendTestVerificationCode)
+		}
+
 		usageCosts := adminPlus.Group("/usage-costs")
 		{
 			usageCosts.POST("/lines/import", h.AdminPlus.UsageCost.ImportUsageCostLines)
@@ -160,10 +172,12 @@ func RegisterAdminPlusRoutes(
 			extension.POST("/tasks", h.AdminPlus.Extension.CreateTask)
 			extension.GET("/tasks", h.AdminPlus.Extension.ListTasks)
 			extension.POST("/tasks/claim", h.AdminPlus.Extension.ClaimTask)
+			extension.POST("/suppliers/report-candidate", h.AdminPlus.Extension.ReportSupplierCandidate)
 			extension.POST("/session/capture-task", h.AdminPlus.Extension.CreateCaptureSessionTask)
 			extension.POST("/tasks/:id/heartbeat", h.AdminPlus.Extension.Heartbeat)
 			extension.POST("/tasks/:id/browser-credential", h.AdminPlus.Extension.GetBrowserCredential)
 			extension.POST("/tasks/:id/registration-credential", h.AdminPlus.SiteDiscovery.GetRegistrationCredential)
+			extension.POST("/tasks/:id/registration-verification-code/read", h.AdminPlus.SiteDiscovery.ReadRegistrationVerificationCode)
 			extension.POST("/tasks/:id/complete", h.AdminPlus.Extension.CompleteTask)
 			extension.POST("/tasks/:id/fail", h.AdminPlus.Extension.FailTask)
 		}

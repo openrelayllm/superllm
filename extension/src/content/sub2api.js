@@ -1,9 +1,13 @@
 (() => {
   if (window.__adminPlusSessionCaptureLoaded) return
   window.__adminPlusSessionCaptureLoaded = true
+  const SUPPORTED_MESSAGES = new Set([
+    'admin-plus:detect-login',
+    'admin-plus:capture-session'
+  ])
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (!message?.type?.startsWith('admin-plus:')) return false
+    if (!SUPPORTED_MESSAGES.has(message?.type)) return false
     Promise.resolve(handleMessage(message))
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({

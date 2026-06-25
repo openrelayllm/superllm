@@ -77,18 +77,6 @@ type updateSupplierStatusRequest struct {
 	HealthStatus  string `json:"health_status" binding:"required"`
 }
 
-type createSupplierFromSiteCandidateRequest struct {
-	Name                  string         `json:"name"`
-	Type                  string         `json:"type"`
-	DashboardURL          string         `json:"dashboard_url" binding:"required"`
-	APIBaseURL            string         `json:"api_base_url"`
-	ThirdPartyRechargeURL string         `json:"third_party_recharge_url"`
-	LocalRechargeURL      string         `json:"local_recharge_url"`
-	SourceHost            string         `json:"source_host"`
-	SourceURL             string         `json:"source_url"`
-	PageContext           map[string]any `json:"page_context"`
-}
-
 type supplierSiteMatchRequest struct {
 	URL    string `json:"url"`
 	Origin string `json:"origin"`
@@ -139,30 +127,6 @@ func (h *SupplierHandler) Create(c *gin.Context) {
 		BalanceCents:          req.BalanceCents,
 		BalanceCurrency:       req.BalanceCurrency,
 		RechargeMultiplier:    req.RechargeMultiplier,
-	})
-	if response.ErrorFrom(c, err) {
-		return
-	}
-	response.Created(c, supplier)
-}
-
-func (h *SupplierHandler) CreateFromSiteCandidate(c *gin.Context) {
-	var req createSupplierFromSiteCandidateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "invalid request: "+err.Error())
-		return
-	}
-	title, _ := req.PageContext["title"].(string)
-	supplier, err := h.service.CreateFromSiteCandidate(c.Request.Context(), suppliersapp.CreateFromSiteCandidateInput{
-		Name:                  req.Name,
-		Type:                  adminplusdomain.NormalizeSupplierType(req.Type),
-		DashboardURL:          req.DashboardURL,
-		APIBaseURL:            req.APIBaseURL,
-		ThirdPartyRechargeURL: req.ThirdPartyRechargeURL,
-		LocalRechargeURL:      req.LocalRechargeURL,
-		SourceHost:            req.SourceHost,
-		SourceURL:             req.SourceURL,
-		Title:                 title,
 	})
 	if response.ErrorFrom(c, err) {
 		return

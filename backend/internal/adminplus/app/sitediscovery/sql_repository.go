@@ -414,7 +414,7 @@ func (r *SQLRepository) UpsertRegistrationCredential(ctx context.Context, creden
 			last_attempt_at, created_at, updated_at
 	`,
 		credential.DiscoveryID,
-		credential.SupplierID,
+		sql.NullInt64{Int64: credential.SupplierID, Valid: credential.SupplierID > 0},
 		credential.Email,
 		credential.PasswordCiphertext,
 		string(credential.Status),
@@ -445,6 +445,31 @@ func (r *SQLRepository) UpdateRegistrationTask(ctx context.Context, credentialID
 			last_attempt_at, created_at, updated_at
 	`, credentialID, taskID, string(status), nullableTimeValue(attemptedAt))
 	return scanRegistrationCredential(row)
+}
+
+func (r *SQLRepository) CompleteRegistration(ctx context.Context, credentialID int64, supplierID int64, status adminplusdomain.SupplierRegistrationStatus, errorCode string, errorMessage string, attemptedAt time.Time) (*adminplusdomain.SupplierRegistrationCredential, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	row := r.db.QueryRowContext(ctx, `
+		UPDATE admin_plus_supplier_registration_credentials
+		SET supplier_id = COALESCE(NULLIF($2, 0), supplier_id),
+			status = $3,
+			verification_status = CASE WHEN $3 = 'waiting_manual_verification' THEN $4 ELSE '' END,
+			error_code = $4,
+			error_message = $5,
+			last_attempt_at = $6,
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, discovery_id, supplier_id, email, password_ciphertext, status,
+			verification_status, extension_task_id, error_code, error_message,
+			last_attempt_at, created_at, updated_at
+	`, credentialID, supplierID, string(status), strings.TrimSpace(errorCode), trimLimit(errorMessage, 1000), nullableTimeValue(attemptedAt))
+	credential, err := scanRegistrationCredential(row)
+	if err == sql.ErrNoRows {
+		return nil, infraerrors.New(http.StatusNotFound, "SITE_DISCOVERY_REGISTRATION_CREDENTIAL_NOT_FOUND", "registration credential not found")
+	}
+	return credential, err
 }
 
 func (r *SQLRepository) GetRegistrationCredentialByTaskID(ctx context.Context, taskID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.SiteDiscoveryItem, error) {
@@ -666,12 +691,13 @@ func scanSiteDiscoveryItemColumns(scanner itemScanner, withRegistration bool) (*
 func scanRegistrationCredential(scanner itemScanner) (*adminplusdomain.SupplierRegistrationCredential, error) {
 	var credential adminplusdomain.SupplierRegistrationCredential
 	var status string
+	var supplierID sql.NullInt64
 	var extensionTaskID sql.NullInt64
 	var lastAttemptAt sql.NullTime
 	err := scanner.Scan(
 		&credential.ID,
 		&credential.DiscoveryID,
-		&credential.SupplierID,
+		&supplierID,
 		&credential.Email,
 		&credential.PasswordCiphertext,
 		&status,
@@ -688,6 +714,9 @@ func scanRegistrationCredential(scanner itemScanner) (*adminplusdomain.SupplierR
 	}
 	credential.Status = adminplusdomain.SupplierRegistrationStatus(status)
 	credential.PasswordConfigured = credential.PasswordCiphertext != ""
+	if supplierID.Valid {
+		credential.SupplierID = supplierID.Int64
+	}
 	if extensionTaskID.Valid {
 		credential.ExtensionTaskID = extensionTaskID.Int64
 	}
@@ -701,12 +730,13 @@ func scanRegistrationCredential(scanner itemScanner) (*adminplusdomain.SupplierR
 func scanRegistrationCredentialWithItem(scanner itemScanner) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.SiteDiscoveryItem, error) {
 	var credential adminplusdomain.SupplierRegistrationCredential
 	var status string
+	var supplierID sql.NullInt64
 	var extensionTaskID sql.NullInt64
 	var lastAttemptAt sql.NullTime
 	item, err := scanSiteDiscoveryItemColumns(registrationItemScanner{scanner: scanner, prefix: []any{
 		&credential.ID,
 		&credential.DiscoveryID,
-		&credential.SupplierID,
+		&supplierID,
 		&credential.Email,
 		&credential.PasswordCiphertext,
 		&status,
@@ -723,6 +753,9 @@ func scanRegistrationCredentialWithItem(scanner itemScanner) (*adminplusdomain.S
 	}
 	credential.Status = adminplusdomain.SupplierRegistrationStatus(status)
 	credential.PasswordConfigured = credential.PasswordCiphertext != ""
+	if supplierID.Valid {
+		credential.SupplierID = supplierID.Int64
+	}
 	if extensionTaskID.Valid {
 		credential.ExtensionTaskID = extensionTaskID.Int64
 	}
@@ -776,9 +809,9 @@ func siteDiscoverySelectClause() string {
 		SELECT ` + siteDiscoveryColumnList("d") + `,
 			CASE
 				WHEN rc.registration_id IS NULL THEN ''
+				WHEN rc.registration_status IN ('succeeded', 'failed', 'waiting_manual_verification') THEN rc.registration_status
 				WHEN rc.task_status IN ('claimed', 'running') THEN 'running'
 				WHEN rc.task_status = 'pending' THEN 'queued'
-				WHEN rc.task_status = 'succeeded' THEN 'succeeded'
 				WHEN rc.task_status = 'failed' AND rc.task_error_code = 'REGISTRATION_VERIFICATION_REQUIRED' THEN 'waiting_manual_verification'
 				WHEN rc.task_status = 'failed' THEN 'failed'
 				ELSE rc.registration_status

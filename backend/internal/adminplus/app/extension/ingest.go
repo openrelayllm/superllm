@@ -28,10 +28,16 @@ type IngestProcessor struct {
 	billing       *usagecostsapp.Service
 	sessions      *sessionsapp.Service
 	cipher        SessionCipher
+	registration  RegistrationResultProcessor
 }
 
 type SessionCipher interface {
 	Encrypt(plaintext string) (string, error)
+}
+
+type RegistrationResultProcessor interface {
+	ProcessRegistrationTaskResult(ctx context.Context, task *adminplusdomain.ExtensionTask, result map[string]any) (map[string]any, error)
+	ProcessRegistrationTaskFailure(ctx context.Context, task *adminplusdomain.ExtensionTask, errorCode string, errorMessage string) (map[string]any, error)
 }
 
 func NewIngestProcessor(
@@ -60,10 +66,20 @@ func NewIngestProcessorWithCipher(
 	billing *usagecostsapp.Service,
 	sessions *sessionsapp.Service,
 	cipher SessionCipher,
+	registration RegistrationResultProcessor,
 ) *IngestProcessor {
 	processor := NewIngestProcessor(rates, balances, announcements, health, billing, sessions)
 	processor.cipher = cipher
+	processor.registration = registration
 	return processor
+}
+
+func (p *IngestProcessor) WithRegistrationProcessor(processor RegistrationResultProcessor) *IngestProcessor {
+	if p == nil {
+		return p
+	}
+	p.registration = processor
+	return p
 }
 
 func (p *IngestProcessor) ProcessTaskResult(ctx context.Context, task *adminplusdomain.ExtensionTask, result map[string]any) (map[string]any, error) {
@@ -83,9 +99,25 @@ func (p *IngestProcessor) ProcessTaskResult(ctx context.Context, task *adminplus
 		return p.processHealth(ctx, task, result)
 	case adminplusdomain.ExtensionTaskTypeFetchUsageCosts, adminplusdomain.ExtensionTaskTypeExportBills:
 		return p.processUsageCosts(ctx, task, result)
+	case adminplusdomain.ExtensionTaskTypeRegisterSupplier:
+		return p.processRegistration(ctx, task, result)
 	default:
 		return nil, nil
 	}
+}
+
+func (p *IngestProcessor) ProcessTaskFailure(ctx context.Context, task *adminplusdomain.ExtensionTask, errorCode string, errorMessage string) (map[string]any, error) {
+	if p == nil || task == nil || task.Type != adminplusdomain.ExtensionTaskTypeRegisterSupplier || p.registration == nil {
+		return nil, nil
+	}
+	return p.registration.ProcessRegistrationTaskFailure(ctx, task, errorCode, errorMessage)
+}
+
+func (p *IngestProcessor) processRegistration(ctx context.Context, task *adminplusdomain.ExtensionTask, result map[string]any) (map[string]any, error) {
+	if p.registration == nil {
+		return nil, nil
+	}
+	return p.registration.ProcessRegistrationTaskResult(ctx, task, result)
 }
 
 func (p *IngestProcessor) processSessionBundle(ctx context.Context, task *adminplusdomain.ExtensionTask, result map[string]any) (map[string]any, error) {

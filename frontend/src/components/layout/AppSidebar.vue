@@ -296,6 +296,7 @@ const adminNavItems = computed((): NavItem[] => [
       { path: '/admin/collection/site-discovery', label: '渠道索引采集', icon: OperationsIcon }
     ]
   },
+  { path: '/admin/mails', label: '邮箱验证码', icon: OperationsIcon },
   {
     path: '/admin/site-catalog',
     label: '网址目录',

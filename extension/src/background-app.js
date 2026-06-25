@@ -2,6 +2,7 @@
 const CONFIG_KEY = 'adminPlusOperatorConfig'
 const LAST_CAPTURE_RESULT_KEY = 'adminPlusLastCaptureResult'
 const DEFAULT_CONFIG_PATH = 'config/default-config.json'
+let registrationTaskRun = null
 
 async function loadConfig() {
   const stored = await chrome.storage.local.get(CONFIG_KEY)
@@ -144,7 +145,11 @@ class AdminPlusClient {
   }
 
   async createDiscoveredSupplier(payload) {
-    return this.request('/api/v1/admin-plus/suppliers/from-site-candidate', {
+    return this.reportSupplierCandidate(payload)
+  }
+
+  async reportSupplierCandidate(payload) {
+    return this.request('/api/v1/admin-plus/extension/suppliers/report-candidate', {
       method: 'POST',
       body: payload
     })
@@ -188,6 +193,19 @@ class AdminPlusClient {
       body: {
         device_id: task.device_id,
         lease_token: task.lease_token
+      }
+    })
+  }
+
+  async registrationVerificationCode(task, options = {}) {
+    return this.request(`/api/v1/admin-plus/extension/tasks/${task.id}/registration-verification-code/read`, {
+      method: 'POST',
+      body: {
+        device_id: task.device_id,
+        lease_token: task.lease_token,
+        triggered_at: options.triggeredAt || null,
+        timeout_seconds: Number(options.timeoutSeconds || 90),
+        poll_interval_seconds: Number(options.pollIntervalSeconds || 5)
       }
     })
   }
@@ -281,13 +299,33 @@ async function handleMessage(message) {
       return saveAdminPlusBaseURL(message.baseURL)
     case 'site:identify':
       return identifyCurrentSite()
+    case 'site:collect-candidate':
+      return collectSiteCandidate(message.includeSensitive === true)
     case 'session:capture':
-      return captureSupplierSession(message.supplierID, message.autoCreate !== false)
+      return captureSupplierSession(
+        message.supplierID,
+        message.autoCreate !== false,
+        message.candidate || null,
+        message.credentials || null
+      )
+    case 'supplier:report-candidate':
+      return reportSupplierCandidate(message.payload || message.candidate || {})
     case 'registration:run-next':
       return runNextRegistrationTask()
     default:
       throw new Error('Unsupported extension message')
   }
+}
+
+async function reportSupplierCandidate(payload) {
+  const config = await requireConnectedConfig()
+  const activeTab = summarizeTab(await getActiveTab())
+  const candidate = looksLikeSiteCandidate(payload) ? payload : null
+  const reportPayload = candidate
+    ? buildSupplierCandidatePayload(config.deviceID, { activeTab, candidate }, candidate, candidate.credential || {})
+    : normalizeSupplierCandidateReportPayload(config.deviceID, activeTab, payload)
+  const client = new AdminPlusClient(config)
+  return client.reportSupplierCandidate(reportPayload)
 }
 
 async function getState() {
@@ -475,6 +513,7 @@ async function identifyCurrentSite() {
     }
   }
   const client = new AdminPlusClient(config)
+  const probe = await collectSiteCandidate(false, tab?.id).catch(() => emptySiteCandidate())
   const suppliers = await client.listSuppliers()
   const matches = suppliers
     .map((supplier) => ({ supplier, score: matchSupplier(currentURL, supplier) }))
@@ -483,8 +522,9 @@ async function identifyCurrentSite() {
 
   if (matches.length === 0) {
     return {
-      status: 'unknown',
+      status: probe.provider_type || probe.evidence?.length > 0 || probe.credential?.login_like ? 'needs_type_selection' : 'unsupported',
       activeTab: summarizeTab(tab),
+      candidate: probe,
       message: '当前网站未匹配已配置供应商'
     }
   }
@@ -494,25 +534,33 @@ async function identifyCurrentSite() {
     return {
       status: 'ambiguous',
       activeTab: summarizeTab(tab),
+      candidate: probe,
       suppliers: topMatches.map((item) => supplierSummary(item.supplier, item.score)),
       message: '当前网站匹配多个供应商'
     }
   }
   const supplier = topMatches[0].supplier
   return {
-    status: supplier.credential?.browser_login_enabled ? 'matched' : 'unsupported',
+    status: 'matched',
     activeTab: summarizeTab(tab),
+    candidate: probe,
     supplier: supplierSummary(supplier, topScore),
     supplierLogin: await detectSupplierLogin(tab.id),
     message: supplier.credential?.browser_login_enabled ? '' : '该供应商未启用浏览器登录'
   }
 }
 
-async function captureSupplierSession(supplierID, autoCreate) {
+async function captureSupplierSession(supplierID, autoCreate, candidate = null, credentials = null) {
   const config = await requireConnectedConfig()
   const identification = await identifyCurrentSite()
   const client = new AdminPlusClient(config)
   let supplier = resolveSupplierFromIdentification(identification, supplierID)
+  if (!supplier && candidate?.supplier_id) {
+    supplier = supplierFromCandidateHint(candidate)
+  }
+  if (!supplier && candidate) {
+    supplier = await reportSupplierCandidateForCapture(client, config.deviceID, identification, candidate, credentials)
+  }
   if (!supplier) {
     supplier = supplierFromCurrentSite(identification, autoCreate)
   }
@@ -585,7 +633,256 @@ async function captureSupplierSession(supplierID, autoCreate) {
   }
 }
 
+async function collectSiteCandidate(includeSensitive, tabId) {
+  if (!tabId) {
+    const active = await getActiveTab()
+    tabId = active?.id || 0
+  }
+  if (!tabId) {
+    return emptySiteCandidate()
+  }
+  const response = await sendContentMessage(tabId, { type: 'admin-plus:collect-candidate:v2', include_sensitive: includeSensitive === true })
+  if (response?.ok === false) {
+    throw new Error(response.error_message || 'site candidate probe failed')
+  }
+  const candidate = normalizeSiteCandidate(response)
+  if (includeSensitive && !candidate.credential.password) {
+    const frameCredential = await collectFrameCredential(tabId).catch(() => null)
+    if (frameCredential?.password) {
+      candidate.credential.password = frameCredential.password
+      candidate.credential.password_present = true
+    }
+    if (frameCredential?.username && !candidate.credential.username) {
+      candidate.credential.username = frameCredential.username
+    }
+  }
+  return candidate
+}
+
+async function collectFrameCredential(tabId) {
+  const injected = await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    func: () => {
+      const stringValue = (value) => String(value || '').trim()
+      const descriptor = (input) => [
+        input.type,
+        input.name,
+        input.id,
+        input.autocomplete,
+        input.placeholder,
+        input.getAttribute('aria-label')
+      ].join(' ').toLowerCase()
+      const allInputs = () => {
+        const found = []
+        const seen = new Set()
+        const visit = (root) => {
+          if (!root?.querySelectorAll) return
+          for (const input of root.querySelectorAll('input')) {
+            if (seen.has(input)) continue
+            seen.add(input)
+            found.push(input)
+          }
+          for (const element of root.querySelectorAll('*')) {
+            if (element.shadowRoot) visit(element.shadowRoot)
+          }
+        }
+        visit(document)
+        return found
+      }
+      const inputs = allInputs().filter((input) => !input.disabled && !input.readOnly)
+      const passwordInput = inputs.find((input) => input.type === 'password' && stringValue(input.value)) ||
+        inputs.find((input) => input.type === 'password')
+      const usernameInput = inputs.find((input) => input.type === 'email' && stringValue(input.value)) ||
+        inputs.find((input) => stringValue(input.value) && /(email|mail|邮箱|account|username|user_name|login|用户|账号)/i.test(descriptor(input))) ||
+        inputs.find((input) => stringValue(input.value) && ['text', 'search', 'tel', ''].includes(input.type) && input !== passwordInput)
+      return {
+        username: stringValue(usernameInput?.value),
+        password: stringValue(passwordInput?.value),
+        password_present: Boolean(passwordInput),
+        input_count: inputs.length
+      }
+    }
+  })
+  return (injected || [])
+    .map((item) => item.result || {})
+    .find((item) => item.password) ||
+    (injected || []).map((item) => item.result || {}).find((item) => item.username || item.password_present) ||
+    null
+}
+
+async function reportSupplierCandidateForCapture(client, deviceID, identification, candidate, credentials) {
+  const payload = buildSupplierCandidatePayload(deviceID, identification, candidate, credentials)
+  const response = await client.reportSupplierCandidate(payload)
+  if (!response?.supplier_id) {
+    const error = new Error(response?.message || 'supplier candidate report failed')
+    error.reason = response?.already_exists ? 'SUPPLIER_SITE_ALREADY_EXISTS' : 'SUPPLIER_SITE_REPORT_FAILED'
+    throw error
+  }
+  return {
+    id: response.supplier_id,
+    supplier_id: response.supplier_id,
+    name: response.supplier_name || payload.name || '当前供应商',
+    type: payload.provider_type || payload.system_type || '',
+    dashboard_url: payload.dashboard_url || '',
+    api_base_url: payload.api_base_url || '',
+    third_party_recharge_url: payload.third_party_recharge_url || '',
+    local_recharge_url: payload.local_recharge_url || '',
+    credential: {
+      browser_login_enabled: Boolean(payload.browser_login_enabled),
+      browser_login_username_configured: response.credential_saved && Boolean(payload.browser_login_username),
+      browser_login_password_configured: response.credential_saved && Boolean(payload.browser_login_password),
+      browser_login_token_configured: response.credential_saved && Boolean(payload.browser_login_token),
+      masked_browser_login_username: response.masked_username || ''
+    },
+    already_exists: Boolean(response.already_exists),
+    created: Boolean(response.created)
+  }
+}
+
+function buildSupplierCandidatePayload(deviceID, identification, candidate, credentials) {
+  const activeTab = identification.activeTab || {}
+  const page = candidate?.page || {}
+  const defaults = candidate?.defaults || {}
+  const credential = credentials || candidate?.credential || {}
+  const providerType = normalizeProviderType(candidate?.provider_type || identification?.candidate?.provider_type || '')
+  const name = trimReportName(firstNonEmpty(
+    candidate?.name,
+    defaults.name,
+    activeTab.title,
+    page.title,
+    activeTab.host,
+    page.host
+  ))
+  const dashboardURL = firstNonEmpty(defaults.dashboard_url, page.url, activeTab.url)
+  const apiBaseURL = firstNonEmpty(defaults.api_base_url, page.origin, activeTab.origin)
+  const thirdPartyRechargeURL = firstNonEmpty(defaults.third_party_recharge_url, inferThirdPartyRechargeURL(page.url), inferThirdPartyRechargeURL(activeTab.url))
+  const localRechargeURL = firstNonEmpty(defaults.local_recharge_url, '')
+  const pageContext = {
+    title: page.title || activeTab.title || '',
+    url: page.url || activeTab.url || '',
+    identification_evidence: Array.isArray(candidate?.evidence) ? candidate.evidence : [],
+    host: page.host || activeTab.host || ''
+  }
+  return {
+    device_id: firstNonEmpty(deviceID, ''),
+    auto_create_supplier: true,
+    provider_type: providerType,
+    system_type: providerType,
+    type: providerType,
+    supplier_type: providerType,
+    name,
+    contact: firstNonEmpty(credentials?.username, candidate?.credential?.username, defaults.contact),
+    supplier_kind: firstNonEmpty(defaults.supplier_kind, 'relay'),
+    runtime_status: firstNonEmpty(defaults.runtime_status, 'monitor_only'),
+    health_status: firstNonEmpty(defaults.health_status, 'normal'),
+    balance_cents: Number.isFinite(Number(defaults.balance_cents)) ? Number(defaults.balance_cents) : 0,
+    balance_currency: firstNonEmpty(defaults.balance_currency, 'USD'),
+    recharge_multiplier: Number.isFinite(Number(defaults.recharge_multiplier)) ? Number(defaults.recharge_multiplier) : 1,
+    dashboard_url: dashboardURL,
+    api_base_url: apiBaseURL,
+    third_party_recharge_url: thirdPartyRechargeURL,
+    local_recharge_url: localRechargeURL,
+    source_host: page.host || activeTab.host || '',
+    source_url: page.url || activeTab.url || '',
+    origin: page.origin || activeTab.origin || '',
+    browser_login_enabled: true,
+    browser_login_username: firstNonEmpty(credentials?.username, candidate?.credential?.username),
+    browser_login_password: firstNonEmpty(credentials?.password, candidate?.credential?.password),
+    browser_login_token: firstNonEmpty(credentials?.token, candidate?.credential?.token),
+    notes: firstNonEmpty(candidate?.notes, 'created from Chrome plugin'),
+    page_context: pageContext
+  }
+}
+
+function supplierFromCandidateHint(candidate) {
+  const providerType = normalizeProviderType(candidate?.provider_type || candidate?.system_type || candidate?.type || candidate?.supplier_type || '')
+  const supplierID = Number(candidate?.supplier_id || candidate?.id || 0)
+  return {
+    id: supplierID,
+    supplier_id: supplierID,
+    name: candidate?.supplier_name || candidate?.name || '当前供应商',
+    type: providerType,
+    dashboard_url: candidate?.dashboard_url || '',
+    api_base_url: candidate?.api_base_url || '',
+    third_party_recharge_url: candidate?.third_party_recharge_url || '',
+    local_recharge_url: candidate?.local_recharge_url || '',
+    credential: {
+      browser_login_enabled: Boolean(candidate?.browser_login_enabled),
+      browser_login_username_configured: Boolean(candidate?.browser_login_username),
+      browser_login_password_configured: Boolean(candidate?.browser_login_password),
+      browser_login_token_configured: Boolean(candidate?.browser_login_token),
+      masked_browser_login_username: ''
+    }
+  }
+}
+
+function normalizeSiteCandidate(candidate) {
+  const page = candidate?.page || {}
+  const defaults = candidate?.defaults || {}
+  const credential = candidate?.credential || {}
+  const providerType = normalizeProviderType(candidate?.provider_type || '')
+  const status = candidate?.status || (providerType ? 'identified' : credential.login_like || credential.username || credential.password_present ? 'needs_type_selection' : 'unsupported')
+  return {
+    status,
+    provider_type: providerType,
+    confidence: Number(candidate?.confidence || 0),
+    evidence: Array.isArray(candidate?.evidence) ? candidate.evidence : [],
+    page: {
+      title: page.title || '',
+      url: page.url || '',
+      origin: page.origin || '',
+      host: page.host || ''
+    },
+    credential: {
+      username: String(credential.username || ''),
+      password: String(credential.password || ''),
+      password_present: Boolean(credential.password_present),
+      token: String(credential.token || ''),
+      login_like: Boolean(credential.login_like)
+    },
+    defaults: {
+      name: String(defaults.name || ''),
+      contact: String(defaults.contact || ''),
+      supplier_kind: String(defaults.supplier_kind || 'relay'),
+      runtime_status: String(defaults.runtime_status || 'monitor_only'),
+      health_status: String(defaults.health_status || 'normal'),
+      balance_cents: Number(defaults.balance_cents || 0),
+      balance_currency: String(defaults.balance_currency || 'USD'),
+      recharge_multiplier: Number(defaults.recharge_multiplier || 1),
+      dashboard_url: String(defaults.dashboard_url || ''),
+      api_base_url: String(defaults.api_base_url || ''),
+      third_party_recharge_url: String(defaults.third_party_recharge_url || ''),
+      local_recharge_url: String(defaults.local_recharge_url || '')
+    }
+  }
+}
+
+function emptySiteCandidate() {
+  return normalizeSiteCandidate({
+    status: 'unsupported',
+    provider_type: '',
+    confidence: 0,
+    evidence: [],
+    page: {},
+    credential: {},
+    defaults: {}
+  })
+}
+
 async function runNextRegistrationTask() {
+  if (registrationTaskRun) {
+    return {
+      status: 'running',
+      message: '已有注册任务正在执行'
+    }
+  }
+  registrationTaskRun = runNextRegistrationTaskOnce().finally(() => {
+    registrationTaskRun = null
+  })
+  return registrationTaskRun
+}
+
+async function runNextRegistrationTaskOnce() {
   const config = await requireConnectedConfig()
   const client = new AdminPlusClient(config)
   const task = await client.claimTask(config.deviceID, ['register_supplier_account'])
@@ -610,12 +907,79 @@ async function runNextRegistrationTask() {
     })
     const result = injected?.result || {}
     if (result.manual_verification_required) {
-      await client.fail(task, 'REGISTRATION_VERIFICATION_REQUIRED', result.message || 'registration requires manual verification')
+      if (!result.email_verification_required) {
+        await client.fail(task, 'REGISTRATION_VERIFICATION_REQUIRED', result.message || 'registration requires manual verification')
+        return {
+          status: 'waiting_manual_verification',
+          task,
+          result,
+          message: result.message || '需要人工完成验证码或邮箱验证'
+        }
+      }
+      await client.heartbeat(task, 180)
+      let verification
+      try {
+        verification = await client.registrationVerificationCode(task, {
+          triggeredAt: result.submitted_at || result.started_at || new Date().toISOString(),
+          timeoutSeconds: 90,
+          pollIntervalSeconds: 5
+        })
+      } catch (error) {
+        if (error?.reason === 'MAIL_VERIFICATION_CODE_NOT_FOUND' || error?.reason === 'MAIL_CREDENTIAL_NOT_FOUND') {
+          await client.fail(task, 'REGISTRATION_VERIFICATION_CODE_NOT_FOUND', error.message || 'registration verification code not found')
+          return {
+            status: 'failed',
+            task,
+            result,
+            message: error.message || '未读取到邮箱验证码'
+          }
+        }
+        throw error
+      }
+      if (!verification?.code) {
+        await client.fail(task, 'REGISTRATION_VERIFICATION_CODE_NOT_FOUND', 'registration verification code not found')
+        return {
+          status: 'failed',
+          task,
+          result,
+          message: '未读取到邮箱验证码'
+        }
+      }
+      await client.heartbeat(task, 180)
+      const [verificationInjected] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: fillRegistrationVerificationCode,
+        args: [verification.code]
+      })
+      const verificationResult = verificationInjected?.result || {}
+      if (!verificationResult.ok) {
+        await client.fail(task, verificationResult.error_code || 'REGISTRATION_VERIFICATION_FILL_FAILED', verificationResult.message || 'registration verification fill failed')
+        return {
+          status: 'failed',
+          task,
+          result: verificationResult,
+          message: verificationResult.message || '验证码回填失败'
+        }
+      }
+      const completed = await client.complete(task, {
+        registration_submitted: true,
+        verification_completed: true,
+        verification_message_id: verification.message_id || '',
+        verification_received_at: verification.received_at || '',
+        provider_type: credential.provider_type,
+        register_url: credential.register_url,
+        submitted_at: result.submitted_at || new Date().toISOString(),
+        result: {
+          ...result,
+          verification_filled: true,
+          verification_result: verificationResult
+        }
+      })
       return {
-        status: 'waiting_manual_verification',
-        task,
-        result,
-        message: result.message || '需要人工完成验证码或邮箱验证'
+        status: 'succeeded',
+        task: completed,
+        result: verificationResult,
+        message: '注册验证码已回填并提交'
       }
     }
     if (!result.ok) {
@@ -649,20 +1013,27 @@ async function runNextRegistrationTask() {
 function fillRegistrationForm(credential) {
   const startedAt = new Date().toISOString()
   const text = () => String(document.body?.innerText || '').toLowerCase()
-  const verificationMarkers = [
+  const manualVerificationMarkers = [
     'captcha',
     'turnstile',
     'recaptcha',
     'hcaptcha',
-    '验证码',
     '人机',
-    '验证',
+    '滑块验证'
+  ]
+  const emailVerificationMarkers = [
+    '验证码',
     '邮箱验证',
     '邮件验证',
+    '邮箱验证码',
+    '邮件验证码',
+    'verification code',
+    'email code',
     'email verification',
     'verify your email'
   ]
-  const hasVerification = () => verificationMarkers.some((marker) => text().includes(marker))
+  const hasManualVerification = () => manualVerificationMarkers.some((marker) => text().includes(marker))
+  const hasEmailVerificationText = () => emailVerificationMarkers.some((marker) => text().includes(marker))
   const visible = (element) => {
     if (!element || element.disabled || element.readOnly) return false
     const style = window.getComputedStyle(element)
@@ -690,6 +1061,13 @@ function fillRegistrationForm(credential) {
     element.dispatchEvent(new Event('input', { bubbles: true }))
     element.dispatchEvent(new Event('change', { bubbles: true }))
   }
+  const isEmailVerificationInput = (input) => {
+    const attr = lowerAttr(input)
+    if (/(captcha|turnstile|recaptcha|hcaptcha|人机|滑块)/i.test(attr)) return false
+    if (/(code|otp|verification|verify|验证码|校验码|动态码|邮箱验证|邮件验证)/i.test(attr)) return true
+    return false
+  }
+  const findEmailVerificationInput = () => Array.from(document.querySelectorAll('input')).filter(visible).find(isEmailVerificationInput)
   const emailInput = inputs.find((input) => input.type === 'email') ||
     inputs.find((input) => /(email|mail|邮箱|account|username|user_name|login)/i.test(lowerAttr(input))) ||
     inputs.find((input) => ['text', 'search', ''].includes(input.type))
@@ -707,7 +1085,7 @@ function fillRegistrationForm(credential) {
   for (const checkbox of inputs.filter((input) => input.type === 'checkbox')) {
     if (!checkbox.checked) checkbox.click()
   }
-  if (hasVerification()) {
+  if (hasManualVerification()) {
     return {
       ok: false,
       manual_verification_required: true,
@@ -730,17 +1108,85 @@ function fillRegistrationForm(credential) {
   submit.click()
   return new Promise((resolve) => {
     setTimeout(() => {
-      const needsManual = hasVerification()
+      const needsManual = hasManualVerification()
+      const emailVerificationInput = findEmailVerificationInput()
+      const needsEmailVerification = Boolean(emailVerificationInput || hasEmailVerificationText())
       resolve({
-        ok: !needsManual,
-        manual_verification_required: needsManual,
-        message: needsManual ? '提交后需要验证码或邮箱验证' : '注册表单已提交',
+        ok: !needsManual && !needsEmailVerification,
+        manual_verification_required: needsManual || needsEmailVerification,
+        email_verification_required: needsEmailVerification && !needsManual,
+        message: needsManual ? '提交后需要人工验证' : needsEmailVerification ? '提交后需要邮箱验证码' : '注册表单已提交',
         started_at: startedAt,
         submitted_at: new Date().toISOString(),
         url: window.location.href
       })
     }, 2500)
   })
+}
+
+function fillRegistrationVerificationCode(code) {
+  const submittedAt = new Date().toISOString()
+  const value = String(code || '').trim()
+  const visible = (element) => {
+    if (!element || element.disabled || element.readOnly) return false
+    const style = window.getComputedStyle(element)
+    if (style.display === 'none' || style.visibility === 'hidden') return false
+    const rect = element.getBoundingClientRect()
+    return rect.width > 0 && rect.height > 0
+  }
+  const lowerAttr = (element) => [
+    element.type,
+    element.name,
+    element.id,
+    element.autocomplete,
+    element.placeholder,
+    element.getAttribute('aria-label')
+  ].join(' ').toLowerCase()
+  const setValue = (element, nextValue) => {
+    const proto = Object.getPrototypeOf(element)
+    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value')
+    if (descriptor?.set) {
+      descriptor.set.call(element, nextValue)
+    } else {
+      element.value = nextValue
+    }
+    element.dispatchEvent(new Event('input', { bubbles: true }))
+    element.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+  if (!value) {
+    return {
+      ok: false,
+      error_code: 'REGISTRATION_VERIFICATION_CODE_EMPTY',
+      message: '验证码为空',
+      submitted_at: submittedAt
+    }
+  }
+  const inputs = Array.from(document.querySelectorAll('input')).filter(visible)
+  const codeInput = inputs.find((input) => {
+    const attr = lowerAttr(input)
+    if (/(captcha|turnstile|recaptcha|hcaptcha|人机|滑块)/i.test(attr)) return false
+    return /(code|otp|verification|verify|验证码|校验码|动态码|邮箱验证|邮件验证)/i.test(attr)
+  }) || inputs.find((input) => ['text', 'number', 'tel', ''].includes(input.type) && input.maxLength >= value.length && input.maxLength <= 12)
+  if (!codeInput) {
+    return {
+      ok: false,
+      error_code: 'REGISTRATION_VERIFICATION_INPUT_NOT_FOUND',
+      message: '未找到邮箱验证码输入框',
+      submitted_at: submittedAt
+    }
+  }
+  setValue(codeInput, value)
+  const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]')).filter(visible)
+  const submit = buttons.find((button) => /(验证|确认|提交|完成|continue|verify|confirm|submit|next|sign up|register)/i.test(`${button.innerText || ''} ${button.value || ''} ${button.getAttribute('aria-label') || ''}`)) ||
+    buttons.find((button) => button.type === 'submit') ||
+    document.querySelector('form button[type="submit"], form input[type="submit"]')
+  if (submit) submit.click()
+  return {
+    ok: true,
+    verification_filled: true,
+    submitted_at: submittedAt,
+    url: window.location.href
+  }
 }
 
 async function recordCaptureResult(status, message, task, supplier, activeTab, summary = {}, ingest = {}) {
@@ -827,23 +1273,9 @@ async function discoverSupplierFromCurrentSite(client, identification) {
 }
 
 function supplierFromCurrentSite(identification, autoCreate) {
-  if (!autoCreate) {
-    const error = new Error('当前网站未匹配可上报的供应商')
-    error.reason = 'SUPPLIER_SITE_NOT_MATCHED'
-    throw error
-  }
-  const tab = identification.activeTab || {}
-  const providerType = providerTypeFromIdentification(identification)
-  return {
-    id: 0,
-    supplier_id: 0,
-    name: tab.host || '当前供应商',
-    type: providerType,
-    dashboard_url: tab.url || '',
-    api_base_url: tab.origin || '',
-    third_party_recharge_url: inferThirdPartyRechargeURL(tab.url || ''),
-    local_recharge_url: ''
-  }
+  const error = new Error(autoCreate ? '请先创建供应商后再上报当前会话' : '当前网站未匹配可上报的供应商')
+  error.reason = 'SUPPLIER_SITE_NOT_MATCHED'
+  throw error
 }
 
 async function collectCookies(url) {
@@ -937,6 +1369,7 @@ function normalizeNewAPISessionBundle(bundle, supplier, captureURL) {
 function providerTypeFromIdentification(identification) {
   return normalizeProviderType(
     identification?.supplier?.type ||
+    identification?.candidate?.provider_type ||
     identification?.supplierLogin?.summary?.provider_type ||
     ''
   )
@@ -956,6 +1389,7 @@ function providerTypeFromBundle(bundle) {
 function normalizeProviderType(value) {
   const normalized = String(value || '').trim().toLowerCase()
   if (normalized === 'newapi' || normalized === 'new-api') return 'new_api'
+  if (normalized === 'sub-api' || normalized === 'sub2-api') return 'sub2api'
   return normalized
 }
 
@@ -1014,7 +1448,7 @@ async function injectContentScript(tabId) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ['src/content/newapi.js', 'src/content/sub2api.js']
+      files: ['src/content/site-probe.js', 'src/content/newapi.js', 'src/content/sub2api.js']
     })
   } catch (error) {
     const wrapped = new Error('当前页面无法注入插件脚本，请刷新供应商页面后重试')
@@ -1050,7 +1484,30 @@ function summarizeTab(tab) {
     id: tab?.id,
     title: tab?.title || '',
     url: tab?.url || '',
+    origin: parsed?.origin || '',
     host: parsed?.host || ''
+  }
+}
+
+function looksLikeSiteCandidate(value) {
+  if (!value || typeof value !== 'object') return false
+  return Boolean(value.page || value.defaults || value.credential)
+}
+
+function normalizeSupplierCandidateReportPayload(deviceID, activeTab, payload = {}) {
+  return {
+    ...payload,
+    device_id: firstNonEmpty(payload.device_id, deviceID),
+    auto_create_supplier: payload.auto_create_supplier !== false,
+    source_url: firstNonEmpty(payload.source_url, payload.url, activeTab.url),
+    source_host: firstNonEmpty(payload.source_host, payload.host, activeTab.host),
+    origin: firstNonEmpty(payload.origin, activeTab.origin),
+    dashboard_url: firstNonEmpty(payload.dashboard_url, activeTab.url),
+    api_base_url: firstNonEmpty(payload.api_base_url, activeTab.origin),
+    provider_type: normalizeProviderType(firstNonEmpty(payload.provider_type, payload.system_type, payload.supplier_type, payload.type)),
+    system_type: normalizeProviderType(firstNonEmpty(payload.system_type, payload.provider_type, payload.supplier_type, payload.type)),
+    supplier_type: normalizeProviderType(firstNonEmpty(payload.supplier_type, payload.provider_type, payload.system_type, payload.type)),
+    type: normalizeProviderType(firstNonEmpty(payload.type, payload.provider_type, payload.system_type, payload.supplier_type))
   }
 }
 
@@ -1084,7 +1541,7 @@ function suggestedSupplierName(url, tab) {
 }
 
 function resolveSupplierFromIdentification(identification, supplierID) {
-  if (identification.status === 'matched' && identification.supplier && (!supplierID || identification.supplier.id === supplierID)) {
+  if (identification?.supplier && (!supplierID || identification.supplier.id === supplierID)) {
     return identification.supplier
   }
   if (identification.status === 'ambiguous' && supplierID) {

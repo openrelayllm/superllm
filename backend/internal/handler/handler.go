@@ -16,25 +16,26 @@ type AdminHandlers struct {
 
 // AdminPlusHandlers contains Admin Plus business HTTP handlers.
 type AdminPlusHandlers struct {
-	Supplier      *adminplushandler.SupplierHandler
-	SupplierGroup *adminplushandler.SupplierGroupHandler
-	SupplierKey   *adminplushandler.SupplierKeyHandler
-	ProvisionJob  *adminplushandler.ProvisionJobHandler
-	Rate          *adminplushandler.RateHandler
-	Balance       *adminplushandler.BalanceHandler
-	Announcement  *adminplushandler.AnnouncementHandler
-	Health        *adminplushandler.HealthHandler
-	Notification  *adminplushandler.NotificationHandler
-	UsageCost     *adminplushandler.UsageCostHandler
-	Cost          *adminplushandler.CostHandler
-	ChannelCheck  *adminplushandler.ChannelCheckHandler
-	Extension     *adminplushandler.ExtensionHandler
-	SiteDiscovery *adminplushandler.SiteDiscoveryHandler
-	SiteCatalog   *adminplushandler.SiteCatalogHandler
-	Session       *adminplushandler.SessionHandler
-	Scheduler     *adminplushandler.SchedulerHandler
-	Action        *adminplushandler.ActionHandler
-	Sub2API       *adminplushandler.Sub2APIHandler
+	Supplier         *adminplushandler.SupplierHandler
+	SupplierGroup    *adminplushandler.SupplierGroupHandler
+	SupplierKey      *adminplushandler.SupplierKeyHandler
+	ProvisionJob     *adminplushandler.ProvisionJobHandler
+	Rate             *adminplushandler.RateHandler
+	Balance          *adminplushandler.BalanceHandler
+	Announcement     *adminplushandler.AnnouncementHandler
+	Health           *adminplushandler.HealthHandler
+	Notification     *adminplushandler.NotificationHandler
+	UsageCost        *adminplushandler.UsageCostHandler
+	Cost             *adminplushandler.CostHandler
+	ChannelCheck     *adminplushandler.ChannelCheckHandler
+	Extension        *adminplushandler.ExtensionHandler
+	SiteDiscovery    *adminplushandler.SiteDiscoveryHandler
+	SiteCatalog      *adminplushandler.SiteCatalogHandler
+	MailVerification *adminplushandler.MailVerificationHandler
+	Session          *adminplushandler.SessionHandler
+	Scheduler        *adminplushandler.SchedulerHandler
+	Action           *adminplushandler.ActionHandler
+	Sub2API          *adminplushandler.Sub2APIHandler
 }
 
 // Handlers contains all HTTP handlers

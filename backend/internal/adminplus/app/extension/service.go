@@ -81,6 +81,10 @@ type BrowserCredentialProvider interface {
 	GetBrowserCredential(ctx context.Context, supplierID int64) (*adminplusdomain.SupplierBrowserCredential, error)
 }
 
+type FailureProcessor interface {
+	ProcessTaskFailure(ctx context.Context, task *adminplusdomain.ExtensionTask, errorCode string, errorMessage string) (map[string]any, error)
+}
+
 type Repository interface {
 	CreateTask(ctx context.Context, task *adminplusdomain.ExtensionTask) (*adminplusdomain.ExtensionTask, error)
 	CreateTaskIfAbsent(ctx context.Context, task *adminplusdomain.ExtensionTask) (*adminplusdomain.ExtensionTask, bool, error)
@@ -215,7 +219,7 @@ func (s *Service) ClaimTask(ctx context.Context, in ClaimTaskInput) (*adminplusd
 }
 
 func (s *Service) buildTask(in CreateTaskInput) (*adminplusdomain.ExtensionTask, error) {
-	if in.SupplierID <= 0 {
+	if in.SupplierID <= 0 && in.Type != adminplusdomain.ExtensionTaskTypeRegisterSupplier {
 		return nil, badRequest("EXTENSION_TASK_SUPPLIER_ID_INVALID", "invalid supplier id")
 	}
 	if !in.Type.Valid() {
@@ -296,6 +300,13 @@ func (s *Service) FailTask(ctx context.Context, in FailTaskInput) (*adminplusdom
 	now := s.now().UTC()
 	task.ErrorCode = trimLimit(in.ErrorCode, 80)
 	task.ErrorMessage = trimLimit(in.ErrorMessage, 1000)
+	if processor, ok := s.resultProcessor.(FailureProcessor); ok {
+		ingest, err := processor.ProcessTaskFailure(ctx, task, task.ErrorCode, task.ErrorMessage)
+		if err != nil {
+			return nil, ingestError(err)
+		}
+		task.Result = mergeIngestResult(task.Result, ingest)
+	}
 	task.UpdatedAt = now
 	if task.Attempts >= task.MaxAttempts {
 		task.Status = adminplusdomain.ExtensionTaskStatusFailed

@@ -2,9 +2,16 @@
   box-sizing: border-box;
 }
 
+html {
+  width: 360px;
+  min-width: 360px;
+}
+
 body {
   margin: 0;
   width: 360px;
+  min-width: 360px;
+  overflow-x: hidden;
   background: #f5f7fa;
   color: #182230;
   font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -20,6 +27,9 @@ button {
   cursor: pointer;
   font-size: 12px;
   font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 button:disabled {
@@ -33,6 +43,10 @@ button.primary {
   color: #ffffff;
 }
 
+button.secondary {
+  background: #f8fafc;
+}
+
 .shell {
   padding: 16px;
 }
@@ -42,6 +56,10 @@ button.primary {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.topbar > div {
+  min-width: 0;
 }
 
 h1,
@@ -142,6 +160,10 @@ h2 {
   padding: 10px 12px;
 }
 
+.config.compact {
+  padding: 9px 11px;
+}
+
 .config label {
   display: block;
   color: #344054;
@@ -168,6 +190,82 @@ h2 {
 
 .config .hint {
   margin-top: 6px;
+}
+
+.config button {
+  margin-top: 10px;
+}
+
+.inline-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.inline-actions button {
+  margin-top: 0;
+}
+
+.field + .field {
+  margin-top: 10px;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.field label {
+  display: block;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  margin-top: 7px;
+  border: 1px solid #cfd7df;
+  border-radius: 7px;
+  padding: 0 10px;
+  color: #182230;
+  font: 12px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.field input,
+.field select {
+  height: 36px;
+}
+
+.password-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px;
+  gap: 6px;
+}
+
+.password-control .inline-toggle {
+  height: 36px;
+  margin-top: 7px;
+  padding: 0;
+}
+
+.field textarea {
+  min-height: 72px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  resize: vertical;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: #155eef;
+  box-shadow: 0 0 0 3px rgba(21, 94, 239, 0.12);
+  outline: none;
 }
 
 .result {
@@ -270,6 +368,10 @@ h2 {
   font-weight: 650;
 }
 
+.notice.neutral {
+  color: #344054;
+}
+
 .pill {
   flex: 0 0 auto;
   border: 1px solid #d6dde7;
@@ -304,4 +406,10 @@ h2 {
 
 .hidden {
   display: none !important;
+}
+
+@media (max-width: 360px) {
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
 }

@@ -1564,8 +1564,163 @@ export interface SupplierSignal {
   effective_cost_cents: number
 }
 
+export type MailVerificationProvider = 'gmail'
+export type MailVerificationPurpose = 'email_verification' | 'notification_email_verification' | ''
+
+export interface MailVerificationCredential {
+  id: number
+  provider: MailVerificationProvider
+  name?: string
+  email?: string
+  email_masked?: string
+  scopes?: string[]
+  token_type?: string
+  expires_at?: string | null
+  metadata?: Record<string, string>
+  last_checked_at?: string | null
+  last_error_code?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface MailOAuthAuthorizePayload {
+  provider: MailVerificationProvider
+  redirect_uri: string
+  state?: string
+  login_hint?: string
+}
+
+export interface MailOAuthAuthorizeResult {
+  provider: MailVerificationProvider
+  authorize_url: string
+  scope: string
+}
+
+export interface MailOAuthExchangePayload {
+  provider: MailVerificationProvider
+  code: string
+  redirect_uri: string
+  name?: string
+}
+
+export interface MailOAuthSettings {
+  provider: MailVerificationProvider
+  enabled: boolean
+  client_id?: string
+  client_secret_configured: boolean
+  redirect_uri?: string
+  frontend_redirect_uri?: string
+}
+
+export interface UpdateMailOAuthSettingsPayload {
+  provider: MailVerificationProvider
+  client_id: string
+  client_secret?: string
+  redirect_uri?: string
+  frontend_redirect_uri?: string
+}
+
+export interface SaveMailCredentialPayload {
+  provider: MailVerificationProvider
+  name?: string
+  email: string
+  access_token: string
+  refresh_token?: string
+  scopes?: string[]
+  scope?: string
+  token_type?: string
+  expires_at?: string | null
+  expires_in?: number
+  metadata?: Record<string, string>
+}
+
+export interface ReadMailVerificationCodePayload {
+  provider?: MailVerificationProvider
+  credential_id: number
+  from?: string
+  keywords?: string[]
+  supplier_type?: Extract<SupplierType, 'new_api' | 'sub2api'> | ''
+  expected_purpose?: MailVerificationPurpose
+  site_name?: string
+  triggered_at?: string
+  timeout_seconds?: number
+  poll_interval_seconds?: number
+  max_results?: number
+}
+
+export interface MailVerificationCodeResult {
+  provider: MailVerificationProvider
+  code: string
+  message_id: string
+  received_at: string
+  template_family?: string
+  confidence?: number
+  supplier_type?: SupplierType
+  purpose?: string
+}
+
+export interface SendTestMailVerificationCodePayload {
+  credential_id: number
+  supplier_type?: Extract<SupplierType, 'new_api' | 'sub2api'> | ''
+  expected_purpose?: MailVerificationPurpose
+  site_name?: string
+  timeout_seconds?: number
+  poll_interval_seconds?: number
+}
+
 export async function listSuppliers(params?: Partial<Record<'kind' | 'type' | 'runtime_status' | 'health_status' | 'q', string>> & AdminPlusPaginationParams): Promise<AdminPlusListResponse<Supplier>> {
   const { data } = await apiClient.get<AdminPlusListResponse<Supplier>>('/admin-plus/suppliers', { params })
+  return data
+}
+
+export async function createMailOAuthAuthorizeURL(payload: MailOAuthAuthorizePayload): Promise<MailOAuthAuthorizeResult> {
+  const { data } = await apiClient.post<MailOAuthAuthorizeResult>('/admin-plus/mails/oauth/authorize', payload)
+  return data
+}
+
+export async function exchangeMailOAuthCode(payload: MailOAuthExchangePayload): Promise<MailVerificationCredential> {
+  const { data } = await apiClient.post<MailVerificationCredential>('/admin-plus/mails/oauth/exchange', payload)
+  return data
+}
+
+export async function getMailOAuthSettings(provider: MailVerificationProvider = 'gmail'): Promise<MailOAuthSettings> {
+  const { data } = await apiClient.get<MailOAuthSettings>('/admin-plus/mails/oauth/config', { params: { provider } })
+  return data
+}
+
+export async function updateMailOAuthSettings(payload: UpdateMailOAuthSettingsPayload): Promise<MailOAuthSettings> {
+  const { data } = await apiClient.put<MailOAuthSettings>('/admin-plus/mails/oauth/config', payload)
+  return data
+}
+
+export async function listMailCredentials(params?: { provider?: MailVerificationProvider }): Promise<MailVerificationCredential[]> {
+  const { data } = await apiClient.get<MailVerificationCredential[]>('/admin-plus/mails/credentials', { params })
+  return data
+}
+
+export async function saveMailCredential(payload: SaveMailCredentialPayload): Promise<MailVerificationCredential> {
+  const { data } = await apiClient.post<MailVerificationCredential>('/admin-plus/mails/credentials', payload)
+  return data
+}
+
+export async function checkMailCredential(id: number): Promise<MailVerificationCredential> {
+  const { data } = await apiClient.post<MailVerificationCredential>(`/admin-plus/mails/credentials/${id}/check`)
+  return data
+}
+
+export async function readMailVerificationCode(payload: ReadMailVerificationCodePayload): Promise<MailVerificationCodeResult> {
+  const timeoutSeconds = payload.timeout_seconds && payload.timeout_seconds > 0 ? payload.timeout_seconds : 90
+  const { data } = await apiClient.post<MailVerificationCodeResult>('/admin-plus/mails/verification-code/read', payload, {
+    timeout: Math.min(Math.max(timeoutSeconds + 10, 30), 140) * 1000
+  })
+  return data
+}
+
+export async function sendTestMailVerificationCode(payload: SendTestMailVerificationCodePayload): Promise<MailVerificationCodeResult> {
+  const timeoutSeconds = payload.timeout_seconds && payload.timeout_seconds > 0 ? payload.timeout_seconds : 90
+  const { data } = await apiClient.post<MailVerificationCodeResult>('/admin-plus/mails/verification-code/send-test', payload, {
+    timeout: Math.min(Math.max(timeoutSeconds + 30, 60), 160) * 1000
+  })
   return data
 }
 

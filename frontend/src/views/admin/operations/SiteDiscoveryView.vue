@@ -322,6 +322,10 @@
                 </td>
                 <td class="px-4 py-4">
                   <span class="badge" :class="registrationClass(item.registration_status)">{{ registrationLabel(item.registration_status) }}</span>
+                  <div v-if="item.registration_status === 'waiting_manual_verification'" class="mt-1 max-w-[280px] text-xs text-amber-600 dark:text-amber-400">
+                    请人工完成验证码或邮箱验证后重试；未完成前不会入库供应商。
+                  </div>
+                  <div v-if="item.registration_task_id" class="mt-1 font-mono text-xs text-gray-500">任务 #{{ item.registration_task_id }}</div>
                   <div v-if="item.registration_email" class="mt-1 max-w-[220px] truncate font-mono text-xs text-gray-500">{{ item.registration_email }}</div>
                   <div v-if="item.registration_error_message" class="mt-1 max-w-[260px] truncate text-xs text-rose-500">{{ item.registration_error_message }}</div>
                 </td>
@@ -1018,7 +1022,7 @@ async function registerItem(item: SiteDiscoveryItem) {
   busyItemID.value = item.id
   try {
     await registerSiteDiscoveryItem(item.id)
-    appStore.showSuccess('注册任务已排队，插件领取后会自动打开注册页')
+    appStore.showSuccess('注册任务已排队；注册成功并取得凭据后才会入库供应商')
     await refreshActiveLists()
   } catch (error) {
     appStore.showError(errorMessage(error))

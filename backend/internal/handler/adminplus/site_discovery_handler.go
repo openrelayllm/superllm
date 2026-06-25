@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	sitediscoveryapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sitediscovery"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
@@ -43,6 +44,14 @@ type classifySiteDiscoveryRequest struct {
 	ProbeInterfaces      *bool  `json:"probe_interfaces"`
 	ProbeSites           bool   `json:"probe_sites"`
 	Limit                int    `json:"limit"`
+}
+
+type readRegistrationVerificationCodeRequest struct {
+	DeviceID            string     `json:"device_id" binding:"required"`
+	LeaseToken          string     `json:"lease_token" binding:"required"`
+	TriggeredAt         *time.Time `json:"triggered_at"`
+	TimeoutSeconds      int        `json:"timeout_seconds"`
+	PollIntervalSeconds int        `json:"poll_interval_seconds"`
 }
 
 func (h *SiteDiscoveryHandler) GetSettings(c *gin.Context) {
@@ -232,6 +241,30 @@ func (h *SiteDiscoveryHandler) GetRegistrationCredential(c *gin.Context) {
 		return
 	}
 	response.Success(c, credential)
+}
+
+func (h *SiteDiscoveryHandler) ReadRegistrationVerificationCode(c *gin.Context) {
+	id, ok := parseExtensionTaskID(c)
+	if !ok {
+		return
+	}
+	var req readRegistrationVerificationCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	result, err := h.service.ReadTaskRegistrationVerificationCode(c.Request.Context(), sitediscoveryapp.ReadRegistrationVerificationCodeInput{
+		TaskID:              id,
+		DeviceID:            req.DeviceID,
+		LeaseToken:          req.LeaseToken,
+		TriggeredAt:         req.TriggeredAt,
+		TimeoutSeconds:      req.TimeoutSeconds,
+		PollIntervalSeconds: req.PollIntervalSeconds,
+	})
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, result)
 }
 
 func parseSiteDiscoveryItemID(c *gin.Context) (int64, bool) {

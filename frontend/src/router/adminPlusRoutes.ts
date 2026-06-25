@@ -106,6 +106,12 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     meta: adminMeta('网址目录')
   },
   {
+    path: '/admin/mails',
+    name: 'AdminPlusMailVerification',
+    component: () => import('@/views/admin/operations/MailVerificationView.vue'),
+    meta: adminMeta('邮箱验证码')
+  },
+  {
     path: '/admin/events/announcements',
     redirect: redirectWithQuery('/admin/suppliers')
   },

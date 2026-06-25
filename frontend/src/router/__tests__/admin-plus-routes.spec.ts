@@ -32,6 +32,7 @@ describe('adminPlusRoutes', () => {
       '/admin/collection/sessions',
       '/admin/collection/site-discovery',
       '/admin/site-catalog',
+      '/admin/mails',
       '/admin/events/announcements',
       '/admin/monitoring/rates',
       '/admin/monitoring/balances',
@@ -106,6 +107,7 @@ describe('adminPlusRoutes', () => {
         '/admin/collection/sessions',
         '/admin/collection/site-discovery',
         '/admin/site-catalog',
+        '/admin/mails',
         '/admin/finance/costs',
         '/admin/finance/usage-costs',
         '/admin/finance/local-usage',
@@ -113,7 +115,7 @@ describe('adminPlusRoutes', () => {
       ].includes(route.path)
     )
 
-    expect(adminRoutes).toHaveLength(12)
+    expect(adminRoutes).toHaveLength(13)
     for (const route of adminRoutes) {
       expect(route.meta?.requiresAuth).toBe(true)
       expect(route.meta?.requiresAdmin).toBe(true)

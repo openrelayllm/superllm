@@ -59,10 +59,51 @@ type captureSessionTaskRequest struct {
 	APIBaseURL            string         `json:"api_base_url"`
 	ThirdPartyRechargeURL string         `json:"third_party_recharge_url"`
 	LocalRechargeURL      string         `json:"local_recharge_url"`
-	Name                  string         `json:"name"`
-	AutoCreate            *bool          `json:"auto_create_supplier"`
-	PageContext           map[string]any `json:"page_context"`
 	Payload               map[string]any `json:"payload"`
+}
+
+type reportSupplierCandidateRequest struct {
+	DeviceID              string         `json:"device_id"`
+	AutoCreate            *bool          `json:"auto_create_supplier"`
+	URL                   string         `json:"url"`
+	Origin                string         `json:"origin"`
+	Host                  string         `json:"host"`
+	SourceURL             string         `json:"source_url"`
+	SourceHost            string         `json:"source_host"`
+	Name                  string         `json:"name"`
+	Contact               string         `json:"contact"`
+	Kind                  string         `json:"kind"`
+	SupplierKind          string         `json:"supplier_kind"`
+	Type                  string         `json:"type"`
+	SystemType            string         `json:"system_type"`
+	SupplierType          string         `json:"supplier_type"`
+	ProviderType          string         `json:"provider_type"`
+	RuntimeStatus         string         `json:"runtime_status"`
+	HealthStatus          string         `json:"health_status"`
+	DashboardURL          string         `json:"dashboard_url"`
+	APIBaseURL            string         `json:"api_base_url"`
+	ThirdPartyRechargeURL string         `json:"third_party_recharge_url"`
+	LocalRechargeURL      string         `json:"local_recharge_url"`
+	BalanceCents          int64          `json:"balance_cents"`
+	BalanceCurrency       string         `json:"balance_currency"`
+	RechargeMultiplier    float64        `json:"recharge_multiplier"`
+	BrowserLoginEnabled   bool           `json:"browser_login_enabled"`
+	BrowserLoginUsername  string         `json:"browser_login_username"`
+	BrowserLoginPassword  string         `json:"browser_login_password"`
+	BrowserLoginToken     string         `json:"browser_login_token"`
+	Notes                 string         `json:"notes"`
+	PageContext           map[string]any `json:"page_context"`
+}
+
+type reportSupplierCandidateResponse struct {
+	SupplierID      int64  `json:"supplier_id"`
+	SupplierName    string `json:"supplier_name"`
+	Created         bool   `json:"created"`
+	AlreadyExists   bool   `json:"already_exists"`
+	Ignored         bool   `json:"ignored"`
+	CredentialSaved bool   `json:"credential_saved"`
+	MaskedUsername  string `json:"masked_username,omitempty"`
+	Message         string `json:"message"`
 }
 
 type extensionTaskLeaseRequest struct {
@@ -143,6 +184,122 @@ func (h *ExtensionHandler) CreateCaptureSessionTask(c *gin.Context) {
 	response.Created(c, task)
 }
 
+func (h *ExtensionHandler) ReportSupplierCandidate(c *gin.Context) {
+	var req reportSupplierCandidateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	if h.suppliers == nil {
+		response.ErrorFrom(c, infraerrors.New(http.StatusBadRequest, "SUPPLIER_SERVICE_REQUIRED", "supplier service is not configured"))
+		return
+	}
+
+	sourceURL := firstNonEmpty(req.SourceURL, req.URL, req.DashboardURL)
+	sourceHost := firstNonEmpty(
+		req.SourceHost,
+		req.Host,
+		hostFromURL(sourceURL),
+		hostFromURL(req.DashboardURL),
+		hostFromURL(req.APIBaseURL),
+		hostFromURL(req.Origin),
+	)
+	origin := firstNonEmpty(
+		req.Origin,
+		originFromURL(sourceURL),
+		originFromURL(req.DashboardURL),
+		originFromURL(req.APIBaseURL),
+	)
+	if sourceURL == "" && origin == "" && sourceHost == "" {
+		response.ErrorFrom(c, infraerrors.New(http.StatusBadRequest, "SUPPLIER_SITE_REQUIRED", "site url or host is required"))
+		return
+	}
+
+	match, err := h.suppliers.MatchSite(c.Request.Context(), suppliersapp.SiteMatchInput{
+		URL:    firstNonEmpty(sourceURL, origin),
+		Origin: origin,
+		Host:   sourceHost,
+	})
+	if err != nil && infraerrors.Code(err) != http.StatusBadRequest {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if err == nil && len(match.Suppliers) == 1 {
+		supplier := match.Suppliers[0]
+		response.Success(c, reportSupplierCandidateResponse{
+			SupplierID:      supplier.ID,
+			SupplierName:    supplier.Name,
+			AlreadyExists:   true,
+			Ignored:         true,
+			CredentialSaved: false,
+			Message:         "供应商已存在，本次已忽略创建/更新",
+		})
+		return
+	}
+	if err == nil && len(match.Suppliers) > 1 {
+		response.ErrorFrom(c, infraerrors.New(http.StatusConflict, "SUPPLIER_SITE_AMBIGUOUS", "multiple suppliers match current site"))
+		return
+	}
+	if req.AutoCreate != nil && !*req.AutoCreate {
+		response.ErrorFrom(c, infraerrors.New(http.StatusNotFound, "SUPPLIER_SITE_NOT_MATCHED", "current site is not configured as a supplier"))
+		return
+	}
+
+	title, _ := req.PageContext["title"].(string)
+	supplierType := normalizeCaptureSupplierType(firstNonEmpty(req.SystemType, req.Type, req.SupplierType, req.ProviderType))
+	if supplierType == "" {
+		supplierType = adminplusdomain.SupplierTypeBrowserOnly
+	}
+	supplierKind := normalizeReportSupplierKind(firstNonEmpty(req.SupplierKind, req.Kind), supplierType)
+	runtimeStatus := adminplusdomain.NormalizeSupplierRuntimeStatus(req.RuntimeStatus)
+	if runtimeStatus == "" {
+		runtimeStatus = adminplusdomain.SupplierRuntimeStatusMonitorOnly
+	}
+	healthStatus := adminplusdomain.NormalizeSupplierHealthStatus(req.HealthStatus)
+	if healthStatus == "" {
+		healthStatus = adminplusdomain.SupplierHealthStatusNormal
+	}
+	name := trimReportName(firstNonEmpty(req.Name, title, sourceHost, hostFromURL(sourceURL)))
+	dashboardURL := firstNonEmpty(req.DashboardURL, origin, sourceURL)
+	apiBaseURL := firstNonEmpty(req.APIBaseURL, origin)
+	browserLoginEnabled := req.BrowserLoginEnabled ||
+		strings.TrimSpace(req.BrowserLoginUsername) != "" ||
+		strings.TrimSpace(req.BrowserLoginPassword) != "" ||
+		strings.TrimSpace(req.BrowserLoginToken) != ""
+
+	supplier, err := h.suppliers.Create(c.Request.Context(), suppliersapp.CreateSupplierInput{
+		Name:                  name,
+		Kind:                  supplierKind,
+		Type:                  supplierType,
+		RuntimeStatus:         runtimeStatus,
+		HealthStatus:          healthStatus,
+		DashboardURL:          dashboardURL,
+		APIBaseURL:            apiBaseURL,
+		ThirdPartyRechargeURL: req.ThirdPartyRechargeURL,
+		LocalRechargeURL:      req.LocalRechargeURL,
+		Contact:               req.Contact,
+		Notes:                 req.Notes,
+		BrowserLoginEnabled:   browserLoginEnabled,
+		BrowserLoginUsername:  req.BrowserLoginUsername,
+		BrowserLoginPassword:  req.BrowserLoginPassword,
+		BrowserLoginToken:     req.BrowserLoginToken,
+		BalanceCents:          req.BalanceCents,
+		BalanceCurrency:       req.BalanceCurrency,
+		RechargeMultiplier:    req.RechargeMultiplier,
+	})
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, reportSupplierCandidateResponse{
+		SupplierID:      supplier.ID,
+		SupplierName:    supplier.Name,
+		Created:         true,
+		CredentialSaved: supplier.Credential.BrowserLoginEnabled && (supplier.Credential.BrowserLoginUsernameConfigured || supplier.Credential.BrowserLoginPasswordConfigured || supplier.Credential.BrowserLoginTokenConfigured),
+		MaskedUsername:  supplier.Credential.MaskedBrowserLoginUsername,
+		Message:         "供应商已创建并保存采集信息",
+	})
+}
+
 func (h *ExtensionHandler) resolveCaptureSessionSupplier(c *gin.Context, req captureSessionTaskRequest) (int64, map[string]any, error) {
 	payload := clonePayload(req.Payload)
 	sourceURL := firstNonEmpty(req.URL, req.DashboardURL, stringFromPayload(payload, "source_url"))
@@ -170,83 +327,11 @@ func (h *ExtensionHandler) resolveCaptureSessionSupplier(c *gin.Context, req cap
 		payload["supplier_type"] = string(supplierType)
 		payload["provider_type"] = string(supplierType)
 	}
-	if req.SupplierID > 0 {
-		if h.suppliers != nil {
-			if _, err := h.suppliers.EnrichRechargeURLs(c.Request.Context(), req.SupplierID, suppliersapp.CreateFromSiteCandidateInput{
-				DashboardURL:          firstNonEmpty(req.DashboardURL, origin, sourceURL),
-				Type:                  supplierType,
-				APIBaseURL:            req.APIBaseURL,
-				ThirdPartyRechargeURL: thirdPartyRechargeURL,
-				LocalRechargeURL:      localRechargeURL,
-				SourceHost:            sourceHost,
-				SourceURL:             sourceURL,
-			}); err != nil {
-				return 0, payload, err
-			}
-		}
-		payload["supplier_id"] = req.SupplierID
-		return req.SupplierID, payload, nil
-	}
-	if h.suppliers == nil {
+	if req.SupplierID <= 0 {
 		return 0, payload, infraerrors.New(http.StatusBadRequest, "SUPPLIER_ID_REQUIRED", "supplier id is required")
 	}
-	if sourceURL == "" && origin == "" && sourceHost == "" {
-		return 0, payload, infraerrors.New(http.StatusBadRequest, "SUPPLIER_SITE_REQUIRED", "site url or supplier id is required")
-	}
-	match, err := h.suppliers.MatchSite(c.Request.Context(), suppliersapp.SiteMatchInput{
-		URL:    sourceURL,
-		Origin: origin,
-		Host:   sourceHost,
-	})
-	if err == nil && len(match.Suppliers) == 1 {
-		supplier, enrichErr := h.suppliers.EnrichRechargeURLs(c.Request.Context(), match.Suppliers[0].ID, suppliersapp.CreateFromSiteCandidateInput{
-			DashboardURL:          firstNonEmpty(req.DashboardURL, origin, sourceURL),
-			Type:                  supplierType,
-			APIBaseURL:            req.APIBaseURL,
-			ThirdPartyRechargeURL: thirdPartyRechargeURL,
-			LocalRechargeURL:      localRechargeURL,
-			SourceHost:            sourceHost,
-			SourceURL:             sourceURL,
-		})
-		if enrichErr != nil {
-			return 0, payload, enrichErr
-		}
-		if supplier != nil {
-			match.Suppliers[0] = supplier
-		}
-		payload["supplier_id"] = match.Suppliers[0].ID
-		payload["supplier_match_status"] = match.Status
-		payload["supplier_auto_created"] = false
-		return match.Suppliers[0].ID, payload, nil
-	}
-	if err == nil && len(match.Suppliers) > 1 {
-		return 0, payload, infraerrors.New(http.StatusConflict, "SUPPLIER_SITE_AMBIGUOUS", "multiple suppliers match current site")
-	}
-	if req.AutoCreate != nil && !*req.AutoCreate {
-		return 0, payload, infraerrors.New(http.StatusNotFound, "SUPPLIER_SITE_NOT_MATCHED", "current site is not configured as a supplier")
-	}
-	title, _ := req.PageContext["title"].(string)
-	ensured, err := h.suppliers.EnsureFromSiteCandidate(c.Request.Context(), suppliersapp.CreateFromSiteCandidateInput{
-		Name:                  req.Name,
-		Type:                  supplierType,
-		DashboardURL:          firstNonEmpty(req.DashboardURL, origin, sourceURL),
-		APIBaseURL:            req.APIBaseURL,
-		ThirdPartyRechargeURL: thirdPartyRechargeURL,
-		LocalRechargeURL:      localRechargeURL,
-		SourceHost:            sourceHost,
-		SourceURL:             sourceURL,
-		Title:                 title,
-	})
-	if err != nil {
-		return 0, payload, err
-	}
-	if ensured == nil || ensured.Supplier == nil {
-		return 0, payload, infraerrors.New(http.StatusInternalServerError, "SUPPLIER_AUTO_CREATE_FAILED", "failed to resolve supplier")
-	}
-	payload["supplier_id"] = ensured.Supplier.ID
-	payload["supplier_match_status"] = ensured.MatchStatus
-	payload["supplier_auto_created"] = ensured.Created
-	return ensured.Supplier.ID, payload, nil
+	payload["supplier_id"] = req.SupplierID
+	return req.SupplierID, payload, nil
 }
 
 func (h *ExtensionHandler) Heartbeat(c *gin.Context) {
@@ -426,6 +511,47 @@ func normalizeCaptureSupplierType(value string) adminplusdomain.SupplierType {
 		}
 		return ""
 	}
+}
+
+func normalizeReportSupplierKind(value string, supplierType adminplusdomain.SupplierType) adminplusdomain.SupplierKind {
+	kind := adminplusdomain.NormalizeSupplierKind(value)
+	if kind.Valid() {
+		return kind
+	}
+	if supplierType == adminplusdomain.SupplierTypeBrowserOnly {
+		return adminplusdomain.SupplierKindBrowserOnly
+	}
+	return adminplusdomain.SupplierKindRelay
+}
+
+func trimReportName(value string) string {
+	name := strings.TrimSpace(value)
+	if name == "" {
+		return "当前供应商"
+	}
+	if len(name) > 80 {
+		return name[:80]
+	}
+	return name
+}
+
+func originFromURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
+}
+
+func hostFromURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	return parsed.Host
 }
 
 func firstNonEmpty(values ...string) string {

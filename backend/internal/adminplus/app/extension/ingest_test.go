@@ -76,6 +76,72 @@ func TestCompleteTaskIngestsRateResult(t *testing.T) {
 	require.Equal(t, 1, ingest["rate_snapshots"])
 }
 
+func TestCompleteTaskProcessesRegistrationResult(t *testing.T) {
+	registration := &stubRegistrationProcessor{
+		resultIngest: map[string]any{
+			"registration_status": "succeeded",
+			"supplier_id":         int64(7),
+		},
+	}
+	processor := NewIngestProcessor(nil, nil, nil, nil, nil, nil).WithRegistrationProcessor(registration)
+	svc := NewServiceWithResultProcessor(NewMemoryRepository(), processor)
+	task, err := svc.CreateLeasedTask(context.Background(), CreateLeasedTaskInput{
+		Type:     adminplusdomain.ExtensionTaskTypeRegisterSupplier,
+		DeviceID: "device-1",
+		Payload:  map[string]any{"discovery_id": int64(9)},
+	})
+	require.NoError(t, err)
+
+	completed, err := svc.CompleteTask(context.Background(), CompleteTaskInput{
+		TaskID:     task.ID,
+		DeviceID:   "device-1",
+		LeaseToken: task.LeaseToken,
+		Result: map[string]any{
+			"registration_submitted": true,
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, task.ID, registration.resultTaskID)
+	ingest, ok := completed.Result["ingest"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "succeeded", ingest["registration_status"])
+	require.Equal(t, int64(7), ingest["supplier_id"])
+}
+
+func TestFailTaskProcessesRegistrationManualVerification(t *testing.T) {
+	registration := &stubRegistrationProcessor{
+		failureIngest: map[string]any{
+			"registration_status": "waiting_manual_verification",
+			"manual_required":     true,
+		},
+	}
+	processor := NewIngestProcessor(nil, nil, nil, nil, nil, nil).WithRegistrationProcessor(registration)
+	svc := NewServiceWithResultProcessor(NewMemoryRepository(), processor)
+	task, err := svc.CreateLeasedTask(context.Background(), CreateLeasedTaskInput{
+		Type:     adminplusdomain.ExtensionTaskTypeRegisterSupplier,
+		DeviceID: "device-1",
+		Payload:  map[string]any{"discovery_id": int64(9)},
+	})
+	require.NoError(t, err)
+
+	failed, err := svc.FailTask(context.Background(), FailTaskInput{
+		TaskID:       task.ID,
+		DeviceID:     "device-1",
+		LeaseToken:   task.LeaseToken,
+		ErrorCode:    "REGISTRATION_VERIFICATION_REQUIRED",
+		ErrorMessage: "需要验证码",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, adminplusdomain.ExtensionTaskStatusFailed, failed.Status)
+	require.Equal(t, task.ID, registration.failureTaskID)
+	ingest, ok := failed.Result["ingest"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "waiting_manual_verification", ingest["registration_status"])
+	require.Equal(t, true, ingest["manual_required"])
+}
+
 func TestCompleteTaskIngestsUsageCostResult(t *testing.T) {
 	usageCostRepo := usagecostsapp.NewMemoryRepository()
 	processor := NewIngestProcessor(
@@ -148,6 +214,7 @@ func TestCompleteTaskEncryptsCapturedSessionBundle(t *testing.T) {
 		usagecostsapp.NewService(usagecostsapp.NewMemoryRepository()),
 		sessionsapp.NewService(sessionRepo, stubSessionCipher{}),
 		stubSessionCipher{},
+		nil,
 	)
 	svc := NewServiceWithResultProcessor(NewMemoryRepository(), processor)
 	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
@@ -226,6 +293,7 @@ func TestCompleteTaskNormalizesNewAPIBrowserSessionWithoutSyncingBalance(t *test
 		usagecostsapp.NewService(usagecostsapp.NewMemoryRepository()),
 		sessionService,
 		cipher,
+		nil,
 	)
 	svc := NewServiceWithResultProcessor(NewMemoryRepository(), processor)
 	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
@@ -463,4 +531,21 @@ func cloneIngestRateChangeEvent(in *adminplusdomain.RateChangeEvent) *adminplusd
 		out.AcknowledgedAt = &value
 	}
 	return &out
+}
+
+type stubRegistrationProcessor struct {
+	resultTaskID  int64
+	failureTaskID int64
+	resultIngest  map[string]any
+	failureIngest map[string]any
+}
+
+func (p *stubRegistrationProcessor) ProcessRegistrationTaskResult(_ context.Context, task *adminplusdomain.ExtensionTask, _ map[string]any) (map[string]any, error) {
+	p.resultTaskID = task.ID
+	return p.resultIngest, nil
+}
+
+func (p *stubRegistrationProcessor) ProcessRegistrationTaskFailure(_ context.Context, task *adminplusdomain.ExtensionTask, _ string, _ string) (map[string]any, error) {
+	p.failureTaskID = task.ID
+	return p.failureIngest, nil
 }

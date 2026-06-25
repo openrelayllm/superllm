@@ -11,6 +11,7 @@ import (
 	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
+	mailverificationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
 	notificationsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
 	provisionjobsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/provisionjobs"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
@@ -48,15 +49,34 @@ var ProviderSet = wire.NewSet(
 	usagecostsapp.ProviderSet,
 	costsapp.ProviderSet,
 	extensionapp.ProviderSet,
+	wire.Bind(new(extensionapp.RegistrationResultProcessor), new(*sitediscoveryapp.RegistrationProcessor)),
 	wire.Bind(new(extensionapp.BrowserCredentialProvider), new(*suppliersapp.Service)),
+	wire.Bind(new(balancesapp.SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(sessionsapp.SupplierLookup), new(*suppliersapp.Service)),
 	wire.Bind(new(costsapp.SessionReader), new(*sessionsapp.Service)),
+	wire.Bind(new(costsapp.UsageCostSyncer), new(*usagecostsapp.Service)),
+	wire.Bind(new(costsapp.BalanceSyncer), new(*balancesapp.Service)),
 	wire.Bind(new(costsapp.SupplierLookup), new(*suppliersapp.Service)),
+	wire.Bind(new(announcementsapp.SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(ratesapp.SessionReader), new(*sessionsapp.Service)),
+	wire.Bind(new(usagecostsapp.SessionReader), new(*sessionsapp.Service)),
+	wire.Bind(new(provisionjobsapp.GroupSyncer), new(*suppliergroupsapp.Service)),
+	wire.Bind(new(provisionjobsapp.KeyProvisioner), new(*supplierkeysapp.Service)),
+	wire.Bind(new(provisionjobsapp.CostSyncer), new(*costsapp.Service)),
+	wire.Bind(new(provisionjobsapp.ChannelChecker), new(*channelchecksapp.Service)),
+	wire.Bind(new(schedulerapp.GroupSyncer), new(*suppliergroupsapp.Service)),
+	wire.Bind(new(schedulerapp.RateSyncer), new(*ratesapp.Service)),
+	wire.Bind(new(schedulerapp.BalanceSyncer), new(*balancesapp.Service)),
+	wire.Bind(new(schedulerapp.AnnouncementSyncer), new(*announcementsapp.Service)),
+	wire.Bind(new(schedulerapp.HealthSyncer), new(*healthapp.Service)),
+	wire.Bind(new(schedulerapp.UsageCostSyncer), new(*usagecostsapp.Service)),
+	wire.Bind(new(schedulerapp.ChannelChecker), new(*channelchecksapp.Service)),
+	wire.Bind(new(schedulerapp.SessionRefresher), new(*sessionsapp.Service)),
 	wire.Bind(new(suppliergroupsapp.SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(supplierkeysapp.SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(channelchecksapp.LocalBindingEnsurer), new(*supplierkeysapp.Service)),
 	healthapp.ProviderSet,
+	mailverificationapp.ProviderSet,
 	notificationsapp.ProviderSet,
 	announcementsapp.ProviderSet,
 	ratesapp.ProviderSet,
