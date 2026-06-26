@@ -231,7 +231,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	balanceHandler := adminplus.NewBalanceHandler(balancesService)
 	healthHandler := adminplus.NewHealthHandler(healthService)
 	notificationHandler := adminplus.NewNotificationHandler(notificationsService)
-	backupHandler := adminplus.NewBackupHandler(backupService, notificationsService, opsService, settingRepository)
+	backupHandler := adminplus.NewBackupHandler(backupService, notificationsService, opsService, settingRepository, secretEncryptor)
 	usageCostHandler := adminplus.NewUsageCostHandler(usagecostsService)
 	costHandler := adminplus.NewCostHandlerWithProvisionJobs(costsService, provisionjobsService)
 	channelCheckHandler := adminplus.NewChannelCheckHandlerWithProvisionJobs(channelchecksService, provisionjobsService)

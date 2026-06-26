@@ -40,7 +40,16 @@ export interface ServerRenewalStatus {
   enabled: boolean
   server_name: string
   provider: string
+  host_id?: string
+  ip_address?: string
+  operating_system?: string
+  ssh_username?: string
+  ssh_password?: string
+  ssh_password_configured?: boolean
+  ssh_port?: number
+  panel_url?: string
   expires_at: string
+  expires_at_time?: string
   reminder_days: number[]
   last_notified_at?: string
   last_notified_key?: string

@@ -31,6 +31,7 @@ type BackupHandler struct {
 	notificationService *notificationsapp.Service
 	opsService          *service.OpsService
 	settingRepo         service.SettingRepository
+	secretEncryptor     service.SecretEncryptor
 
 	renewalLoopOnce sync.Once
 }
@@ -69,13 +70,22 @@ type backupStatusResponse struct {
 }
 
 type serverRenewalConfig struct {
-	Enabled         bool   `json:"enabled"`
-	ServerName      string `json:"server_name"`
-	Provider        string `json:"provider"`
-	ExpiresAt       string `json:"expires_at"`
-	ReminderDays    []int  `json:"reminder_days"`
-	LastNotifiedAt  string `json:"last_notified_at,omitempty"`
-	LastNotifiedKey string `json:"last_notified_key,omitempty"`
+	Enabled               bool   `json:"enabled"`
+	ServerName            string `json:"server_name"`
+	Provider              string `json:"provider"`
+	HostID                string `json:"host_id,omitempty"`
+	IPAddress             string `json:"ip_address,omitempty"`
+	OperatingSystem       string `json:"operating_system,omitempty"`
+	SSHUsername           string `json:"ssh_username,omitempty"`
+	SSHPassword           string `json:"ssh_password,omitempty"`
+	SSHPasswordConfigured bool   `json:"ssh_password_configured,omitempty"`
+	SSHPort               int    `json:"ssh_port,omitempty"`
+	PanelURL              string `json:"panel_url,omitempty"`
+	ExpiresAt             string `json:"expires_at"`
+	ExpiresAtTime         string `json:"expires_at_time,omitempty"`
+	ReminderDays          []int  `json:"reminder_days"`
+	LastNotifiedAt        string `json:"last_notified_at,omitempty"`
+	LastNotifiedKey       string `json:"last_notified_key,omitempty"`
 }
 
 type serverRenewalStatus struct {
@@ -97,12 +107,14 @@ func NewBackupHandler(
 	notificationService *notificationsapp.Service,
 	opsService *service.OpsService,
 	settingRepo service.SettingRepository,
+	secretEncryptor service.SecretEncryptor,
 ) *BackupHandler {
 	h := &BackupHandler{
 		backupService:       backupService,
 		notificationService: notificationService,
 		opsService:          opsService,
 		settingRepo:         settingRepo,
+		secretEncryptor:     secretEncryptor,
 	}
 	h.startRenewalLoop()
 	return h
@@ -174,7 +186,7 @@ func (h *BackupHandler) UpdateSettings(c *gin.Context) {
 	}
 	if req.Renewal != nil {
 		normalizeRenewalConfig(req.Renewal)
-		if err := h.saveRenewalConfig(ctx, *req.Renewal); response.ErrorFrom(c, err) {
+		if err := h.updateRenewalConfig(ctx, *req.Renewal); response.ErrorFrom(c, err) {
 			return
 		}
 		_ = h.maybeDispatchRenewalReminder(ctx, time.Now())
@@ -282,7 +294,7 @@ func (h *BackupHandler) GetServerRenewal(c *gin.Context) {
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, status)
+	response.Success(c, sanitizeRenewalStatus(status))
 }
 
 func (h *BackupHandler) UpdateServerRenewal(c *gin.Context) {
@@ -292,14 +304,14 @@ func (h *BackupHandler) UpdateServerRenewal(c *gin.Context) {
 		return
 	}
 	normalizeRenewalConfig(&cfg)
-	if err := h.saveRenewalConfig(c.Request.Context(), cfg); response.ErrorFrom(c, err) {
+	if err := h.updateRenewalConfig(c.Request.Context(), cfg); response.ErrorFrom(c, err) {
 		return
 	}
 	status, err := h.renewalStatus(c.Request.Context(), time.Now())
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, status)
+	response.Success(c, sanitizeRenewalStatus(status))
 }
 
 func (h *BackupHandler) settings(ctx context.Context) (*BackupSettingsResponse, error) {
@@ -324,7 +336,7 @@ func (h *BackupHandler) settings(ctx context.Context) (*BackupSettingsResponse, 
 	return &BackupSettingsResponse{
 		S3:       *s3,
 		Schedule: *schedule,
-		Renewal:  renewal,
+		Renewal:  sanitizeRenewalStatus(renewal),
 		Cleanup:  cleanup,
 	}, nil
 }
@@ -368,6 +380,27 @@ func (h *BackupHandler) saveRenewalConfig(ctx context.Context, cfg serverRenewal
 	return h.settingRepo.Set(ctx, settingKeyAdminPlusServerRenewal, string(raw))
 }
 
+func (h *BackupHandler) updateRenewalConfig(ctx context.Context, cfg serverRenewalConfig) error {
+	if h == nil || h.settingRepo == nil {
+		return nil
+	}
+	normalizeRenewalConfig(&cfg)
+	old, _ := h.loadRenewalConfig(ctx)
+	if strings.TrimSpace(cfg.SSHPassword) == "" {
+		cfg.SSHPassword = old.SSHPassword
+	} else if h.secretEncryptor != nil {
+		encrypted, err := h.secretEncryptor.Encrypt(cfg.SSHPassword)
+		if err != nil {
+			return fmt.Errorf("encrypt ssh password: %w", err)
+		}
+		cfg.SSHPassword = encrypted
+	}
+	cfg.SSHPasswordConfigured = strings.TrimSpace(cfg.SSHPassword) != ""
+	cfg.LastNotifiedAt = old.LastNotifiedAt
+	cfg.LastNotifiedKey = old.LastNotifiedKey
+	return h.saveRenewalConfig(ctx, cfg)
+}
+
 func (h *BackupHandler) renewalStatus(ctx context.Context, now time.Time) (serverRenewalStatus, error) {
 	cfg, err := h.loadRenewalConfig(ctx)
 	if err != nil {
@@ -398,6 +431,12 @@ func (h *BackupHandler) renewalStatus(ctx context.Context, now time.Time) (serve
 		}
 	}
 	return status, nil
+}
+
+func sanitizeRenewalStatus(status serverRenewalStatus) serverRenewalStatus {
+	status.SSHPasswordConfigured = strings.TrimSpace(status.SSHPassword) != "" || status.SSHPasswordConfigured
+	status.SSHPassword = ""
+	return status
 }
 
 func (h *BackupHandler) cleanupSettings(ctx context.Context) (historyCleanupSettings, error) {
@@ -568,7 +607,21 @@ func normalizeRenewalConfig(cfg *serverRenewalConfig) {
 		cfg.ServerName = "sub2api-admin-plus"
 	}
 	cfg.Provider = strings.TrimSpace(cfg.Provider)
+	cfg.HostID = strings.TrimSpace(cfg.HostID)
+	cfg.IPAddress = strings.TrimSpace(cfg.IPAddress)
+	cfg.OperatingSystem = strings.TrimSpace(cfg.OperatingSystem)
+	cfg.SSHUsername = strings.TrimSpace(cfg.SSHUsername)
+	cfg.SSHPassword = strings.TrimSpace(cfg.SSHPassword)
+	cfg.SSHPasswordConfigured = strings.TrimSpace(cfg.SSHPassword) != "" || cfg.SSHPasswordConfigured
+	cfg.PanelURL = strings.TrimSpace(cfg.PanelURL)
+	if cfg.SSHPort <= 0 {
+		cfg.SSHPort = 22
+	}
+	if cfg.SSHPort > 65535 {
+		cfg.SSHPort = 65535
+	}
 	cfg.ExpiresAt = strings.TrimSpace(cfg.ExpiresAt)
+	cfg.ExpiresAtTime = strings.TrimSpace(cfg.ExpiresAtTime)
 	if len(cfg.ReminderDays) == 0 {
 		cfg.ReminderDays = []int{7, 3, 1}
 	}

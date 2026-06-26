@@ -93,7 +93,7 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 			Action:           adminplushandler.NewActionHandler(actionsapp.NewRuleService()),
 			Sub2API:          adminplushandler.NewSub2APIHandler(sub2apiapp.NewService(newRouteSurfaceSub2APIRepository(), newRouteSurfaceSub2APIRuntimeReader())),
 			Proxy:            adminplushandler.NewProxyHandler(proxyapp.NewService(nil, nil, nil, nil, proxyapp.RuntimeConfig{})),
-			Backup:           adminplushandler.NewBackupHandler(nil, nil, nil, nil),
+			Backup:           adminplushandler.NewBackupHandler(nil, nil, nil, nil, nil),
 		},
 	}
 
