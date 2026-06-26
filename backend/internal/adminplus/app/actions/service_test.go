@@ -108,10 +108,3 @@ func requireAction(t *testing.T, items []*adminplusdomain.ActionRecommendation, 
 	require.Failf(t, "missing action", "type=%s reason=%s items=%v", actionType, reason, items)
 	return nil
 }
-
-func requireNoAction(t *testing.T, items []*adminplusdomain.ActionRecommendation, actionType adminplusdomain.ActionType) {
-	t.Helper()
-	for _, item := range items {
-		require.NotEqual(t, actionType, item.Type)
-	}
-}

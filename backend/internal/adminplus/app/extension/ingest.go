@@ -377,17 +377,6 @@ func float64Value(values map[string]any, key string) float64 {
 	}
 }
 
-func optionalFloat64Value(values map[string]any, key string) *float64 {
-	if values == nil {
-		return nil
-	}
-	if _, ok := values[key]; !ok || values[key] == nil {
-		return nil
-	}
-	v := float64Value(values, key)
-	return &v
-}
-
 func optionalIntValue(values map[string]any, key string) *int {
 	if values == nil {
 		return nil
