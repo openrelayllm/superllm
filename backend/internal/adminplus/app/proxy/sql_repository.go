@@ -915,6 +915,22 @@ func (r *SQLRepository) ListAuditEvents(ctx context.Context, filter AuditFilter)
 		args = append(args, filter.TaskID)
 		where = append(where, fmt.Sprintf("task_id = $%d", len(args)))
 	}
+	if filter.PolicyID > 0 {
+		args = append(args, filter.PolicyID)
+		where = append(where, fmt.Sprintf("policy_id = $%d", len(args)))
+	}
+	if filter.SlotID > 0 {
+		args = append(args, filter.SlotID)
+		where = append(where, fmt.Sprintf("slot_id = $%d", len(args)))
+	}
+	if filter.NodeID > 0 {
+		args = append(args, filter.NodeID)
+		where = append(where, fmt.Sprintf("node_id = $%d", len(args)))
+	}
+	if filter.SubscriptionID > 0 {
+		args = append(args, filter.SubscriptionID)
+		where = append(where, fmt.Sprintf("subscription_id = $%d", len(args)))
+	}
 	if filter.Level != "" {
 		args = append(args, string(filter.Level))
 		where = append(where, fmt.Sprintf("level = $%d", len(args)))
@@ -934,7 +950,7 @@ func (r *SQLRepository) ListAuditEvents(ctx context.Context, filter AuditFilter)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanAuditEvents(rows)
 }
 
