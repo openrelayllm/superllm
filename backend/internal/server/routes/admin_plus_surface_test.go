@@ -129,6 +129,7 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/public/proxyai/summary",
 		"GET /api/v1/public/proxyai/sites",
 		"GET /api/v1/public/proxyai/sites/:slug",
+		"OPTIONS /api/v1/public/proxyai/*path",
 		"POST /api/v1/auth/login",
 		"POST /api/v1/auth/login/2fa",
 		"POST /api/v1/auth/refresh",
@@ -342,6 +343,17 @@ func TestAdminPlusDeadPathsReturn404(t *testing.T) {
 
 		require.Equal(t, http.StatusNotFound, w.Code, "%s %s", deadPath.method, deadPath.path)
 	}
+}
+
+func TestPublicProxyAIRoutesAllowCrossOriginPreflight(t *testing.T) {
+	router := newAdminPlusSurfaceRouter()
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/public/proxyai/sites", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNoContent, w.Code)
+	require.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
+	require.Equal(t, "GET, HEAD, OPTIONS", w.Header().Get("Access-Control-Allow-Methods"))
 }
 
 func registeredRouteSet(router *gin.Engine) map[string]struct{} {
