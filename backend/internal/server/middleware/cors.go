@@ -66,19 +66,21 @@ func CORS(cfg config.CORSConfig) gin.HandlerFunc {
 
 	return func(c *gin.Context) {
 		origin := strings.TrimSpace(c.GetHeader("Origin"))
-		originAllowed := allowAll
+		publicProxyAIRequest := isPublicProxyAICORSPath(c.Request.URL.Path)
+		originAllowed := allowAll || publicProxyAIRequest
 		if origin != "" && !allowAll {
 			_, originAllowed = allowedSet[origin]
+			originAllowed = originAllowed || publicProxyAIRequest
 		}
 
 		if originAllowed {
-			if allowAll {
+			if allowAll || publicProxyAIRequest {
 				c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 			} else if origin != "" {
 				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 				c.Writer.Header().Add("Vary", "Origin")
 			}
-			if allowCredentials {
+			if allowCredentials && !publicProxyAIRequest {
 				c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 			}
 			c.Writer.Header().Set("Access-Control-Allow-Headers", allowHeadersValue)
@@ -98,6 +100,10 @@ func CORS(cfg config.CORSConfig) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func isPublicProxyAICORSPath(path string) bool {
+	return path == "/api/v1/public/proxyai" || strings.HasPrefix(path, "/api/v1/public/proxyai/")
 }
 
 func normalizeOrigins(values []string) []string {
