@@ -2,6 +2,7 @@ package sitediscovery
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,11 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	mailverificationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	opsservice "github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 func TestParseDaheiAIItems(t *testing.T) {
@@ -277,29 +281,513 @@ func TestGenerateRegistrationPassword(t *testing.T) {
 	}
 }
 
-func TestRegisterItemQueuesTaskWithoutCreatingSupplier(t *testing.T) {
+func TestRegisterItemRunsDirectRegistrationWithoutBrowserTask(t *testing.T) {
 	repo := newRegistrationMemoryRepository()
 	item := repo.addSupportedItem()
 	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
-	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil)
+	adapter := &fakeDirectRegistrationAdapter{
+		results: []*ports.DirectRegistrationResult{{
+			ProviderType: adminplusdomain.SupplierTypeNewAPI,
+			Stage:        ports.DirectRegistrationStageCompleted,
+			Submitted:    true,
+			CapturedAt:   time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+		}},
+	}
+	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil).WithDirectRegistration(adapter)
 
 	credential, task, err := service.RegisterItem(context.Background(), item.ID)
 	if err != nil {
 		t.Fatalf("register item: %v", err)
 	}
-	if credential.SupplierID != 0 {
-		t.Fatalf("expected registration credential without supplier before success, got %d", credential.SupplierID)
+	if task != nil {
+		t.Fatalf("expected direct registration without browser task, got %#v", task)
 	}
-	if task.SupplierID != 0 {
-		t.Fatalf("expected registration task without supplier before success, got %d", task.SupplierID)
+	if credential.SupplierID <= 0 {
+		t.Fatalf("expected direct registration to import supplier, got %d", credential.SupplierID)
+	}
+	if credential.Status != adminplusdomain.SupplierRegistrationStatusSucceeded {
+		t.Fatalf("expected succeeded workflow, got %s", credential.Status)
+	}
+	if len(adapter.inputs) != 1 {
+		t.Fatalf("expected one direct registration call, got %d", len(adapter.inputs))
 	}
 	suppliers, err := supplierService.List(context.Background(), suppliersapp.SupplierFilter{})
 	if err != nil {
 		t.Fatalf("list suppliers: %v", err)
 	}
+	if len(suppliers) != 1 {
+		t.Fatalf("expected supplier created after direct registration, got %d", len(suppliers))
+	}
+	browserCredential, err := supplierService.GetBrowserCredential(context.Background(), credential.SupplierID)
+	if err != nil {
+		t.Fatalf("get browser credential: %v", err)
+	}
+	if browserCredential.Username != "ops@example.com" {
+		t.Fatalf("expected registration email as browser login username, got %q", browserCredential.Username)
+	}
+}
+
+func TestRegisterItemQueuesBrowserFallbackOnlyWhenDirectRegistrationRequiresIt(t *testing.T) {
+	repo := newRegistrationMemoryRepository()
+	item := repo.addSupportedItem()
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	adapter := &fakeDirectRegistrationAdapter{
+		errs: []error{infraerrors.New(http.StatusConflict, "BROWSER_FALLBACK_REQUIRED", "browser required")},
+	}
+	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil).WithDirectRegistration(adapter)
+
+	firstCredential, firstTask, err := service.RegisterItem(context.Background(), item.ID)
+	if err != nil {
+		t.Fatalf("register item: %v", err)
+	}
+	if firstTask == nil {
+		t.Fatal("expected browser fallback task")
+	}
+	secondCredential, secondTask, err := service.RegisterItem(context.Background(), item.ID)
+	if err != nil {
+		t.Fatalf("register item again: %v", err)
+	}
+
+	if secondCredential.ID != firstCredential.ID {
+		t.Fatalf("expected same credential, got %d and %d", firstCredential.ID, secondCredential.ID)
+	}
+	if secondTask.ID != firstTask.ID {
+		t.Fatalf("expected same task, got %d and %d", firstTask.ID, secondTask.ID)
+	}
+	if len(adapter.inputs) != 1 {
+		t.Fatalf("expected no duplicate direct registration call for active workflow, got %d", len(adapter.inputs))
+	}
+	tasks, err := extensionService.ListTasks(context.Background(), extensionapp.TaskFilter{Type: adminplusdomain.ExtensionTaskTypeRegisterSupplier})
+	if err != nil {
+		t.Fatalf("list tasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected one active registration task, got %d", len(tasks))
+	}
+}
+
+func TestRegisterItemReadsVerificationCodeForDirectRegistration(t *testing.T) {
+	repo := newRegistrationMemoryRepository()
+	item := repo.addSupportedItem()
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	mailReader := &fakeRegistrationMailReader{}
+	adapter := &fakeDirectRegistrationAdapter{
+		results: []*ports.DirectRegistrationResult{
+			{
+				ProviderType:      adminplusdomain.SupplierTypeNewAPI,
+				Stage:             ports.DirectRegistrationStageNeedEmailCode,
+				EmailCodeRequired: true,
+				CapturedAt:        time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+				Diagnostics: map[string]any{
+					"system_name": "大模型云算力Token",
+				},
+			},
+			{
+				ProviderType: adminplusdomain.SupplierTypeNewAPI,
+				Stage:        ports.DirectRegistrationStageCompleted,
+				Submitted:    true,
+				CapturedAt:   time.Date(2026, 6, 25, 12, 0, 30, 0, time.UTC),
+			},
+		},
+	}
+	service := NewService(repo, supplierService, extensionService, mailReader, plaintextCredentialCipher{}, nil).WithDirectRegistration(adapter)
+
+	credential, task, err := service.RegisterItem(context.Background(), item.ID)
+	if err != nil {
+		t.Fatalf("register item: %v", err)
+	}
+	if task != nil {
+		t.Fatalf("expected direct registration without browser task, got %#v", task)
+	}
+	if credential.Status != adminplusdomain.SupplierRegistrationStatusSucceeded {
+		t.Fatalf("expected succeeded workflow, got %s", credential.Status)
+	}
+	if len(adapter.inputs) != 2 {
+		t.Fatalf("expected two direct registration calls, got %d", len(adapter.inputs))
+	}
+	if adapter.inputs[1].VerificationCode != "654321" {
+		t.Fatalf("expected verification code passed to provider, got %q", adapter.inputs[1].VerificationCode)
+	}
+	if mailReader.lastInput.ClaimKey != registrationClaimKey(credential.ID) {
+		t.Fatalf("expected registration claim key, got %q", mailReader.lastInput.ClaimKey)
+	}
+	if mailReader.lastInput.To != "ops@example.com" {
+		t.Fatalf("expected registration email as Gmail recipient, got %q", mailReader.lastInput.To)
+	}
+	if mailReader.lastInput.SiteName != "大模型云算力Token" {
+		t.Fatalf("expected status system name as mail site name, got %q", mailReader.lastInput.SiteName)
+	}
+}
+
+func TestImportItemRequiresRegistrationBeforeCreatingSupplier(t *testing.T) {
+	repo := newRegistrationMemoryRepository()
+	item := repo.addSupportedItem()
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	service := NewService(repo, supplierService, nil, nil, plaintextCredentialCipher{}, nil)
+
+	imported, err := service.ImportItem(context.Background(), item.ID)
+
+	if imported != nil {
+		t.Fatalf("expected no imported item, got %#v", imported)
+	}
+	if infraerrors.Reason(err) != "SUPPLIER_SITE_REGISTRATION_REQUIRED" {
+		t.Fatalf("expected registration required error, got %v", err)
+	}
+	suppliers, listErr := supplierService.List(context.Background(), suppliersapp.SupplierFilter{})
+	if listErr != nil {
+		t.Fatalf("list suppliers: %v", listErr)
+	}
 	if len(suppliers) != 0 {
-		t.Fatalf("expected no supplier before registration success, got %d", len(suppliers))
+		t.Fatalf("expected no supplier from plain import, got %d", len(suppliers))
+	}
+	if repo.items[item.ID].SupplierID != 0 {
+		t.Fatalf("expected discovery item not linked, got supplier %d", repo.items[item.ID].SupplierID)
+	}
+}
+
+func TestListRegistrationTasksUsesExtensionTaskStatus(t *testing.T) {
+	ctx := context.Background()
+	repo := newRegistrationMemoryRepository()
+	item := repo.addSupportedItem()
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil).WithDirectRegistration(browserFallbackRegistrationAdapter())
+	_, task, err := service.RegisterItem(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("register item: %v", err)
+	}
+	claimed, err := extensionService.ClaimTask(ctx, extensionapp.ClaimTaskInput{
+		DeviceID: "device-1",
+		Types:    []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeRegisterSupplier},
+		LeaseTTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("claim task: %v", err)
+	}
+	if claimed.ID != task.ID {
+		t.Fatalf("expected claimed task %d, got %d", task.ID, claimed.ID)
+	}
+
+	tasks, err := service.ListRegistrationTasks(ctx, ListFilter{Limit: 20})
+	if err != nil {
+		t.Fatalf("list registration tasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected one registration task, got %d", len(tasks))
+	}
+	if tasks[0].Status != adminplusdomain.SupplierRegistrationStatusRunning {
+		t.Fatalf("expected running derived status, got %s", tasks[0].Status)
+	}
+	if tasks[0].TaskStatus != adminplusdomain.ExtensionTaskStatusClaimed {
+		t.Fatalf("expected claimed task status, got %s", tasks[0].TaskStatus)
+	}
+	if tasks[0].Discovery == nil || tasks[0].Discovery.ID != item.ID {
+		t.Fatalf("expected discovery item in task view, got %#v", tasks[0].Discovery)
+	}
+}
+
+func TestListRegistrationTasksShowsQueuedWorkflowAfterRegister(t *testing.T) {
+	ctx := context.Background()
+	repo := newRegistrationMemoryRepository()
+	item := repo.addSupportedItem()
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil).WithDirectRegistration(browserFallbackRegistrationAdapter())
+
+	credential, task, err := service.RegisterItem(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("register item: %v", err)
+	}
+	tasks, err := service.ListRegistrationTasks(ctx, ListFilter{Limit: 20})
+	if err != nil {
+		t.Fatalf("list registration tasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected one registration workflow, got %d", len(tasks))
+	}
+	got := tasks[0]
+	if got.ID != credential.ID || got.RegistrationID != credential.ID {
+		t.Fatalf("expected workflow id %d, got id=%d registration_id=%d", credential.ID, got.ID, got.RegistrationID)
+	}
+	if got.TaskID != task.ID {
+		t.Fatalf("expected attempt task id %d, got %d", task.ID, got.TaskID)
+	}
+	if got.Status != adminplusdomain.SupplierRegistrationStatusQueued {
+		t.Fatalf("expected queued registration workflow, got %s", got.Status)
+	}
+	if got.Discovery == nil || got.Discovery.RegistrationStatus != adminplusdomain.SupplierRegistrationStatusQueued {
+		t.Fatalf("expected queued discovery projection, got %#v", got.Discovery)
+	}
+}
+
+func TestRerunRegistrationQueuesNewTaskAfterFailure(t *testing.T) {
+	ctx := context.Background()
+	repo := newRegistrationMemoryRepository()
+	item := repo.addSupportedItem()
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil).WithDirectRegistration(browserFallbackRegistrationAdapter())
+	_, task, err := service.RegisterItem(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("register item: %v", err)
+	}
+	processor := NewRegistrationProcessor(repo, supplierService, plaintextCredentialCipher{})
+	if _, err := processor.ProcessRegistrationTaskFailure(ctx, task, "REGISTRATION_VERIFICATION_CODE_NOT_FOUND", "未读取到验证码"); err != nil {
+		t.Fatalf("process registration failure: %v", err)
+	}
+
+	credential, _, err := repo.GetRegistrationCredentialByTaskID(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("get registration credential: %v", err)
+	}
+	credential, nextTask, err := service.RerunRegistration(ctx, credential.ID)
+	if err != nil {
+		t.Fatalf("rerun registration workflow: %v", err)
+	}
+	if nextTask.ID == task.ID {
+		t.Fatalf("expected new rerun attempt, got same task %d", nextTask.ID)
+	}
+	if credential.Status != adminplusdomain.SupplierRegistrationStatusQueued {
+		t.Fatalf("expected queued rerun credential, got %s", credential.Status)
+	}
+	if credential.ExtensionTaskID != nextTask.ID {
+		t.Fatalf("expected credential linked to rerun task %d, got %d", nextTask.ID, credential.ExtensionTaskID)
+	}
+}
+
+func TestRerunDirectFailureClearsStaleBrowserTask(t *testing.T) {
+	ctx := context.Background()
+	repo := newRegistrationMemoryRepository()
+	item := repo.addSupportedItem()
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil).WithDirectRegistration(browserFallbackRegistrationAdapter())
+	_, task, err := service.RegisterItem(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("register item: %v", err)
+	}
+	processor := NewRegistrationProcessor(repo, supplierService, plaintextCredentialCipher{})
+	if _, err := processor.ProcessRegistrationTaskFailure(ctx, task, "REGISTRATION_FORM_NOT_FOUND", "未找到可填写的注册表单"); err != nil {
+		t.Fatalf("process registration failure: %v", err)
+	}
+	credential, _, err := repo.GetRegistrationCredentialByTaskID(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("get registration credential: %v", err)
+	}
+	service = NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil).WithDirectRegistration(&fakeDirectRegistrationAdapter{
+		alwaysErr: infraerrors.New(http.StatusConflict, "REGISTRATION_DISABLED", "new api registration is disabled"),
+	})
+
+	credential, nextTask, err := service.RerunRegistration(ctx, credential.ID)
+	if err == nil {
+		t.Fatal("expected direct registration failure")
+	}
+	if nextTask != nil {
+		t.Fatalf("expected no browser fallback task, got %#v", nextTask)
+	}
+	if credential.ExtensionTaskID != 0 {
+		t.Fatalf("expected stale extension task cleared, got %d", credential.ExtensionTaskID)
+	}
+	if credential.ErrorCode != "REGISTRATION_DISABLED" {
+		t.Fatalf("expected direct failure reason, got %q", credential.ErrorCode)
+	}
+	records, err := service.ListRegistrationTasks(ctx, ListFilter{RegistrationStatus: adminplusdomain.SupplierRegistrationStatusFailed})
+	if err != nil {
+		t.Fatalf("list registration tasks: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected one failed registration record, got %d", len(records))
+	}
+	if records[0].ErrorCode != "REGISTRATION_DISABLED" {
+		t.Fatalf("expected direct failure in view, got %q", records[0].ErrorCode)
+	}
+	if records[0].TaskID != 0 {
+		t.Fatalf("expected stale task omitted from view, got %d", records[0].TaskID)
+	}
+}
+
+func TestRerunRegistrationCancelsRunningAttemptAndKeepsWorkflow(t *testing.T) {
+	ctx := context.Background()
+	repo := newRegistrationMemoryRepository()
+	item := repo.addSupportedItem()
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil).WithDirectRegistration(browserFallbackRegistrationAdapter())
+	credential, task, err := service.RegisterItem(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("register item: %v", err)
+	}
+	claimed, err := extensionService.ClaimTask(ctx, extensionapp.ClaimTaskInput{
+		DeviceID: "device-1",
+		Types:    []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeRegisterSupplier},
+		LeaseTTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("claim task: %v", err)
+	}
+	if _, err := extensionService.Heartbeat(ctx, extensionapp.HeartbeatInput{
+		TaskID:     claimed.ID,
+		DeviceID:   claimed.DeviceID,
+		LeaseToken: claimed.LeaseToken,
+		LeaseTTL:   time.Minute,
+	}); err != nil {
+		t.Fatalf("heartbeat task: %v", err)
+	}
+
+	nextCredential, nextTask, err := service.RerunRegistration(ctx, credential.ID)
+	if err != nil {
+		t.Fatalf("rerun running registration workflow: %v", err)
+	}
+	if nextCredential.ID != credential.ID {
+		t.Fatalf("expected same registration workflow %d, got %d", credential.ID, nextCredential.ID)
+	}
+	if nextTask.ID == task.ID {
+		t.Fatalf("expected new extension attempt, got same task %d", nextTask.ID)
+	}
+	oldTask, err := extensionService.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("get old task: %v", err)
+	}
+	if oldTask.Status != adminplusdomain.ExtensionTaskStatusCancelled {
+		t.Fatalf("expected old attempt cancelled, got %s", oldTask.Status)
+	}
+	if nextCredential.ExtensionTaskID != nextTask.ID {
+		t.Fatalf("expected credential linked to new task %d, got %d", nextTask.ID, nextCredential.ExtensionTaskID)
+	}
+}
+
+func TestRegisterItemRecordsRegistrationWorkflowLogWithoutSecrets(t *testing.T) {
+	repo := newRegistrationMemoryRepository()
+	item := repo.addSupportedItem()
+	writer := &registrationLogWriter{}
+	service := NewService(
+		repo,
+		suppliersapp.NewService(suppliersapp.NewMemoryRepository()),
+		extensionapp.NewService(extensionapp.NewMemoryRepository()),
+		nil,
+		plaintextCredentialCipher{},
+		nil,
+	).WithDirectRegistration(browserFallbackRegistrationAdapter()).WithDiagnostics(bizlogs.NewRecorder(writer))
+
+	credential, task, err := service.RegisterItem(context.Background(), item.ID)
+	if err != nil {
+		t.Fatalf("register item: %v", err)
+	}
+	if len(writer.inputs) < 2 {
+		t.Fatalf("expected registration logs, got %d", len(writer.inputs))
+	}
+	seenFallback := false
+	for _, input := range writer.inputs {
+		if input.Component != "admin_plus.registration" {
+			t.Fatalf("expected registration component, got %s", input.Component)
+		}
+		if strings.Contains(input.ExtraJSON, credential.Email) {
+			t.Fatalf("registration log must not contain raw email: %s", input.ExtraJSON)
+		}
+		var extra map[string]any
+		if err := json.Unmarshal([]byte(input.ExtraJSON), &extra); err != nil {
+			t.Fatalf("parse log extra: %v", err)
+		}
+		if int64(extra["registration_id"].(float64)) != credential.ID {
+			t.Fatalf("expected registration id %d in log, got %#v", credential.ID, extra["registration_id"])
+		}
+		if extra["action"] == "direct_registration_browser_fallback" {
+			seenFallback = true
+			if int64(extra["task_id"].(float64)) != task.ID {
+				t.Fatalf("expected task id %d in fallback log, got %#v", task.ID, extra["task_id"])
+			}
+		}
+	}
+	if !seenFallback {
+		t.Fatalf("expected browser fallback registration log, got %#v", writer.inputs)
+	}
+}
+
+func TestListRegistrationLogsUsesWorkflowID(t *testing.T) {
+	ctx := context.Background()
+	repo := newRegistrationMemoryRepository()
+	item := repo.addSupportedItem()
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	logReader := &registrationLogReader{
+		logs: []*opsservice.OpsSystemLog{
+			registrationSystemLog(1, "admin_plus.registration", "queued", map[string]any{"registration_id": "1", "task_id": "10"}),
+			registrationSystemLog(2, "admin_plus.extension", "old attempt cancelled", map[string]any{"registration_id": "1", "task_id": "10"}),
+			registrationSystemLog(3, "admin_plus.extension", "new attempt running", map[string]any{"registration_id": "1", "task_id": "11"}),
+			registrationSystemLog(4, "admin_plus.mail", "mail code read", map[string]any{"claim_key": "registration:1", "task_id": "11"}),
+			registrationSystemLog(5, "admin_plus.registration", "other workflow", map[string]any{"registration_id": "2", "task_id": "20"}),
+		},
+	}
+	service := NewService(
+		repo,
+		suppliersapp.NewService(suppliersapp.NewMemoryRepository()),
+		extensionService,
+		nil,
+		plaintextCredentialCipher{},
+		nil,
+	).WithDirectRegistration(browserFallbackRegistrationAdapter()).WithRegistrationLogs(logReader)
+
+	credential, _, err := service.RegisterItem(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("register item: %v", err)
+	}
+	result, err := service.ListRegistrationLogs(ctx, credential.ID, 20)
+	if err != nil {
+		t.Fatalf("list registration logs: %v", err)
+	}
+	if len(result.Items) != 5 {
+		t.Fatalf("expected workflow logs only, got %d: %#v", len(result.Items), result.Items)
+	}
+	seen := map[string]bool{}
+	for _, log := range result.Items {
+		seen[log.Message] = true
+		if log.Message == "other workflow" {
+			t.Fatalf("unexpected log from another registration workflow")
+		}
+	}
+	for _, message := range []string{"queued", "old attempt cancelled", "new attempt running", "mail code read", "注册流程当前状态"} {
+		if !seen[message] {
+			t.Fatalf("expected log message %q in workflow logs, got %#v", message, seen)
+		}
+	}
+}
+
+func TestListRegistrationLogsReturnsCurrentStatusWithoutLogReader(t *testing.T) {
+	ctx := context.Background()
+	repo := newRegistrationMemoryRepository()
+	item := repo.addSupportedItem()
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	service := NewService(
+		repo,
+		suppliersapp.NewService(suppliersapp.NewMemoryRepository()),
+		extensionService,
+		nil,
+		plaintextCredentialCipher{},
+		nil,
+	).WithDirectRegistration(browserFallbackRegistrationAdapter())
+	credential, task, err := service.RegisterItem(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("register item: %v", err)
+	}
+
+	result, err := service.ListRegistrationLogs(ctx, credential.ID, 20)
+	if err != nil {
+		t.Fatalf("list registration logs: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected one current status log, got %d", len(result.Items))
+	}
+	log := result.Items[0]
+	if log.Message != "注册流程当前状态" {
+		t.Fatalf("expected current status log, got %q", log.Message)
+	}
+	if stringFromAny(log.Extra["registration_id"]) != stringFromInt64(credential.ID) {
+		t.Fatalf("expected registration id %d in snapshot, got %#v", credential.ID, log.Extra["registration_id"])
+	}
+	if stringFromAny(log.Extra["task_id"]) != stringFromInt64(task.ID) {
+		t.Fatalf("expected task id %d in snapshot, got %#v", task.ID, log.Extra["task_id"])
 	}
 }
 
@@ -308,7 +796,7 @@ func TestProcessRegistrationTaskResultCreatesSupplierWithCredential(t *testing.T
 	item := repo.addSupportedItem()
 	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
-	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil)
+	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil).WithDirectRegistration(browserFallbackRegistrationAdapter())
 	_, task, err := service.RegisterItem(context.Background(), item.ID)
 	if err != nil {
 		t.Fatalf("register item: %v", err)
@@ -354,7 +842,7 @@ func TestProcessRegistrationTaskResultIncompleteFailsWithoutSupplier(t *testing.
 	item := repo.addSupportedItem()
 	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
-	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil)
+	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil).WithDirectRegistration(browserFallbackRegistrationAdapter())
 	_, task, err := service.RegisterItem(context.Background(), item.ID)
 	if err != nil {
 		t.Fatalf("register item: %v", err)
@@ -390,7 +878,7 @@ func TestProcessRegistrationTaskFailureMarksManualVerificationWithoutSupplier(t 
 	item := repo.addSupportedItem()
 	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
-	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil)
+	service := NewService(repo, supplierService, extensionService, nil, plaintextCredentialCipher{}, nil).WithDirectRegistration(browserFallbackRegistrationAdapter())
 	_, task, err := service.RegisterItem(context.Background(), item.ID)
 	if err != nil {
 		t.Fatalf("register item: %v", err)
@@ -423,7 +911,7 @@ func TestReadTaskRegistrationVerificationCodeUsesLeasedTaskAndRegistrationEmail(
 	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
 	mailReader := &fakeRegistrationMailReader{}
-	service := NewService(repo, supplierService, extensionService, mailReader, plaintextCredentialCipher{}, nil)
+	service := NewService(repo, supplierService, extensionService, mailReader, plaintextCredentialCipher{}, nil).WithDirectRegistration(browserFallbackRegistrationAdapter())
 	_, task, err := service.RegisterItem(ctx, item.ID)
 	if err != nil {
 		t.Fatalf("register item: %v", err)
@@ -464,8 +952,12 @@ func TestReadTaskRegistrationVerificationCodeUsesLeasedTaskAndRegistrationEmail(
 	if mailReader.lastInput.Email != "ops@example.com" {
 		t.Fatalf("expected registration email, got %q", mailReader.lastInput.Email)
 	}
-	if mailReader.lastInput.ClaimKey != "registration_task:"+stringFromInt64(task.ID) {
-		t.Fatalf("expected task claim key, got %q", mailReader.lastInput.ClaimKey)
+	credential, _, err := repo.GetRegistrationCredentialByTaskID(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("get registration credential: %v", err)
+	}
+	if mailReader.lastInput.ClaimKey != registrationClaimKey(credential.ID) {
+		t.Fatalf("expected registration claim key, got %q", mailReader.lastInput.ClaimKey)
 	}
 	if mailReader.lastInput.To != "ops@example.com" {
 		t.Fatalf("expected Gmail recipient filter to use registration email, got %q", mailReader.lastInput.To)
@@ -481,7 +973,7 @@ func TestReadTaskRegistrationVerificationCodeRejectsWrongLease(t *testing.T) {
 	item := repo.addSupportedItem()
 	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
-	service := NewService(repo, supplierService, extensionService, &fakeRegistrationMailReader{}, plaintextCredentialCipher{}, nil)
+	service := NewService(repo, supplierService, extensionService, &fakeRegistrationMailReader{}, plaintextCredentialCipher{}, nil).WithDirectRegistration(browserFallbackRegistrationAdapter())
 	_, task, err := service.RegisterItem(ctx, item.ID)
 	if err != nil {
 		t.Fatalf("register item: %v", err)
@@ -515,6 +1007,39 @@ func (r *fakeRegistrationMailReader) ReadVerificationCodeForEmail(_ context.Cont
 	}, nil
 }
 
+type fakeDirectRegistrationAdapter struct {
+	inputs    []ports.DirectRegistrationInput
+	results   []*ports.DirectRegistrationResult
+	errs      []error
+	alwaysErr error
+}
+
+func browserFallbackRegistrationAdapter() *fakeDirectRegistrationAdapter {
+	return &fakeDirectRegistrationAdapter{
+		alwaysErr: infraerrors.New(http.StatusConflict, "BROWSER_FALLBACK_REQUIRED", "browser registration fallback required"),
+	}
+}
+
+func (a *fakeDirectRegistrationAdapter) RegisterAccount(_ context.Context, in ports.DirectRegistrationInput) (*ports.DirectRegistrationResult, error) {
+	a.inputs = append(a.inputs, in)
+	index := len(a.inputs) - 1
+	if a.alwaysErr != nil {
+		return nil, a.alwaysErr
+	}
+	if index < len(a.errs) && a.errs[index] != nil {
+		return nil, a.errs[index]
+	}
+	if index < len(a.results) && a.results[index] != nil {
+		return a.results[index], nil
+	}
+	return &ports.DirectRegistrationResult{
+		ProviderType: in.ProviderType,
+		Stage:        ports.DirectRegistrationStageCompleted,
+		Submitted:    true,
+		CapturedAt:   time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC),
+	}, nil
+}
+
 func ptrRegistrationTime(value time.Time) *time.Time {
 	return &value
 }
@@ -527,6 +1052,76 @@ func (plaintextCredentialCipher) Encrypt(plaintext string) (string, error) {
 
 func (plaintextCredentialCipher) Decrypt(ciphertext string) (string, error) {
 	return ciphertext, nil
+}
+
+type registrationLogWriter struct {
+	inputs []*opsservice.OpsInsertSystemLogInput
+}
+
+func (w *registrationLogWriter) BatchInsertSystemLogs(_ context.Context, inputs []*opsservice.OpsInsertSystemLogInput) (int64, error) {
+	w.inputs = append(w.inputs, inputs...)
+	return int64(len(inputs)), nil
+}
+
+type registrationLogReader struct {
+	logs []*opsservice.OpsSystemLog
+}
+
+func (r *registrationLogReader) ListSystemLogs(_ context.Context, filter *opsservice.OpsSystemLogFilter) (*opsservice.OpsSystemLogList, error) {
+	out := make([]*opsservice.OpsSystemLog, 0)
+	for _, log := range r.logs {
+		if log == nil || filter == nil {
+			continue
+		}
+		if filter.Component != "" && log.Component != filter.Component {
+			continue
+		}
+		if !logMatchesExtraEquals(log, filter.ExtraEquals) {
+			continue
+		}
+		out = append(out, log)
+	}
+	return &opsservice.OpsSystemLogList{
+		Logs:     out,
+		Total:    len(out),
+		Page:     firstPositiveInt(filter.Page, 1),
+		PageSize: firstPositiveInt(filter.PageSize, len(out)),
+	}, nil
+}
+
+func registrationSystemLog(id int64, component string, message string, extra map[string]any) *opsservice.OpsSystemLog {
+	return &opsservice.OpsSystemLog{
+		ID:        id,
+		CreatedAt: time.Date(2026, 6, 25, 12, 0, int(id), 0, time.UTC),
+		Level:     bizlogs.LevelInfo,
+		Component: component,
+		Message:   message,
+		Extra:     extra,
+	}
+}
+
+func logMatchesExtraEquals(log *opsservice.OpsSystemLog, expected map[string]string) bool {
+	for key, value := range expected {
+		if log == nil || log.Extra == nil {
+			return false
+		}
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		if stringFromAny(log.Extra[key]) != value {
+			return false
+		}
+	}
+	return true
+}
+
+func firstPositiveInt(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 type registrationMemoryRepository struct {
@@ -609,11 +1204,63 @@ func (r *registrationMemoryRepository) UpsertItem(_ context.Context, item *admin
 func (r *registrationMemoryRepository) GetItem(_ context.Context, id int64) (*adminplusdomain.SiteDiscoveryItem, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return cloneRegistrationItem(r.items[id]), nil
+	return r.applyRegistrationLocked(cloneRegistrationItem(r.items[id])), nil
 }
 
-func (r *registrationMemoryRepository) ListItems(context.Context, ListFilter) ([]*adminplusdomain.SiteDiscoveryItem, error) {
-	return nil, nil
+func (r *registrationMemoryRepository) ListItems(_ context.Context, filter ListFilter) ([]*adminplusdomain.SiteDiscoveryItem, error) {
+	return r.listItems(filter, false), nil
+}
+
+func (r *registrationMemoryRepository) ListRegistrationRecords(_ context.Context, filter ListFilter) ([]*RegistrationRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	records := make([]*RegistrationRecord, 0, len(r.credentials))
+	for _, credential := range r.credentials {
+		if credential == nil {
+			continue
+		}
+		item := cloneRegistrationItem(r.items[credential.DiscoveryID])
+		if item == nil {
+			continue
+		}
+		if filter.ProviderType != "" && item.ProviderType != filter.ProviderType {
+			continue
+		}
+		if filter.RegistrationStatus != "" && credential.Status != filter.RegistrationStatus {
+			continue
+		}
+		records = append(records, &RegistrationRecord{
+			Credential: cloneRegistrationCredential(credential),
+			Item:       item,
+		})
+	}
+	if filter.Limit > 0 && len(records) > filter.Limit {
+		records = records[:filter.Limit]
+	}
+	return records, nil
+}
+
+func (r *registrationMemoryRepository) listItems(filter ListFilter, onlyRegistration bool) []*adminplusdomain.SiteDiscoveryItem {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*adminplusdomain.SiteDiscoveryItem, 0, len(r.items))
+	for _, item := range r.items {
+		cp := r.applyRegistrationLocked(cloneRegistrationItem(item))
+		if onlyRegistration && cp.RegistrationStatus == "" {
+			continue
+		}
+		if filter.ProviderType != "" && cp.ProviderType != filter.ProviderType {
+			continue
+		}
+		if filter.RegistrationStatus != "" && cp.RegistrationStatus != filter.RegistrationStatus {
+			continue
+		}
+		out = append(out, cp)
+	}
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out
 }
 
 func (r *registrationMemoryRepository) LinkSupplier(_ context.Context, itemID int64, supplierID int64) (*adminplusdomain.SiteDiscoveryItem, error) {
@@ -651,6 +1298,22 @@ func (r *registrationMemoryRepository) UpdateRegistrationTask(_ context.Context,
 	cp := cloneRegistrationCredential(r.credentials[credentialID])
 	cp.ExtensionTaskID = taskID
 	cp.Status = status
+	cp.ErrorCode = ""
+	cp.ErrorMessage = ""
+	cp.LastAttemptAt = &attemptedAt
+	r.credentials[credentialID] = cp
+	return cloneRegistrationCredential(cp), nil
+}
+
+func (r *registrationMemoryRepository) StartRegistrationAttempt(_ context.Context, credentialID int64, attemptedAt time.Time) (*adminplusdomain.SupplierRegistrationCredential, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := cloneRegistrationCredential(r.credentials[credentialID])
+	cp.ExtensionTaskID = 0
+	cp.Status = adminplusdomain.SupplierRegistrationStatusRunning
+	cp.VerificationStatus = ""
+	cp.ErrorCode = ""
+	cp.ErrorMessage = ""
 	cp.LastAttemptAt = &attemptedAt
 	r.credentials[credentialID] = cp
 	return cloneRegistrationCredential(cp), nil
@@ -661,6 +1324,27 @@ func (r *registrationMemoryRepository) GetRegistrationCredentialByTaskID(_ conte
 	defer r.mu.Unlock()
 	for _, credential := range r.credentials {
 		if credential.ExtensionTaskID == taskID {
+			return cloneRegistrationCredential(credential), cloneRegistrationItem(r.items[credential.DiscoveryID]), nil
+		}
+	}
+	return nil, nil, nil
+}
+
+func (r *registrationMemoryRepository) GetRegistrationCredential(_ context.Context, credentialID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.SiteDiscoveryItem, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	credential := cloneRegistrationCredential(r.credentials[credentialID])
+	if credential == nil {
+		return nil, nil, nil
+	}
+	return credential, cloneRegistrationItem(r.items[credential.DiscoveryID]), nil
+}
+
+func (r *registrationMemoryRepository) GetRegistrationCredentialByDiscoveryID(_ context.Context, discoveryID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.SiteDiscoveryItem, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, credential := range r.credentials {
+		if credential.DiscoveryID == discoveryID {
 			return cloneRegistrationCredential(credential), cloneRegistrationItem(r.items[credential.DiscoveryID]), nil
 		}
 	}
@@ -684,6 +1368,24 @@ func (r *registrationMemoryRepository) CompleteRegistration(_ context.Context, c
 
 func (r *registrationMemoryRepository) ListRecommendations(context.Context, float64, int) ([]*adminplusdomain.SiteDiscoveryRecommendation, error) {
 	return nil, nil
+}
+
+func (r *registrationMemoryRepository) applyRegistrationLocked(item *adminplusdomain.SiteDiscoveryItem) *adminplusdomain.SiteDiscoveryItem {
+	if item == nil {
+		return nil
+	}
+	for _, credential := range r.credentials {
+		if credential.DiscoveryID != item.ID {
+			continue
+		}
+		item.SupplierID = credential.SupplierID
+		item.RegistrationStatus = credential.Status
+		item.RegistrationTaskID = credential.ExtensionTaskID
+		item.RegistrationEmail = credential.Email
+		item.RegistrationErrorCode = credential.ErrorCode
+		item.RegistrationErrorMessage = credential.ErrorMessage
+	}
+	return item
 }
 
 func cloneRegistrationItem(in *adminplusdomain.SiteDiscoveryItem) *adminplusdomain.SiteDiscoveryItem {

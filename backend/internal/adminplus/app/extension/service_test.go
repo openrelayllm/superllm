@@ -2,12 +2,15 @@ package extension
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -152,6 +155,84 @@ func TestServiceFailTaskRetriesUntilMaxAttempts(t *testing.T) {
 	require.NotNil(t, failedFinal.FinishedAt)
 }
 
+func TestServiceFailTaskRecordsDiagnosticsWithoutLeaseToken(t *testing.T) {
+	repo := NewMemoryRepository()
+	writer := &extensionLogWriter{}
+	svc := NewService(repo).WithDiagnostics(bizlogs.NewRecorder(writer))
+	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return now }
+	svc.newToken = func() (string, error) { return "lease-token", nil }
+	_, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		SupplierID:  1,
+		Type:        adminplusdomain.ExtensionTaskTypeFetchAnnouncements,
+		MaxAttempts: 1,
+	})
+	require.NoError(t, err)
+	task, err := svc.ClaimTask(context.Background(), ClaimTaskInput{DeviceID: "chrome-1"})
+	require.NoError(t, err)
+
+	failed, err := svc.FailTask(context.Background(), FailTaskInput{
+		TaskID:       task.ID,
+		DeviceID:     "chrome-1",
+		LeaseToken:   "lease-token",
+		ErrorCode:    "LOGIN_FAILED",
+		ErrorMessage: "login failed",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, adminplusdomain.ExtensionTaskStatusFailed, failed.Status)
+	require.Len(t, writer.inputs, 1)
+	input := writer.inputs[0]
+	require.Equal(t, "admin_plus.extension", input.Component)
+	require.NotContains(t, input.ExtraJSON, "lease-token")
+	var extra map[string]any
+	require.NoError(t, json.Unmarshal([]byte(input.ExtraJSON), &extra))
+	require.Equal(t, "task_reported_failure", extra["action"])
+	require.Equal(t, "failed", extra["outcome"])
+	require.Equal(t, "LOGIN_FAILED", extra["reason"])
+	require.Equal(t, float64(task.ID), extra["task_id"])
+	require.Equal(t, true, extra["final_failure"])
+}
+
+func TestServiceCancelTaskMarksAttemptCancelledAndClearsLease(t *testing.T) {
+	repo := NewMemoryRepository()
+	writer := &extensionLogWriter{}
+	svc := NewService(repo).WithDiagnostics(bizlogs.NewRecorder(writer))
+	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return now }
+	svc.newToken = func() (string, error) { return "lease-token", nil }
+	_, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		SupplierID: 0,
+		Type:       adminplusdomain.ExtensionTaskTypeRegisterSupplier,
+		Payload:    map[string]any{"discovery_id": int64(7), "registration_id": int64(9)},
+	})
+	require.NoError(t, err)
+	task, err := svc.ClaimTask(context.Background(), ClaimTaskInput{
+		DeviceID: "chrome-1",
+		Types:    []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeRegisterSupplier},
+		LeaseTTL: time.Minute,
+	})
+	require.NoError(t, err)
+
+	cancelled, err := svc.CancelTask(context.Background(), CancelTaskInput{
+		TaskID: task.ID,
+		Reason: "REGISTRATION_RERUN_REQUESTED",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, adminplusdomain.ExtensionTaskStatusCancelled, cancelled.Status)
+	require.Empty(t, cancelled.LeaseToken)
+	require.NotNil(t, cancelled.FinishedAt)
+	require.Len(t, writer.inputs, 1)
+	require.NotContains(t, writer.inputs[0].ExtraJSON, "lease-token")
+	var extra map[string]any
+	require.NoError(t, json.Unmarshal([]byte(writer.inputs[0].ExtraJSON), &extra))
+	require.Equal(t, "cancel_task", extra["action"])
+	require.Equal(t, "cancelled", extra["outcome"])
+	require.Equal(t, float64(7), extra["discovery_id"])
+	require.Equal(t, float64(9), extra["registration_id"])
+}
+
 func TestServiceClaimTaskValidatesInput(t *testing.T) {
 	svc := NewService(NewMemoryRepository())
 
@@ -213,4 +294,13 @@ type stubBrowserCredentialProvider struct {
 func (p *stubBrowserCredentialProvider) GetBrowserCredential(_ context.Context, supplierID int64) (*adminplusdomain.SupplierBrowserCredential, error) {
 	p.requestedSupplierID = supplierID
 	return p.credential, nil
+}
+
+type extensionLogWriter struct {
+	inputs []*service.OpsInsertSystemLogInput
+}
+
+func (w *extensionLogWriter) BatchInsertSystemLogs(_ context.Context, inputs []*service.OpsInsertSystemLogInput) (int64, error) {
+	w.inputs = append(w.inputs, inputs...)
+	return int64(len(inputs)), nil
 }

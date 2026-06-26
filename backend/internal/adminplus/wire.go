@@ -7,6 +7,7 @@ import (
 	actionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
 	announcementsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/announcements"
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
+	bizlogsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	channelchecksapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/channelchecks"
 	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
@@ -14,6 +15,7 @@ import (
 	mailverificationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
 	notificationsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
 	provisionjobsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/provisionjobs"
+	proxyapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/proxy"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	schedulerapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
@@ -25,16 +27,24 @@ import (
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	usagecostsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/wire"
 )
+
+func ProvideBusinessLogRecorder(repo service.OpsRepository) *bizlogsapp.Recorder {
+	return bizlogsapp.NewRecorder(repo)
+}
 
 var ProviderSet = wire.NewSet(
 	sub2apiprovider.ProvideHTTPClient,
 	sub2apiprovider.NewSessionProfileClient,
 	newapiprovider.NewClient,
 	providerrouter.New,
+	ProvideBusinessLogRecorder,
+	wire.Bind(new(mailverificationapp.EmailSender), new(*service.EmailService)),
 	wire.Bind(new(ports.SessionProbeAdapter), new(*providerrouter.Router)),
 	wire.Bind(new(ports.SessionLoginAdapter), new(*providerrouter.Router)),
+	wire.Bind(new(ports.DirectRegistrationAdapter), new(*providerrouter.Router)),
 	wire.Bind(new(ports.SessionChannelMonitorAdapter), new(*providerrouter.Router)),
 	wire.Bind(new(ports.SessionGroupAdapter), new(*providerrouter.Router)),
 	wire.Bind(new(ports.SessionRateAdapter), new(*providerrouter.Router)),
@@ -50,6 +60,7 @@ var ProviderSet = wire.NewSet(
 	costsapp.ProviderSet,
 	extensionapp.ProviderSet,
 	wire.Bind(new(extensionapp.RegistrationResultProcessor), new(*sitediscoveryapp.RegistrationProcessor)),
+	wire.Bind(new(sitediscoveryapp.ProxyManager), new(*proxyapp.Service)),
 	wire.Bind(new(extensionapp.BrowserCredentialProvider), new(*suppliersapp.Service)),
 	wire.Bind(new(balancesapp.SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(sessionsapp.SupplierLookup), new(*suppliersapp.Service)),
@@ -81,6 +92,7 @@ var ProviderSet = wire.NewSet(
 	announcementsapp.ProviderSet,
 	ratesapp.ProviderSet,
 	provisionjobsapp.ProviderSet,
+	proxyapp.ProviderSet,
 	schedulerapp.ProviderSet,
 	sessionsapp.ProviderSet,
 	sitecatalogapp.ProviderSet,

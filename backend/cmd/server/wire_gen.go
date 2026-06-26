@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/announcements"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/channelchecks"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
@@ -22,6 +23,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/provisionjobs"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/proxy"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
@@ -113,6 +115,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	groupService := service.NewGroupService(groupRepository, apiKeyAuthCacheInvalidator)
 	groupHandler := handler.ProvideAdminGroupHandler(groupService)
 	opsRepository := repository.NewOpsRepository(db)
+	businessLogRecorder := bizlogs.NewRecorder(opsRepository)
 	schedulerCache := repository.ProvideSchedulerCache(redisClient, configConfig)
 	accountRepository := repository.NewAccountRepository(client, db, schedulerCache)
 	concurrencyCache := repository.ProvideConcurrencyCache(redisClient, configConfig)
@@ -141,7 +144,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	sessionProfileClient := provider.NewSessionProfileClient(httpClient)
 	providerClient := provider2.NewClient(httpClient)
 	router := providerrouter.New(sessionProfileClient, providerClient)
-	sessionsService := sessions.ProvideService(sessionsSQLRepository, cipher, suppliersService, router, router, router)
+	sessionsService := sessions.ProvideService(sessionsSQLRepository, cipher, suppliersService, router, router, router, businessLogRecorder)
 	suppliergroupsService := suppliergroups.NewService(suppliergroupsSQLRepository, sessionsService, router)
 	provisionjobsSQLRepository := provisionjobs.NewSQLRepository(db)
 	streamPublisher := provisionjobs.NewStreamPublisher(redisClient)
@@ -160,6 +163,12 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
+	proxyRuntimeConfig := proxy.RuntimeConfigFromConfig(configConfig)
+	proxyRuntime := proxy.NewLocalMihomoRuntime(proxyRuntimeConfig)
+	proxySQLRepository := proxy.NewSQLRepository(db)
+	subscriptionNormalizer := proxy.NewSubscriptionNormalizer()
+	proxySecretCipher := proxy.UseSecretCipher(secretEncryptor)
+	proxyService := proxy.NewService(proxySQLRepository, proxySecretCipher, subscriptionNormalizer, proxyRuntime, proxyRuntimeConfig)
 	billingService := service.NewBillingService(configConfig, pricingService)
 	geminiQuotaService := service.NewGeminiQuotaService(configConfig, settingRepository)
 	tempUnschedCache := repository.NewTempUnschedCache(redisClient)
@@ -192,14 +201,14 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	googleOAuthSettingsProvider := mailverification.NewGoogleOAuthSettingsProvider(settingService)
 	gmailProvider := mailverification.NewGmailProvider(httpClient, googleOAuthSettingsProvider)
 	defaultTemplateClassifier := mailverification.NewDefaultTemplateClassifier()
-	mailVerificationService := mailverification.NewService(mailVerificationSQLRepository, gmailProvider, defaultTemplateClassifier, emailService)
+	mailVerificationService := mailverification.ProvideService(mailVerificationSQLRepository, gmailProvider, defaultTemplateClassifier, emailService, businessLogRecorder)
 	feishuNotifier := costs.NewFeishuNotifier(notificationsService)
 	usagecostsSQLRepository := usagecosts.NewSQLRepository(db)
 	usagecostsService := usagecosts.NewServiceWithDependencies(usagecostsSQLRepository, sessionsService, router)
 	balancesSQLRepository := balances.NewSQLRepository(db)
 	balancesFeishuNotifier := balances.NewFeishuNotifier(notificationsService)
 	balanceCache := repository.NewAdminPlusBalanceCache(redisClient)
-	balancesService := balances.NewServiceWithCurrentCache(balancesSQLRepository, balancesFeishuNotifier, sessionsService, router, balanceCache)
+	balancesService := balances.ProvideService(balancesSQLRepository, balancesFeishuNotifier, sessionsService, router, balanceCache, businessLogRecorder)
 	costsService := costs.NewServiceWithDependenciesAndNotifier(costsSQLRepository, feishuNotifier, sessionsService, router, router, usagecostsService, balancesService, suppliersService)
 	channelchecksSQLRepository := channelchecks.NewSQLRepository(db)
 	healthSQLRepository := health.NewSQLRepository(db)
@@ -228,11 +237,11 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	sessionCipher := extension.UseSessionCipher(secretEncryptor)
 	sitediscoverySQLRepository := sitediscovery.NewSQLRepository(db)
 	sitediscoveryCredentialCipher := sitediscovery.UseCredentialCipher(secretEncryptor)
-	registrationProcessor := sitediscovery.NewRegistrationProcessor(sitediscoverySQLRepository, suppliersService, sitediscoveryCredentialCipher)
+	registrationProcessor := sitediscovery.ProvideRegistrationProcessor(sitediscoverySQLRepository, suppliersService, sitediscoveryCredentialCipher, businessLogRecorder, proxyService)
 	ingestProcessor := extension.NewIngestProcessorWithCipher(ratesService, balancesService, announcementsService, healthService, usagecostsService, sessionsService, sessionCipher, registrationProcessor)
-	extensionService := extension.NewServiceWithDependencies(extensionSQLRepository, ingestProcessor, suppliersService)
+	extensionService := extension.ProvideService(extensionSQLRepository, ingestProcessor, suppliersService, businessLogRecorder)
 	extensionHandler := adminplus.NewExtensionHandler(extensionService, suppliersService)
-	sitediscoveryService := sitediscovery.NewService(sitediscoverySQLRepository, suppliersService, extensionService, mailVerificationService, sitediscoveryCredentialCipher, httpClient)
+	sitediscoveryService := sitediscovery.ProvideService(sitediscoverySQLRepository, suppliersService, extensionService, mailVerificationService, router, sitediscoveryCredentialCipher, httpClient, businessLogRecorder, opsService, proxyService)
 	siteDiscoveryHandler := adminplus.NewSiteDiscoveryHandler(sitediscoveryService)
 	sitecatalogSQLRepository := sitecatalog.NewSQLRepository(db)
 	sitecatalogService := sitecatalog.NewService(sitecatalogSQLRepository)
@@ -249,6 +258,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	sub2APIRedis := sub2api.ProvideReadRedis(redisClient, configConfig)
 	runtimeRepository := sub2api.NewRuntimeRepository(readDB, sub2APIRedis)
 	sub2apiService := sub2api.NewService(sub2apiSQLRepository, runtimeRepository)
+	proxyHandler := adminplus.NewProxyHandler(proxyService)
 	geminiOAuthClient := repository.NewGeminiOAuthClient(configConfig)
 	geminiCliCodeAssistClient := repository.NewGeminiCliCodeAssistClient()
 	driveClient := repository.NewGeminiDriveClient()
@@ -266,7 +276,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	tlsFingerprintProfileService := service.NewTLSFingerprintProfileService(tlsFingerprintProfileRepository, tlsFingerprintProfileCache)
 	accountTestService := service.NewAccountTestService(accountRepository, geminiTokenProvider, claudeTokenProvider, antigravityGatewayService, httpUpstream, configConfig, tlsFingerprintProfileService)
 	sub2APIHandler := adminplus.NewSub2APIHandlerWithAccountTest(sub2apiService, accountTestService)
-	adminPlusHandlers := handler.ProvideAdminPlusHandlers(supplierHandler, supplierGroupHandler, supplierKeyHandler, provisionJobHandler, rateHandler, balanceHandler, announcementHandler, healthHandler, notificationHandler, usageCostHandler, costHandler, channelCheckHandler, extensionHandler, siteDiscoveryHandler, siteCatalogHandler, mailVerificationHandler, sessionHandler, schedulerHandler, actionHandler, sub2APIHandler)
+	adminPlusHandlers := handler.ProvideAdminPlusHandlers(supplierHandler, supplierGroupHandler, supplierKeyHandler, provisionJobHandler, rateHandler, balanceHandler, announcementHandler, healthHandler, notificationHandler, usageCostHandler, costHandler, channelCheckHandler, extensionHandler, siteDiscoveryHandler, siteCatalogHandler, mailVerificationHandler, sessionHandler, schedulerHandler, actionHandler, sub2APIHandler, proxyHandler)
 	handlerSettingHandler := handler.ProvideSettingHandler(settingService, buildInfo, notificationEmailService)
 	handlers := handler.ProvideHandlers(authHandler, adminHandlers, adminPlusHandlers, handlerSettingHandler)
 	jwtAuthMiddleware := middleware.NewJWTAuthMiddleware(authService, userService)

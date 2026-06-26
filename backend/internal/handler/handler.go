@@ -36,6 +36,7 @@ type AdminPlusHandlers struct {
 	Scheduler        *adminplushandler.SchedulerHandler
 	Action           *adminplushandler.ActionHandler
 	Sub2API          *adminplushandler.Sub2APIHandler
+	Proxy            *adminplushandler.ProxyHandler
 }
 
 // Handlers contains all HTTP handlers

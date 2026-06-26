@@ -47,6 +47,7 @@ func ProvideAdminPlusHandlers(
 	schedulerHandler *adminplushandler.SchedulerHandler,
 	actionHandler *adminplushandler.ActionHandler,
 	sub2apiHandler *adminplushandler.Sub2APIHandler,
+	proxyHandler *adminplushandler.ProxyHandler,
 ) *AdminPlusHandlers {
 	return &AdminPlusHandlers{
 		Supplier:         supplierHandler,
@@ -69,6 +70,7 @@ func ProvideAdminPlusHandlers(
 		Scheduler:        schedulerHandler,
 		Action:           actionHandler,
 		Sub2API:          sub2apiHandler,
+		Proxy:            proxyHandler,
 	}
 }
 
@@ -141,6 +143,7 @@ var ProviderSet = wire.NewSet(
 	adminplushandler.NewSchedulerHandler,
 	adminplushandler.NewActionHandler,
 	adminplushandler.NewSub2APIHandlerWithAccountTest,
+	adminplushandler.NewProxyHandler,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,

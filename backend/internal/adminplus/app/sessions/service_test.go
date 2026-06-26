@@ -3,12 +3,17 @@ package sessions
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -120,6 +125,55 @@ func TestServiceLoginSupportsNewAPI(t *testing.T) {
 	require.NotContains(t, result.Session.SessionBundleCiphertext, "signed-session")
 }
 
+func TestServiceLoginPreservesSecretsAndNormalizesOrigin(t *testing.T) {
+	repo := NewMemoryRepository()
+	supplier := &sessionTestSupplierLookup{supplier: &adminplusdomain.Supplier{
+		ID:           7,
+		Name:         "Relay",
+		Type:         adminplusdomain.SupplierTypeSub2API,
+		DashboardURL: "https://relay.example.com/login",
+		APIBaseURL:   "https://relay.example.com/api/v1",
+		Credential: adminplusdomain.SupplierCredentialStatus{
+			BrowserLoginEnabled:            true,
+			BrowserLoginUsernameConfigured: true,
+			BrowserLoginPasswordConfigured: true,
+			BrowserLoginTokenConfigured:    true,
+		},
+	}, credential: &adminplusdomain.SupplierBrowserCredential{
+		SupplierID:   7,
+		SupplierName: "Relay",
+		Type:         adminplusdomain.SupplierTypeSub2API,
+		DashboardURL: "https://relay.example.com/login",
+		APIBaseURL:   "https://relay.example.com/api/v1",
+		Username:     "ops@example.com",
+		Password:     " secret-with-spaces ",
+		Token:        " token-with-spaces ",
+	}}
+	login := &sessionTestLoginAdapter{result: &ports.DirectLoginResult{
+		SupplierID: 7,
+		Origin:     "https://relay.example.com",
+		APIBaseURL: "https://relay.example.com/api/v1",
+		SessionBundle: map[string]any{
+			"origin":         "https://relay.example.com",
+			"api_base_url":   "https://relay.example.com/api/v1",
+			"access_token":   "direct-access-token",
+			"session_source": "direct_login",
+			"context":        map[string]any{"login_method": "direct_login"},
+			"tokens":         map[string]any{"access_token": "direct-access-token"},
+		},
+		CapturedAt: time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC),
+	}}
+	svc := NewServiceWithDependencies(repo, sessionTestCipher{}, supplier, nil, login)
+
+	_, err := svc.Login(context.Background(), LoginInput{SupplierID: 7})
+
+	require.NoError(t, err)
+	require.Equal(t, "ops@example.com", login.input.Username)
+	require.Equal(t, " secret-with-spaces ", login.input.Password)
+	require.Equal(t, " token-with-spaces ", login.input.Token)
+	require.Equal(t, "https://relay.example.com", login.input.Origin)
+}
+
 func TestServiceDecryptedProbeInputReportsDecryptFailure(t *testing.T) {
 	repo := NewMemoryRepository()
 	supplier := &sessionTestSupplierLookup{supplier: &adminplusdomain.Supplier{
@@ -145,6 +199,52 @@ func TestServiceDecryptedProbeInputReportsDecryptFailure(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "SUPPLIER_SESSION_DECRYPT_FAILED")
 	require.NotContains(t, err.Error(), "stale-ciphertext")
+}
+
+func TestServiceLoginFailureRecordsDiagnostics(t *testing.T) {
+	repo := NewMemoryRepository()
+	supplier := &sessionTestSupplierLookup{supplier: &adminplusdomain.Supplier{
+		ID:           7,
+		Name:         "Relay",
+		Type:         adminplusdomain.SupplierTypeSub2API,
+		DashboardURL: "https://relay.example.com",
+		APIBaseURL:   "https://relay.example.com/api/v1",
+	}}
+	loginErr := infraerrors.New(http.StatusUnauthorized, "LOGIN_CREDENTIAL_INVALID", "supplier direct login credential is invalid").
+		WithMetadata(map[string]string{
+			"endpoint":     "https://supplier.example/api/v1/auth/login",
+			"status_code":  "401",
+			"content_type": "application/json",
+			"body_type":    "json",
+			"body_excerpt": `{"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}`,
+		})
+	writer := &sessionLogWriter{}
+	svc := NewServiceWithDependencies(repo, sessionTestCipher{}, supplier, nil, &sessionTestLoginAdapter{err: loginErr}).
+		WithDiagnostics(bizlogs.NewRecorder(writer))
+
+	result, err := svc.Login(context.Background(), LoginInput{
+		SupplierID: 7,
+		Username:   "ops@example.com",
+		Password:   "secret",
+	})
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Len(t, writer.inputs, 1)
+	input := writer.inputs[0]
+	require.Equal(t, "warn", input.Level)
+	require.Equal(t, "admin_plus.login", input.Component)
+	require.NotContains(t, input.ExtraJSON, "secret")
+	var extra map[string]any
+	require.NoError(t, json.Unmarshal([]byte(input.ExtraJSON), &extra))
+	require.Equal(t, "direct_login", extra["action"])
+	require.Equal(t, "failed", extra["outcome"])
+	require.Equal(t, "LOGIN_CREDENTIAL_INVALID", extra["reason"])
+	require.Equal(t, "https://supplier.example/api/v1/auth/login", extra["endpoint"])
+	require.Equal(t, float64(401), extra["status_code"])
+	require.Equal(t, "Relay", extra["supplier_name"])
+	require.Equal(t, "sub2api", extra["provider_type"])
+	require.Contains(t, extra["body_excerpt"], "INVALID_CREDENTIALS")
 }
 
 type sessionTestSupplierLookup struct {
@@ -207,4 +307,13 @@ func (failingSessionCipher) Encrypt(plaintext string) (string, error) {
 
 func (failingSessionCipher) Decrypt(string) (string, error) {
 	return "", errors.New("decrypt: message authentication failed")
+}
+
+type sessionLogWriter struct {
+	inputs []*service.OpsInsertSystemLogInput
+}
+
+func (w *sessionLogWriter) BatchInsertSystemLogs(_ context.Context, inputs []*service.OpsInsertSystemLogInput) (int64, error) {
+	w.inputs = append(w.inputs, inputs...)
+	return int64(len(inputs)), nil
 }

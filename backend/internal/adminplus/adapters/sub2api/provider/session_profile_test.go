@@ -160,7 +160,7 @@ func TestSessionProfileClientDirectLogin(t *testing.T) {
 			var payload map[string]any
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
 			require.Equal(t, "ops@example.com", payload["email"])
-			require.Equal(t, "secret", payload["password"])
+			require.Equal(t, " secret ", payload["password"])
 			require.Equal(t, "rev-1", payload["login_agreement_revision"])
 			require.Equal(t, "rev-1", payload["loginAgreementRevision"])
 			require.Equal(t, true, payload["agreement_accepted"])
@@ -187,7 +187,7 @@ func TestSessionProfileClientDirectLogin(t *testing.T) {
 		Origin:     server.URL,
 		APIBaseURL: server.URL,
 		Username:   "ops@example.com",
-		Password:   "secret",
+		Password:   " secret ",
 	})
 
 	require.NoError(t, err)
@@ -205,6 +205,83 @@ func TestSessionProfileClientDirectLogin(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "direct_login", contextValue["login_method"])
 	require.NotNil(t, result.ExpiresAt)
+}
+
+func TestSessionProfileClientRegisterAccountDirectSuccess(t *testing.T) {
+	var sawSettings bool
+	var sawRegister bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/settings/public":
+			require.Equal(t, http.MethodGet, r.Method)
+			sawSettings = true
+			_, _ = w.Write([]byte(`{"data":{"registration_enabled":true,"email_verification_enabled":false,"turnstile_enabled":false}}`))
+		case "/api/v1/auth/register":
+			require.Equal(t, http.MethodPost, r.Method)
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			require.Equal(t, "ops@example.com", payload["email"])
+			require.Equal(t, " secret ", payload["password"])
+			require.Equal(t, "", payload["verify_code"])
+			sawRegister = true
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"registered-access-token","refresh_token":"refresh-token","expires_in":3600}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSessionProfileClient(server.Client())
+	result, err := client.RegisterAccount(context.Background(), ports.DirectRegistrationInput{
+		ProviderType: adminplusdomain.SupplierTypeSub2API,
+		Origin:       server.URL + "/register",
+		APIBaseURL:   server.URL,
+		Email:        "ops@example.com",
+		Password:     " secret ",
+	})
+
+	require.NoError(t, err)
+	require.True(t, sawSettings)
+	require.True(t, sawRegister)
+	require.Equal(t, ports.DirectRegistrationStageCompleted, result.Stage)
+	require.True(t, result.Submitted)
+	require.Equal(t, "registered-access-token", result.SessionBundle["access_token"])
+}
+
+func TestSessionProfileClientRegisterAccountRequestsEmailVerificationCode(t *testing.T) {
+	var sawVerifyCode bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/settings/public":
+			_, _ = w.Write([]byte(`{"data":{"registration_enabled":true,"email_verification_enabled":true,"turnstile_enabled":false}}`))
+		case "/api/v1/auth/send-verify-code":
+			require.Equal(t, http.MethodPost, r.Method)
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			require.Equal(t, "ops@example.com", payload["email"])
+			sawVerifyCode = true
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"countdown":60}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSessionProfileClient(server.Client())
+	result, err := client.RegisterAccount(context.Background(), ports.DirectRegistrationInput{
+		ProviderType: adminplusdomain.SupplierTypeSub2API,
+		Origin:       server.URL,
+		APIBaseURL:   server.URL,
+		Email:        "ops@example.com",
+		Password:     "secret",
+	})
+
+	require.NoError(t, err)
+	require.True(t, sawVerifyCode)
+	require.Equal(t, ports.DirectRegistrationStageNeedEmailCode, result.Stage)
+	require.True(t, result.EmailCodeRequired)
 }
 
 func TestSessionProfileClientDirectLoginUsesBrowserUAWhenLegacyAdapterUAIsRejected(t *testing.T) {

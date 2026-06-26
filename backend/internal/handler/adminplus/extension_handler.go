@@ -240,8 +240,13 @@ func (h *ExtensionHandler) ReportSupplierCandidate(c *gin.Context) {
 		response.ErrorFrom(c, infraerrors.New(http.StatusConflict, "SUPPLIER_SITE_AMBIGUOUS", "multiple suppliers match current site"))
 		return
 	}
+	hasCompleteBrowserCredential := strings.TrimSpace(req.BrowserLoginUsername) != "" && strings.TrimSpace(req.BrowserLoginPassword) != ""
 	if req.AutoCreate != nil && !*req.AutoCreate {
 		response.ErrorFrom(c, infraerrors.New(http.StatusNotFound, "SUPPLIER_SITE_NOT_MATCHED", "current site is not configured as a supplier"))
+		return
+	}
+	if !hasCompleteBrowserCredential {
+		response.ErrorFrom(c, infraerrors.New(http.StatusConflict, "SUPPLIER_SITE_REGISTRATION_REQUIRED", "site candidate must be registered before importing as supplier"))
 		return
 	}
 

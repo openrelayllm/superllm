@@ -68,8 +68,7 @@ func containsBrowserChallenge(lower string) bool {
 		strings.Contains(lower, "captcha") ||
 		strings.Contains(lower, "recaptcha") ||
 		strings.Contains(lower, "challenge") ||
-		strings.Contains(lower, "校验失败") ||
-		strings.Contains(lower, "验证")
+		strings.Contains(lower, "校验失败")
 }
 
 func looksLikeHTMLResponse(lower string) bool {

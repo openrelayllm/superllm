@@ -2,13 +2,16 @@ package balances
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -223,6 +226,43 @@ func TestServiceSyncFromSessionAllowsProbeWithoutBalance(t *testing.T) {
 	require.NotNil(t, result.Probe)
 	require.Nil(t, result.Snapshot)
 	require.Nil(t, result.Event)
+}
+
+func TestServiceSyncFromSessionFailureRecordsDiagnostics(t *testing.T) {
+	writer := &balanceLogWriter{}
+	readerErr := infraerrors.New(http.StatusBadGateway, "SUPPLIER_SESSION_BAD_STATUS", "supplier session endpoint returned non-success status").
+		WithMetadata(map[string]string{
+			"endpoint":     "https://supplier.example/api/v1/user/profile",
+			"status_code":  "502",
+			"content_type": "application/json",
+			"body_type":    "json",
+			"body_excerpt": `{"message":"bad gateway"}`,
+		})
+	svc := NewServiceWithDependencies(
+		newFakeBalanceRepository(),
+		nil,
+		&fakeBalanceSessionReader{input: ports.SessionProbeInput{
+			SupplierID: 7,
+			Origin:     "https://supplier.example",
+			APIBaseURL: "https://supplier.example/api/v1",
+		}},
+		&fakeBalanceProbeAdapter{err: readerErr},
+	).WithDiagnostics(bizlogs.NewRecorder(writer))
+
+	result, err := svc.SyncFromSession(context.Background(), SyncFromSessionInput{SupplierID: 7})
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Len(t, writer.inputs, 1)
+	input := writer.inputs[0]
+	require.Equal(t, "admin_plus.balance", input.Component)
+	var extra map[string]any
+	require.NoError(t, json.Unmarshal([]byte(input.ExtraJSON), &extra))
+	require.Equal(t, "probe_profile", extra["action"])
+	require.Equal(t, "failed", extra["outcome"])
+	require.Equal(t, "SUPPLIER_SESSION_BAD_STATUS", extra["reason"])
+	require.Equal(t, "https://supplier.example/api/v1/user/profile", extra["endpoint"])
+	require.Equal(t, float64(502), extra["status_code"])
 }
 
 func TestServiceGetCurrentUsesFreshCache(t *testing.T) {
@@ -547,4 +587,13 @@ func cloneBalanceEvent(in *adminplusdomain.BalanceEvent) *adminplusdomain.Balanc
 		out.AcknowledgedAt = &t
 	}
 	return &out
+}
+
+type balanceLogWriter struct {
+	inputs []*service.OpsInsertSystemLogInput
+}
+
+func (w *balanceLogWriter) BatchInsertSystemLogs(_ context.Context, inputs []*service.OpsInsertSystemLogInput) (int64, error) {
+	w.inputs = append(w.inputs, inputs...)
+	return int64(len(inputs)), nil
 }

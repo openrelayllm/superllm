@@ -126,7 +126,7 @@ async function capture(options = {}) {
     const result = await sendMessage({
       type: 'session:capture',
       supplierID,
-      autoCreate: true,
+      autoCreate: false,
       candidate: currentCandidate,
       credentials: options.credentials || currentCandidate.credential
     })
@@ -229,11 +229,11 @@ function render() {
     text: resolvedStatus === 'identified'
       ? '已识别到供应商，确认后可继续上报当前会话。'
       : candidateStatus === 'needs_type_selection'
-        ? '页面特征不足，先选择系统类型，再补录账号密码。'
-        : '可以先采集页面候选信息，确认后保存供应商和登录凭据。',
+        ? '页面特征不足，先选择系统类型，再把候选提交到后台注册任务。'
+        : '未注册站点不会直接进入供应商列表，请先提交候选并在后台发起注册。',
     context: { host: site.host || '-', supplier: identification?.supplier?.name || candidate?.defaults?.name || '-' },
-    primaryText: resolvedStatus === 'identified' ? '仅上报当前会话' : '保存供应商凭据',
-    primary: resolvedStatus === 'identified' ? capture : saveSupplierCredential,
+    primaryText: resolvedStatus === 'identified' ? '仅上报当前会话' : '提交候选',
+    primary: resolvedStatus === 'identified' ? capture : submitSiteCandidate,
     secondaryText: '刷新状态',
     secondary: refresh
   })
@@ -289,8 +289,8 @@ function renderCandidatePanel() {
   }
 
   const needsType = !candidate?.provider_type || supplierTypeEl.value === ''
-  primaryAction.textContent = identification?.supplier ? '仅上报当前会话' : '保存供应商凭据'
-  primaryHandler = identification?.supplier ? capture : saveSupplierCredential
+  primaryAction.textContent = identification?.supplier ? '仅上报当前会话' : '提交候选'
+  primaryHandler = identification?.supplier ? capture : submitSiteCandidate
   secondaryHandler = refresh
   secondaryAction.textContent = '刷新状态'
   primaryAction.disabled = busy || (!identification?.supplier && needsType)
@@ -337,40 +337,28 @@ function credentialReadFailureMessage(credential) {
   return '未找到可读取的登录表单，请手动填写'
 }
 
-async function saveSupplierCredential() {
+async function submitSiteCandidate() {
   const currentCandidate = await collectCurrentCandidate(true)
   if (!currentCandidate.provider_type) {
     throw Object.assign(new Error('无法判断系统类型，请选择'), { reason: 'SUPPLIER_TYPE_REQUIRED' })
   }
   setBusy(true)
   try {
-    writeStatus('正在检查供应商', 'neutral')
-    let report = null
-    if (!currentCandidate.credential.username || !currentCandidate.credential.password) {
-      report = await reportCandidate(currentCandidate, false).catch((error) => {
-        if (error?.reason === 'SUPPLIER_SITE_NOT_MATCHED') return null
-        throw error
-      })
+    writeStatus('正在提交候选信息', 'neutral')
+    const report = await reportCandidate(currentCandidate, false).catch((error) => {
+      if (error?.reason === 'SUPPLIER_SITE_NOT_MATCHED' || error?.reason === 'SUPPLIER_SITE_REGISTRATION_REQUIRED') {
+        return {
+          ignored: true,
+          message: '候选已保留在后台采集/注册流程，注册成功后才会进入供应商列表'
+        }
+      }
+      throw error
+    })
+    if (report?.already_exists) {
+      writeStatus('供应商已存在，登录后可仅上报当前会话', 'success')
+    } else {
+      writeStatus(report?.message || '候选已提交，请在后台注册任务中发起注册', 'success')
     }
-    if (!report?.already_exists) {
-      if (!currentCandidate.credential.username) {
-        throw Object.assign(new Error('请填写账号'), { reason: 'SUPPLIER_USERNAME_REQUIRED' })
-      }
-      if (!currentCandidate.credential.password) {
-        throw Object.assign(new Error('无法自动读取密码，请手动输入'), { reason: 'SUPPLIER_PASSWORD_REQUIRED' })
-      }
-      writeStatus('正在保存供应商和登录凭据', 'neutral')
-      report = await reportCandidate(currentCandidate, true)
-      if (report?.created && !report.credential_saved) {
-        throw Object.assign(new Error('供应商已创建，但凭据未保存，已停止上报'), { reason: 'SUPPLIER_CREDENTIAL_SAVE_FAILED' })
-      }
-    }
-    writeStatus(
-      report?.already_exists
-        ? '供应商已存在，本次已忽略创建/更新；登录后可仅上报当前会话'
-        : '已保存到供应商列表；登录供应商后台后再上报当前会话',
-      'success'
-    )
     await refresh()
   } finally {
     setBusy(false)
@@ -428,7 +416,7 @@ function buildReportPayload(currentCandidate, options = {}) {
   const providerType = currentCandidate.provider_type || ''
   return {
     device_id: state?.connection?.deviceID || '',
-    auto_create_supplier: options.autoCreate !== false,
+    auto_create_supplier: options.autoCreate === true,
     provider_type: providerType,
     system_type: providerType,
     type: providerType,
@@ -448,11 +436,11 @@ function buildReportPayload(currentCandidate, options = {}) {
     source_host: page.host || '',
     source_url: page.url || '',
     origin: page.origin || '',
-    browser_login_enabled: true,
+    browser_login_enabled: Boolean(credential.username && credential.password),
     browser_login_username: credential.username || '',
     browser_login_password: credential.password || '',
     browser_login_token: credential.token || '',
-    notes: currentCandidate.notes || 'created from Chrome plugin',
+    notes: currentCandidate.notes || 'reported from Chrome plugin',
     page_context: {
       title: page.title || '',
       url: page.url || '',
@@ -491,7 +479,7 @@ function hideSitePanels() {
 
 function buildNotes() {
   const evidence = Array.isArray(candidate?.evidence) ? candidate.evidence.slice(0, 6) : []
-  const pieces = ['created from Chrome plugin']
+  const pieces = ['reported from Chrome plugin']
   if (candidate?.provider_type) pieces.push(`type:${candidate.provider_type}`)
   if (evidence.length > 0) pieces.push(`evidence:${evidence.join('|')}`)
   return pieces.join(' · ')
@@ -594,6 +582,7 @@ function showError(error) {
   if (error?.reason === 'SUPPLIER_PASSWORD_REQUIRED') return writeStatus('无法自动读取密码，请手动输入', 'failed')
   if (error?.reason === 'SUPPLIER_CREDENTIAL_SAVE_FAILED') return writeStatus('供应商凭据未保存，已停止上报', 'failed')
   if (error?.reason === 'SUPPLIER_SITE_AMBIGUOUS') return writeStatus('供应商已存在多个候选，请人工处理', 'failed')
+  if (error?.reason === 'SUPPLIER_SITE_REGISTRATION_REQUIRED') return writeStatus('未注册站点请先在后台注册任务中发起注册', 'failed')
   writeStatus(error.message || String(error), 'failed')
 }
 

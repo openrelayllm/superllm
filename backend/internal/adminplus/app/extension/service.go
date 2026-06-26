@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
@@ -70,6 +71,11 @@ type BrowserCredentialInput struct {
 	LeaseToken string
 }
 
+type CancelTaskInput struct {
+	TaskID int64
+	Reason string
+}
+
 type TaskFilter struct {
 	SupplierID int64
 	Status     adminplusdomain.ExtensionTaskStatus
@@ -104,6 +110,7 @@ type Service struct {
 	repo            Repository
 	resultProcessor ResultProcessor
 	credentials     BrowserCredentialProvider
+	bizlog          *bizlogs.Recorder
 	now             func() time.Time
 	newToken        func() (string, error)
 }
@@ -126,6 +133,13 @@ func NewServiceWithDependencies(repo Repository, processor ResultProcessor, cred
 	service := NewServiceWithResultProcessor(repo, processor)
 	service.credentials = credentials
 	return service
+}
+
+func (s *Service) WithDiagnostics(recorder *bizlogs.Recorder) *Service {
+	if s != nil {
+		s.bizlog = recorder
+	}
+	return s
 }
 
 func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (*adminplusdomain.ExtensionTask, error) {
@@ -286,7 +300,13 @@ func (s *Service) CompleteTask(ctx context.Context, in CompleteTaskInput) (*admi
 	task.Result = result
 	task.UpdatedAt = now
 	task.FinishedAt = &now
-	return s.repo.UpdateTask(ctx, task)
+	updated, err := s.repo.UpdateTask(ctx, task)
+	if err != nil {
+		s.recordTaskFailure(ctx, task, "complete_task", err, "")
+		return nil, err
+	}
+	s.recordTaskSuccess(ctx, updated, "complete_task")
+	return updated, nil
 }
 
 func (s *Service) FailTask(ctx context.Context, in FailTaskInput) (*adminplusdomain.ExtensionTask, error) {
@@ -311,7 +331,13 @@ func (s *Service) FailTask(ctx context.Context, in FailTaskInput) (*adminplusdom
 	if task.Attempts >= task.MaxAttempts {
 		task.Status = adminplusdomain.ExtensionTaskStatusFailed
 		task.FinishedAt = &now
-		return s.repo.UpdateTask(ctx, task)
+		updated, err := s.repo.UpdateTask(ctx, task)
+		if err != nil {
+			s.recordTaskFailure(ctx, task, "fail_task", err, task.ErrorCode)
+			return nil, err
+		}
+		s.recordTaskReportedFailure(ctx, updated, true)
+		return updated, nil
 	}
 	task.Status = adminplusdomain.ExtensionTaskStatusPending
 	task.DeviceID = ""
@@ -322,7 +348,176 @@ func (s *Service) FailTask(ctx context.Context, in FailTaskInput) (*adminplusdom
 	if in.RetryAfter != nil {
 		task.AvailableAfter = in.RetryAfter.UTC()
 	}
-	return s.repo.UpdateTask(ctx, task)
+	updated, err := s.repo.UpdateTask(ctx, task)
+	if err != nil {
+		s.recordTaskFailure(ctx, task, "fail_task", err, task.ErrorCode)
+		return nil, err
+	}
+	s.recordTaskReportedFailure(ctx, updated, false)
+	return updated, nil
+}
+
+func (s *Service) CancelTask(ctx context.Context, in CancelTaskInput) (*adminplusdomain.ExtensionTask, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("extension task service is not configured")
+	}
+	if in.TaskID <= 0 {
+		return nil, badRequest("EXTENSION_TASK_ID_INVALID", "invalid extension task id")
+	}
+	task, err := s.repo.GetTask(ctx, in.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if task.Status == adminplusdomain.ExtensionTaskStatusSucceeded {
+		return nil, badRequest("EXTENSION_TASK_ALREADY_SUCCEEDED", "succeeded extension task cannot be cancelled")
+	}
+	if task.Status == adminplusdomain.ExtensionTaskStatusCancelled {
+		return task, nil
+	}
+	now := s.now().UTC()
+	task.Status = adminplusdomain.ExtensionTaskStatusCancelled
+	task.LeaseToken = ""
+	task.LeaseExpiresAt = nil
+	task.LastHeartbeatAt = nil
+	task.ErrorCode = firstNonEmpty(trimLimit(in.Reason, 80), "TASK_CANCELLED")
+	task.UpdatedAt = now
+	task.FinishedAt = &now
+	updated, err := s.repo.UpdateTask(ctx, task)
+	if err != nil {
+		s.recordTaskFailure(ctx, task, "cancel_task", err, task.ErrorCode)
+		return nil, err
+	}
+	s.recordTaskCancelled(ctx, updated)
+	return updated, nil
+}
+
+func (s *Service) recordTaskSuccess(ctx context.Context, task *adminplusdomain.ExtensionTask, action string) {
+	if s == nil || s.bizlog == nil || task == nil {
+		return
+	}
+	s.bizlog.Record(ctx, bizlogs.Event{
+		Level:      bizlogs.LevelInfo,
+		Category:   bizlogs.CategoryExtension,
+		Action:     action,
+		Outcome:    bizlogs.OutcomeSucceeded,
+		Message:    "extension task completed",
+		SupplierID: task.SupplierID,
+		Metadata:   taskLogMetadata(task),
+	})
+}
+
+func (s *Service) recordTaskCancelled(ctx context.Context, task *adminplusdomain.ExtensionTask) {
+	if s == nil || s.bizlog == nil || task == nil {
+		return
+	}
+	metadata := taskLogMetadata(task)
+	metadata["error_code"] = task.ErrorCode
+	s.bizlog.Record(ctx, bizlogs.Event{
+		Level:      bizlogs.LevelInfo,
+		Category:   bizlogs.CategoryExtension,
+		Action:     "cancel_task",
+		Outcome:    "cancelled",
+		Message:    "extension task cancelled",
+		SupplierID: task.SupplierID,
+		Reason:     task.ErrorCode,
+		Metadata:   metadata,
+	})
+}
+
+func (s *Service) recordTaskReportedFailure(ctx context.Context, task *adminplusdomain.ExtensionTask, final bool) {
+	if s == nil || s.bizlog == nil || task == nil {
+		return
+	}
+	metadata := taskLogMetadata(task)
+	metadata["final_failure"] = final
+	metadata["error_code"] = task.ErrorCode
+	metadata["error_message"] = task.ErrorMessage
+	outcome := bizlogs.OutcomeFailed
+	if !final {
+		outcome = "retry_scheduled"
+	}
+	s.bizlog.Record(ctx, bizlogs.Event{
+		Level:      bizlogs.LevelWarn,
+		Category:   bizlogs.CategoryExtension,
+		Action:     "task_reported_failure",
+		Outcome:    outcome,
+		Message:    "extension task reported failure",
+		SupplierID: task.SupplierID,
+		Reason:     task.ErrorCode,
+		Metadata:   metadata,
+	})
+}
+
+func (s *Service) recordTaskFailure(ctx context.Context, task *adminplusdomain.ExtensionTask, action string, err error, reason string) {
+	if s == nil || s.bizlog == nil {
+		return
+	}
+	metadata := taskLogMetadata(task)
+	if reason != "" {
+		metadata["error_code"] = reason
+	}
+	event := bizlogs.EventFromError(bizlogs.Event{
+		Level:      bizlogs.LevelWarn,
+		Category:   bizlogs.CategoryExtension,
+		Action:     action,
+		Outcome:    bizlogs.OutcomeFailed,
+		Message:    "extension task operation failed",
+		SupplierID: taskSupplierID(task),
+		Reason:     reason,
+		Metadata:   metadata,
+	}, err)
+	s.bizlog.Record(ctx, event)
+}
+
+func taskLogMetadata(task *adminplusdomain.ExtensionTask) map[string]any {
+	if task == nil {
+		return map[string]any{}
+	}
+	out := map[string]any{
+		"task_id":      task.ID,
+		"supplier_id":  task.SupplierID,
+		"type":         string(task.Type),
+		"status":       string(task.Status),
+		"attempts":     task.Attempts,
+		"max_attempts": task.MaxAttempts,
+		"device_id":    task.DeviceID,
+	}
+	putPayloadInt64(out, task.Payload, "discovery_id")
+	putPayloadInt64(out, task.Payload, "registration_id")
+	if task.FinishedAt != nil {
+		out["finished_at"] = task.FinishedAt.UTC().Format(time.RFC3339)
+	}
+	if task.AvailableAfter.After(time.Time{}) {
+		out["available_after"] = task.AvailableAfter.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
+func taskSupplierID(task *adminplusdomain.ExtensionTask) int64 {
+	if task == nil {
+		return 0
+	}
+	return task.SupplierID
+}
+
+func putPayloadInt64(out map[string]any, payload map[string]any, key string) {
+	if out == nil || len(payload) == 0 || strings.TrimSpace(key) == "" {
+		return
+	}
+	switch value := payload[key].(type) {
+	case int64:
+		if value > 0 {
+			out[key] = value
+		}
+	case int:
+		if value > 0 {
+			out[key] = value
+		}
+	case float64:
+		if value > 0 {
+			out[key] = int64(value)
+		}
+	}
 }
 
 func (s *Service) ListTasks(ctx context.Context, filter TaskFilter) ([]*adminplusdomain.ExtensionTask, error) {
@@ -340,6 +535,16 @@ func (s *Service) ListTasks(ctx context.Context, filter TaskFilter) ([]*adminplu
 	}
 	filter.Limit = normalizeLimit(filter.Limit)
 	return s.repo.ListTasks(ctx, filter)
+}
+
+func (s *Service) GetTask(ctx context.Context, taskID int64) (*adminplusdomain.ExtensionTask, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("extension task service is not configured")
+	}
+	if taskID <= 0 {
+		return nil, badRequest("EXTENSION_TASK_ID_INVALID", "invalid extension task id")
+	}
+	return s.repo.GetTask(ctx, taskID)
 }
 
 func (s *Service) GetBrowserCredential(ctx context.Context, in BrowserCredentialInput) (*adminplusdomain.SupplierBrowserCredential, error) {
@@ -422,6 +627,16 @@ func randomToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func badRequest(reason string, message string) error {

@@ -14,6 +14,149 @@ export interface AdminPlusPaginationParams {
   limit?: number
 }
 
+export type ProxySubscriptionType = 'clash' | 'shadowrocket' | 'v2ray_ss'
+export type ProxyRefreshStatus = 'never' | 'succeeded' | 'failed' | 'invalid'
+export type ProxyNodeHealthStatus = 'unknown' | 'healthy' | 'degraded' | 'suspect' | 'unhealthy' | 'disabled'
+export type ProxyRuntimeSlotStatus = 'idle' | 'assigned' | 'draining' | 'unhealthy' | 'stopped'
+export type ProxyAssignmentStatus = 'active' | 'released' | 'failed'
+export type ProxyTaskPurpose = 'site_discovery' | 'registration' | 'supplier_probe' | 'manual_test'
+export type ProxyAuditLevel = 'info' | 'warning' | 'error'
+
+export interface ProxyCenterStatus {
+  subscriptions_total: number
+  subscriptions_active: number
+  nodes_total: number
+  healthy_nodes: number
+  policies_total: number
+  targets_total: number
+  slots_total: number
+  slots_assigned: number
+  assignments_active: number
+  recent_errors: number
+}
+
+export interface ProxySubscription {
+  id: number
+  name: string
+  subscription_type: ProxySubscriptionType
+  url_configured: boolean
+  url_hash?: string
+  enabled: boolean
+  refresh_interval_seconds: number
+  last_refresh_status: ProxyRefreshStatus
+  last_refresh_error?: string
+  active_config_version?: string
+  node_count: number
+  created_at: string
+  updated_at: string
+  last_refreshed_at?: string | null
+}
+
+export interface ProxyNode {
+  id: number
+  subscription_id: number
+  config_version: string
+  node_key: string
+  display_name: string
+  protocol: string
+  region?: string
+  server_hash?: string
+  health_status: ProxyNodeHealthStatus
+  last_latency_ms?: number | null
+  last_egress_ip?: string
+  last_error_code?: string
+  last_error_message?: string
+  last_checked_at?: string | null
+  disabled_reason?: string
+  raw_metadata?: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface ProxyPolicy {
+  id: number
+  name: string
+  enabled: boolean
+  subscription_ids: number[]
+  preferred_regions: string[]
+  max_concurrency: number
+  max_switches_per_task: number
+  connect_timeout_ms: number
+  request_timeout_ms: number
+  config?: Record<string, unknown>
+  enabled_targets?: number
+  healthy_nodes_available?: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ProxyTargetPolicy {
+  id: number
+  policy_id: number
+  target_host: string
+  purpose: ProxyTaskPurpose
+  allowed_methods: string[]
+  rate_limit_per_minute: number
+  enabled: boolean
+  authorization_note?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ProxyRuntimeSlot {
+  id: number
+  slot_key: string
+  status: ProxyRuntimeSlotStatus
+  mixed_port: number
+  controller_port: number
+  controller_secret_configured: boolean
+  process_id?: number | null
+  config_path?: string
+  assigned_task_type?: string
+  assigned_task_id?: string
+  selected_node_id?: number
+  last_started_at?: string | null
+  last_heartbeat_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ProxyAssignment {
+  id: number
+  task_type: string
+  task_id: string
+  policy_id: number
+  slot_id: number
+  node_id?: number
+  mixed_port?: number
+  target_host: string
+  egress_ip?: string
+  status: ProxyAssignmentStatus
+  switch_count: number
+  error_code?: string
+  error_message?: string
+  started_at: string
+  released_at?: string | null
+  created_at: string
+}
+
+export interface ProxyAuditEvent {
+  id: number
+  event_type: string
+  actor_id?: number
+  task_type?: string
+  task_id?: string
+  policy_id?: number
+  slot_id?: number
+  node_id?: number
+  subscription_id?: number
+  target_host?: string
+  level: ProxyAuditLevel
+  message: string
+  payload?: Record<string, unknown>
+  created_at: string
+}
+
 export type SupplierKind = 'source_account' | 'relay' | 'browser_only' | 'custom'
 export type SupplierType = 'openai' | 'anthropic' | 'gemini' | 'sub2api' | 'new_api' | 'browser_only' | 'custom'
 export type SupplierRuntimeStatus = 'monitor_only' | 'candidate' | 'active' | 'disabled'
@@ -1253,9 +1396,34 @@ export interface SupplierRegistrationCredential {
   updated_at: string
 }
 
+export interface SiteDiscoveryRegistrationTask {
+  id: number
+  discovery_id: number
+  registration_id?: number
+  task_id?: number
+  status: SupplierRegistrationStatus
+  task_status?: ExtensionTask['status'] | ''
+  email?: string
+  error_code?: string
+  error_message?: string
+  attempts?: number
+  max_attempts?: number
+  device_id?: string
+  can_retry: boolean
+  last_attempt_at?: string | null
+  created_at: string
+  updated_at: string
+  finished_at?: string | null
+  discovery: SiteDiscoveryItem
+}
+
+export interface SiteDiscoveryRegistrationTaskLogsResult {
+  items: AdminPlusSystemLog[]
+}
+
 export interface RegisterSiteDiscoveryItemResponse {
   credential: SupplierRegistrationCredential
-  task: ExtensionTask
+  task?: ExtensionTask | null
 }
 
 export interface SiteDiscoveryRecommendation {
@@ -1668,6 +1836,32 @@ export interface SendTestMailVerificationCodePayload {
   poll_interval_seconds?: number
 }
 
+export type AdminPlusSystemLogLevel = '' | 'info' | 'warn' | 'error'
+export type AdminPlusSystemLogComponent = '' | 'admin_plus.login' | 'admin_plus.balance' | 'admin_plus.mail' | 'admin_plus.registration' | 'admin_plus.extension'
+
+export interface AdminPlusSystemLog {
+  id: number
+  created_at: string
+  level: string
+  component: string
+  message: string
+  request_id?: string
+  client_request_id?: string
+  user_id?: number | null
+  account_id?: number | null
+  platform?: string
+  model?: string
+  extra?: Record<string, unknown>
+}
+
+export interface ListAdminPlusSystemLogsParams extends AdminPlusPaginationParams {
+  component?: AdminPlusSystemLogComponent | string
+  level?: AdminPlusSystemLogLevel | string
+  q?: string
+  start_time?: string
+  end_time?: string
+}
+
 export async function listSuppliers(params?: Partial<Record<'kind' | 'type' | 'runtime_status' | 'health_status' | 'q', string>> & AdminPlusPaginationParams): Promise<AdminPlusListResponse<Supplier>> {
   const { data } = await apiClient.get<AdminPlusListResponse<Supplier>>('/admin-plus/suppliers', { params })
   return data
@@ -1721,6 +1915,11 @@ export async function sendTestMailVerificationCode(payload: SendTestMailVerifica
   const { data } = await apiClient.post<MailVerificationCodeResult>('/admin-plus/mails/verification-code/send-test', payload, {
     timeout: Math.min(Math.max(timeoutSeconds + 30, 60), 160) * 1000
   })
+  return data
+}
+
+export async function listAdminPlusSystemLogs(params?: ListAdminPlusSystemLogsParams): Promise<AdminPlusListResponse<AdminPlusSystemLog>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<AdminPlusSystemLog>>('/admin/ops/system-logs', { params })
   return data
 }
 
@@ -2240,6 +2439,7 @@ export async function runSiteDiscovery(payload?: {
   probe_interfaces?: boolean
   probe_sites?: boolean
   limit?: number
+  proxy_policy_id?: number
 }): Promise<SiteDiscoveryRunResult> {
   const { data } = await apiClient.post<SiteDiscoveryRunResult>('/admin-plus/site-discovery/runs', payload || {})
   return data
@@ -2251,6 +2451,7 @@ export async function runSiteDiscoveryStream(
     probe_interfaces?: boolean
     probe_sites?: boolean
     limit?: number
+    proxy_policy_id?: number
   },
   onEvent: (event: SiteDiscoveryRunProgressEvent) => void
 ): Promise<void> {
@@ -2353,8 +2554,27 @@ export async function importSiteDiscoveryItem(id: number): Promise<SiteDiscovery
   return data
 }
 
-export async function registerSiteDiscoveryItem(id: number): Promise<RegisterSiteDiscoveryItemResponse> {
-  const { data } = await apiClient.post<RegisterSiteDiscoveryItemResponse>(`/admin-plus/site-discovery/items/${id}/register`)
+export async function registerSiteDiscoveryItem(id: number, payload?: { proxy_policy_id?: number }): Promise<RegisterSiteDiscoveryItemResponse> {
+  const { data } = await apiClient.post<RegisterSiteDiscoveryItemResponse>(`/admin-plus/site-discovery/items/${id}/register`, payload || {})
+  return data
+}
+
+export async function listSiteDiscoveryRegistrationTasks(params?: {
+  q?: string
+  provider_type?: 'new_api' | 'sub2api' | ''
+  registration_status?: SupplierRegistrationStatus | ''
+} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<SiteDiscoveryRegistrationTask>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<SiteDiscoveryRegistrationTask>>('/admin-plus/site-discovery/registrations', { params })
+  return data
+}
+
+export async function rerunSiteDiscoveryRegistration(id: number): Promise<RegisterSiteDiscoveryItemResponse> {
+  const { data } = await apiClient.post<RegisterSiteDiscoveryItemResponse>(`/admin-plus/site-discovery/registrations/${id}/rerun`)
+  return data
+}
+
+export async function listSiteDiscoveryRegistrationLogs(id: number, params?: { limit?: number }): Promise<SiteDiscoveryRegistrationTaskLogsResult> {
+  const { data } = await apiClient.get<SiteDiscoveryRegistrationTaskLogsResult>(`/admin-plus/site-discovery/registrations/${id}/logs`, { params })
   return data
 }
 
@@ -2491,6 +2711,197 @@ export async function listNotificationDeliveries(params?: { supplier_id?: number
   return data
 }
 
+export async function getProxyCenterStatus(): Promise<ProxyCenterStatus> {
+  const { data } = await apiClient.get<ProxyCenterStatus>('/admin-plus/proxy/center/status')
+  return data
+}
+
+export async function listProxySubscriptions(params?: { enabled?: boolean } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxySubscription>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<ProxySubscription>>('/admin-plus/proxy/subscriptions', { params })
+  return data
+}
+
+export async function createProxySubscription(payload: {
+  name: string
+  subscription_type: ProxySubscriptionType
+  subscription_url: string
+  enabled?: boolean
+  refresh_interval_seconds?: number
+  refresh_now?: boolean
+}): Promise<ProxySubscription> {
+  const { data } = await apiClient.post<ProxySubscription>('/admin-plus/proxy/subscriptions', payload)
+  return data
+}
+
+export async function updateProxySubscription(id: number, payload: Partial<{
+  name: string
+  subscription_type: ProxySubscriptionType
+  subscription_url: string
+  enabled: boolean
+  refresh_interval_seconds: number
+}>): Promise<ProxySubscription> {
+  const { data } = await apiClient.patch<ProxySubscription>(`/admin-plus/proxy/subscriptions/${id}`, payload)
+  return data
+}
+
+export async function refreshProxySubscription(id: number): Promise<ProxySubscription> {
+  const { data } = await apiClient.post<ProxySubscription>(`/admin-plus/proxy/subscriptions/${id}/refresh`)
+  return data
+}
+
+export async function deleteProxySubscription(id: number): Promise<void> {
+  await apiClient.delete(`/admin-plus/proxy/subscriptions/${id}`)
+}
+
+export async function listProxyNodes(params?: {
+  subscription_id?: number
+  health_status?: ProxyNodeHealthStatus | ''
+  include_disabled?: boolean
+  q?: string
+} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxyNode>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<ProxyNode>>('/admin-plus/proxy/nodes', { params })
+  return data
+}
+
+export async function checkProxyNode(id: number): Promise<ProxyNode> {
+  const { data } = await apiClient.post<ProxyNode>(`/admin-plus/proxy/nodes/${id}/check`)
+  return data
+}
+
+export async function disableProxyNode(id: number, reason?: string): Promise<ProxyNode> {
+  const { data } = await apiClient.post<ProxyNode>(`/admin-plus/proxy/nodes/${id}/disable`, { reason })
+  return data
+}
+
+export async function enableProxyNode(id: number): Promise<ProxyNode> {
+  const { data } = await apiClient.post<ProxyNode>(`/admin-plus/proxy/nodes/${id}/enable`)
+  return data
+}
+
+export async function listProxyPolicies(params?: { enabled?: boolean } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxyPolicy>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<ProxyPolicy>>('/admin-plus/proxy/policies', { params })
+  return data
+}
+
+export async function createProxyPolicy(payload: {
+  name: string
+  enabled?: boolean
+  subscription_ids?: number[]
+  preferred_regions?: string[]
+  max_concurrency?: number
+  max_switches_per_task?: number
+  connect_timeout_ms?: number
+  request_timeout_ms?: number
+  config?: Record<string, unknown>
+}): Promise<ProxyPolicy> {
+  const { data } = await apiClient.post<ProxyPolicy>('/admin-plus/proxy/policies', payload)
+  return data
+}
+
+export async function updateProxyPolicy(id: number, payload: Partial<{
+  name: string
+  enabled: boolean
+  subscription_ids: number[]
+  preferred_regions: string[]
+  max_concurrency: number
+  max_switches_per_task: number
+  connect_timeout_ms: number
+  request_timeout_ms: number
+  config: Record<string, unknown>
+}>): Promise<ProxyPolicy> {
+  const { data } = await apiClient.patch<ProxyPolicy>(`/admin-plus/proxy/policies/${id}`, payload)
+  return data
+}
+
+export async function deleteProxyPolicy(id: number): Promise<void> {
+  await apiClient.delete(`/admin-plus/proxy/policies/${id}`)
+}
+
+export async function listProxyTargets(policyID: number, params?: { purpose?: ProxyTaskPurpose | ''; enabled?: boolean } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxyTargetPolicy>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<ProxyTargetPolicy>>(`/admin-plus/proxy/policies/${policyID}/targets`, { params })
+  return data
+}
+
+export async function createProxyTarget(policyID: number, payload: {
+  target_host: string
+  purpose: ProxyTaskPurpose
+  allowed_methods?: string[]
+  rate_limit_per_minute?: number
+  enabled?: boolean
+  authorization_note?: string
+}): Promise<ProxyTargetPolicy> {
+  const { data } = await apiClient.post<ProxyTargetPolicy>(`/admin-plus/proxy/policies/${policyID}/targets`, payload)
+  return data
+}
+
+export async function updateProxyTarget(policyID: number, targetID: number, payload: Partial<{
+  target_host: string
+  purpose: ProxyTaskPurpose
+  allowed_methods: string[]
+  rate_limit_per_minute: number
+  enabled: boolean
+  authorization_note: string
+}>): Promise<ProxyTargetPolicy> {
+  const { data } = await apiClient.patch<ProxyTargetPolicy>(`/admin-plus/proxy/policies/${policyID}/targets/${targetID}`, payload)
+  return data
+}
+
+export async function deleteProxyTarget(policyID: number, targetID: number): Promise<void> {
+  await apiClient.delete(`/admin-plus/proxy/policies/${policyID}/targets/${targetID}`)
+}
+
+export async function listProxyRuntimeSlots(params?: { status?: ProxyRuntimeSlotStatus | '' } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxyRuntimeSlot>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<ProxyRuntimeSlot>>('/admin-plus/proxy/runtime-slots', { params })
+  return data
+}
+
+export async function restartProxyRuntimeSlot(id: number): Promise<ProxyRuntimeSlot> {
+  const { data } = await apiClient.post<ProxyRuntimeSlot>(`/admin-plus/proxy/runtime-slots/${id}/restart`)
+  return data
+}
+
+export async function listProxyAssignments(params?: {
+  task_type?: string
+  task_id?: string
+  status?: ProxyAssignmentStatus | ''
+} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxyAssignment>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<ProxyAssignment>>('/admin-plus/proxy/assignments', { params })
+  return data
+}
+
+export async function createProxyAssignment(payload: {
+  task_type: string
+  task_id: string
+  policy_id: number
+  target_host: string
+  purpose: ProxyTaskPurpose
+  method?: string
+}): Promise<ProxyAssignment> {
+  const { data } = await apiClient.post<ProxyAssignment>('/admin-plus/proxy/assignments', payload)
+  return data
+}
+
+export async function releaseProxyAssignment(id: number, payload?: { failed?: boolean; error_code?: string; error_message?: string }): Promise<ProxyAssignment> {
+  const { data } = await apiClient.post<ProxyAssignment>(`/admin-plus/proxy/assignments/${id}/release`, payload || {})
+  return data
+}
+
+export async function switchProxyAssignment(id: number, payload: { node_id: number; error_code?: string; error_message?: string }): Promise<ProxyAssignment> {
+  const { data } = await apiClient.post<ProxyAssignment>(`/admin-plus/proxy/assignments/${id}/switch`, payload)
+  return data
+}
+
+export async function listProxyAuditEvents(params?: {
+  event_type?: string
+  task_type?: string
+  task_id?: string
+  level?: ProxyAuditLevel | ''
+  target_host?: string
+} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxyAuditEvent>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<ProxyAuditEvent>>('/admin-plus/proxy/audit-events', { params })
+  return data
+}
+
 export const adminPlusAPI = {
   listSuppliers,
   createSupplier,
@@ -2579,6 +2990,9 @@ export const adminPlusAPI = {
   listSiteDiscoveryItems,
   importSiteDiscoveryItem,
   registerSiteDiscoveryItem,
+  listSiteDiscoveryRegistrationTasks,
+  rerunSiteDiscoveryRegistration,
+  listSiteDiscoveryRegistrationLogs,
   listSiteDiscoveryRecommendations,
   listSiteCatalogSites,
   getSiteCatalogSite,
@@ -2594,7 +3008,33 @@ export const adminPlusAPI = {
   updateNotificationSettings,
   testNotification,
   retryNotificationDelivery,
-  listNotificationDeliveries
+  listNotificationDeliveries,
+  getProxyCenterStatus,
+  listProxySubscriptions,
+  createProxySubscription,
+  updateProxySubscription,
+  refreshProxySubscription,
+  deleteProxySubscription,
+  listProxyNodes,
+  checkProxyNode,
+  disableProxyNode,
+  enableProxyNode,
+  listProxyPolicies,
+  createProxyPolicy,
+  updateProxyPolicy,
+  deleteProxyPolicy,
+  listProxyTargets,
+  createProxyTarget,
+  updateProxyTarget,
+  deleteProxyTarget,
+  listProxyRuntimeSlots,
+  restartProxyRuntimeSlot,
+  listProxyAssignments,
+  createProxyAssignment,
+  releaseProxyAssignment,
+  switchProxyAssignment,
+  listProxyAuditEvents,
+  listAdminPlusSystemLogs
 }
 
 export default adminPlusAPI

@@ -57,6 +57,43 @@ type DirectLoginResult struct {
 	Diagnostics   map[string]any
 }
 
+type DirectRegistrationStage string
+
+const (
+	DirectRegistrationStageReady         DirectRegistrationStage = "ready"
+	DirectRegistrationStageNeedEmailCode DirectRegistrationStage = "need_email_code"
+	DirectRegistrationStageCompleted     DirectRegistrationStage = "completed"
+)
+
+type DirectRegistrationInput struct {
+	ProviderType        adminplusdomain.SupplierType
+	Origin              string
+	APIBaseURL          string
+	RegisterURL         string
+	Email               string
+	Password            string
+	Username            string
+	VerificationCode    string
+	PromoCode           string
+	InvitationCode      string
+	AffiliateCode       string
+	ProxyURL            string
+	RegistrationContext map[string]any
+}
+
+type DirectRegistrationResult struct {
+	ProviderType      adminplusdomain.SupplierType
+	Origin            string
+	APIBaseURL        string
+	Stage             DirectRegistrationStage
+	EmailCodeRequired bool
+	Submitted         bool
+	SessionBundle     map[string]any
+	CapturedAt        time.Time
+	ExpiresAt         *time.Time
+	Diagnostics       map[string]any
+}
+
 type SessionProbeResult struct {
 	SupplierID      int64                `json:"supplier_id"`
 	Status          string               `json:"status"`
@@ -128,6 +165,10 @@ type SessionChannelMonitorAdapter interface {
 
 type SessionLoginAdapter interface {
 	DirectLogin(ctx context.Context, in DirectLoginInput) (*DirectLoginResult, error)
+}
+
+type DirectRegistrationAdapter interface {
+	RegisterAccount(ctx context.Context, in DirectRegistrationInput) (*DirectRegistrationResult, error)
 }
 
 type ProviderBalanceSnapshotInput struct {

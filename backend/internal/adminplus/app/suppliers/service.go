@@ -130,6 +130,10 @@ type SiteMatchResult struct {
 	Reason    string                      `json:"reason,omitempty"`
 }
 
+type EnsureFromSiteCandidateOptions struct {
+	AllowCreate bool
+}
+
 type EnsureFromSiteCandidateResult struct {
 	Supplier    *adminplusdomain.Supplier `json:"supplier"`
 	Created     bool                      `json:"created"`
@@ -202,15 +206,15 @@ func (s *Service) Create(ctx context.Context, in CreateSupplierInput) (*adminplu
 		Contact:               trimLimit(in.Contact, 120),
 		Notes:                 trimLimit(in.Notes, 500),
 		BrowserLoginUsername:  strings.TrimSpace(in.BrowserLoginUsername),
-		BrowserLoginPassword:  strings.TrimSpace(in.BrowserLoginPassword),
-		BrowserLoginToken:     strings.TrimSpace(in.BrowserLoginToken),
+		BrowserLoginPassword:  in.BrowserLoginPassword,
+		BrowserLoginToken:     in.BrowserLoginToken,
 		Credential: adminplusdomain.SupplierCredentialStatus{
 			PostgresConfigured:             strings.TrimSpace(in.PostgresReadDSN) != "",
 			RedisConfigured:                strings.TrimSpace(in.RedisReadDSN) != "",
 			BrowserLoginEnabled:            in.BrowserLoginEnabled,
 			BrowserLoginUsernameConfigured: strings.TrimSpace(in.BrowserLoginUsername) != "",
-			BrowserLoginPasswordConfigured: strings.TrimSpace(in.BrowserLoginPassword) != "",
-			BrowserLoginTokenConfigured:    strings.TrimSpace(in.BrowserLoginToken) != "",
+			BrowserLoginPasswordConfigured: nonBlankSecret(in.BrowserLoginPassword),
+			BrowserLoginTokenConfigured:    nonBlankSecret(in.BrowserLoginToken),
 			MaskedBrowserLoginUsername:     maskUsername(in.BrowserLoginUsername),
 		},
 		BalanceCents:       normalized.BalanceCents,
@@ -283,6 +287,10 @@ func (s *Service) CreateFromSiteCandidate(ctx context.Context, in CreateFromSite
 }
 
 func (s *Service) EnsureFromSiteCandidate(ctx context.Context, in CreateFromSiteCandidateInput) (*EnsureFromSiteCandidateResult, error) {
+	return s.EnsureFromSiteCandidateWithOptions(ctx, in, EnsureFromSiteCandidateOptions{})
+}
+
+func (s *Service) EnsureFromSiteCandidateWithOptions(ctx context.Context, in CreateFromSiteCandidateInput, options EnsureFromSiteCandidateOptions) (*EnsureFromSiteCandidateResult, error) {
 	if s == nil || s.repo == nil {
 		return nil, internalError("supplier service is not configured")
 	}
@@ -307,6 +315,9 @@ func (s *Service) EnsureFromSiteCandidate(ctx context.Context, in CreateFromSite
 	}
 	if err != nil && infraerrors.Code(err) != http.StatusBadRequest {
 		return nil, err
+	}
+	if !options.AllowCreate {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_SITE_REGISTRATION_REQUIRED", "site candidate must be registered before importing as supplier")
 	}
 	created, err := s.CreateFromSiteCandidate(ctx, in)
 	if err != nil {
@@ -428,7 +439,7 @@ func (s *Service) GetBrowserCredential(ctx context.Context, id int64) (*adminplu
 	if strings.TrimSpace(credential.DashboardURL) == "" {
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_DASHBOARD_URL_REQUIRED", "supplier dashboard url is required for browser automation")
 	}
-	if strings.TrimSpace(credential.Username) == "" && strings.TrimSpace(credential.Password) == "" && strings.TrimSpace(credential.Token) == "" {
+	if strings.TrimSpace(credential.Username) == "" && !nonBlankSecret(credential.Password) && !nonBlankSecret(credential.Token) {
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_BROWSER_CREDENTIAL_REQUIRED", "supplier browser credential is required")
 	}
 	return credential, nil
@@ -503,8 +514,8 @@ func (s *Service) Update(ctx context.Context, id int64, in UpdateSupplierInput) 
 	updated.Contact = trimLimit(in.Contact, 120)
 	updated.Notes = trimLimit(in.Notes, 500)
 	updated.BrowserLoginUsername = strings.TrimSpace(in.BrowserLoginUsername)
-	updated.BrowserLoginPassword = strings.TrimSpace(in.BrowserLoginPassword)
-	updated.BrowserLoginToken = strings.TrimSpace(in.BrowserLoginToken)
+	updated.BrowserLoginPassword = in.BrowserLoginPassword
+	updated.BrowserLoginToken = in.BrowserLoginToken
 	updated.Credential.PostgresConfigured = strings.TrimSpace(in.PostgresReadDSN) != "" || existing.Credential.PostgresConfigured
 	updated.Credential.RedisConfigured = strings.TrimSpace(in.RedisReadDSN) != "" || existing.Credential.RedisConfigured
 	updated.Credential.BrowserLoginEnabled = in.BrowserLoginEnabled
@@ -512,10 +523,10 @@ func (s *Service) Update(ctx context.Context, id int64, in UpdateSupplierInput) 
 		updated.Credential.BrowserLoginUsernameConfigured = true
 		updated.Credential.MaskedBrowserLoginUsername = maskUsername(updated.BrowserLoginUsername)
 	}
-	if updated.BrowserLoginPassword != "" {
+	if nonBlankSecret(updated.BrowserLoginPassword) {
 		updated.Credential.BrowserLoginPasswordConfigured = true
 	}
-	if updated.BrowserLoginToken != "" {
+	if nonBlankSecret(updated.BrowserLoginToken) {
 		updated.Credential.BrowserLoginTokenConfigured = true
 	}
 	if updated.Credential.MaskedBrowserLoginUsername == "" {
@@ -987,6 +998,10 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func nonBlankSecret(value string) bool {
+	return strings.TrimSpace(value) != ""
 }
 
 func trimLimit(value string, limit int) string {

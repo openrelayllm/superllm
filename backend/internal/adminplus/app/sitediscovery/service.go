@@ -9,28 +9,34 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	mailverificationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
+	proxyapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/proxy"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	opsservice "github.com/Wei-Shaw/sub2api/internal/service"
 	"golang.org/x/net/html"
 )
 
 const (
-	DefaultSourceURL           = "https://api.daheiai.com/"
-	defaultLowRateThreshold    = 0.8
-	defaultDiscoveryFetchLimit = 8 << 20
-	defaultSiteProbeLimit      = 512 << 10
-	defaultSiteProbeWorkers    = 48
-	defaultInterfaceProbeTTL   = 3 * time.Second
-	defaultEndpointProbeTTL    = 1400 * time.Millisecond
-	defaultPageProbeTTL        = 2500 * time.Millisecond
-	defaultPasswordLength      = 20
+	DefaultSourceURL             = "https://api.daheiai.com/"
+	defaultLowRateThreshold      = 0.8
+	defaultDiscoveryFetchLimit   = 8 << 20
+	defaultSiteProbeLimit        = 512 << 10
+	defaultSiteProbeWorkers      = 48
+	defaultInterfaceProbeTTL     = 3 * time.Second
+	defaultEndpointProbeTTL      = 1400 * time.Millisecond
+	defaultPageProbeTTL          = 2500 * time.Millisecond
+	defaultPasswordLength        = 20
+	defaultDirectRegistrationTTL = 140 * time.Second
 )
 
 type CredentialCipher interface {
@@ -42,11 +48,21 @@ type RegistrationMailReader interface {
 	ReadVerificationCodeForEmail(ctx context.Context, in mailverificationapp.ReadVerificationCodeForEmailInput) (*mailverificationapp.ReadVerificationCodeResult, error)
 }
 
+type RegistrationLogReader interface {
+	ListSystemLogs(ctx context.Context, filter *opsservice.OpsSystemLogFilter) (*opsservice.OpsSystemLogList, error)
+}
+
+type RegistrationRecord struct {
+	Credential *adminplusdomain.SupplierRegistrationCredential
+	Item       *adminplusdomain.SiteDiscoveryItem
+}
+
 type RunInput struct {
 	SourceURL       string
 	ProbeInterfaces bool
 	ProbeSites      bool
 	Limit           int
+	ProxyPolicyID   int64
 }
 
 type ClassifyInput struct {
@@ -59,6 +75,7 @@ type ClassifyInput struct {
 	ProbeInterfaces      bool
 	ProbeSites           bool
 	Limit                int
+	ProxyPolicyID        int64
 }
 
 type RunResult struct {
@@ -106,6 +123,31 @@ type RegisterCredentialView struct {
 	Password     string                       `json:"password"`
 }
 
+type RegistrationTaskView struct {
+	ID             int64                                      `json:"id"`
+	DiscoveryID    int64                                      `json:"discovery_id"`
+	RegistrationID int64                                      `json:"registration_id,omitempty"`
+	TaskID         int64                                      `json:"task_id,omitempty"`
+	Status         adminplusdomain.SupplierRegistrationStatus `json:"status"`
+	TaskStatus     adminplusdomain.ExtensionTaskStatus        `json:"task_status,omitempty"`
+	Email          string                                     `json:"email,omitempty"`
+	ErrorCode      string                                     `json:"error_code,omitempty"`
+	ErrorMessage   string                                     `json:"error_message,omitempty"`
+	Attempts       int                                        `json:"attempts,omitempty"`
+	MaxAttempts    int                                        `json:"max_attempts,omitempty"`
+	DeviceID       string                                     `json:"device_id,omitempty"`
+	CanRetry       bool                                       `json:"can_retry"`
+	LastAttemptAt  *time.Time                                 `json:"last_attempt_at,omitempty"`
+	CreatedAt      time.Time                                  `json:"created_at"`
+	UpdatedAt      time.Time                                  `json:"updated_at"`
+	FinishedAt     *time.Time                                 `json:"finished_at,omitempty"`
+	Discovery      *adminplusdomain.SiteDiscoveryItem         `json:"discovery"`
+}
+
+type RegistrationTaskLogsResult struct {
+	Items []*opsservice.OpsSystemLog `json:"items"`
+}
+
 type ReadRegistrationVerificationCodeInput struct {
 	TaskID              int64
 	DeviceID            string
@@ -113,6 +155,16 @@ type ReadRegistrationVerificationCodeInput struct {
 	TriggeredAt         *time.Time
 	TimeoutSeconds      int
 	PollIntervalSeconds int
+}
+
+type RegisterItemInput struct {
+	ItemID        int64
+	ProxyPolicyID int64
+}
+
+type registrationProxyContext struct {
+	Assignment *adminplusdomain.ProxyAssignment
+	ProxyURL   string
 }
 
 type Repository interface {
@@ -124,22 +176,56 @@ type Repository interface {
 	UpsertItem(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem) (*adminplusdomain.SiteDiscoveryItem, error)
 	GetItem(ctx context.Context, id int64) (*adminplusdomain.SiteDiscoveryItem, error)
 	ListItems(ctx context.Context, filter ListFilter) ([]*adminplusdomain.SiteDiscoveryItem, error)
+	ListRegistrationRecords(ctx context.Context, filter ListFilter) ([]*RegistrationRecord, error)
 	LinkSupplier(ctx context.Context, itemID int64, supplierID int64) (*adminplusdomain.SiteDiscoveryItem, error)
 	UpsertRegistrationCredential(ctx context.Context, credential *adminplusdomain.SupplierRegistrationCredential) (*adminplusdomain.SupplierRegistrationCredential, error)
+	StartRegistrationAttempt(ctx context.Context, credentialID int64, attemptedAt time.Time) (*adminplusdomain.SupplierRegistrationCredential, error)
 	UpdateRegistrationTask(ctx context.Context, credentialID int64, taskID int64, status adminplusdomain.SupplierRegistrationStatus, attemptedAt time.Time) (*adminplusdomain.SupplierRegistrationCredential, error)
+	GetRegistrationCredential(ctx context.Context, credentialID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.SiteDiscoveryItem, error)
+	GetRegistrationCredentialByDiscoveryID(ctx context.Context, discoveryID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.SiteDiscoveryItem, error)
 	GetRegistrationCredentialByTaskID(ctx context.Context, taskID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.SiteDiscoveryItem, error)
 	CompleteRegistration(ctx context.Context, credentialID int64, supplierID int64, status adminplusdomain.SupplierRegistrationStatus, errorCode string, errorMessage string, attemptedAt time.Time) (*adminplusdomain.SupplierRegistrationCredential, error)
 	ListRecommendations(ctx context.Context, threshold float64, limit int) ([]*adminplusdomain.SiteDiscoveryRecommendation, error)
 }
 
 type Service struct {
-	repo      Repository
-	suppliers *suppliersapp.Service
-	extension *extensionapp.Service
-	mail      RegistrationMailReader
-	cipher    CredentialCipher
-	client    *http.Client
-	now       func() time.Time
+	repo               Repository
+	suppliers          *suppliersapp.Service
+	extension          *extensionapp.Service
+	mail               RegistrationMailReader
+	directRegistration ports.DirectRegistrationAdapter
+	cipher             CredentialCipher
+	bizlog             *bizlogs.Recorder
+	logs               RegistrationLogReader
+	client             *http.Client
+	proxyManager       ProxyManager
+	now                func() time.Time
+	registrationLocks  keyedMutex
+}
+
+type ProxyManager interface {
+	RequestAssignment(ctx context.Context, input proxyapp.RequestAssignmentInput) (*adminplusdomain.ProxyAssignment, error)
+	ReleaseAssignment(ctx context.Context, id int64, failed bool, errorCode string, errorMessage string) (*adminplusdomain.ProxyAssignment, error)
+}
+
+type keyedMutex struct {
+	mu    sync.Mutex
+	locks map[int64]*sync.Mutex
+}
+
+func (m *keyedMutex) lock(key int64) func() {
+	m.mu.Lock()
+	if m.locks == nil {
+		m.locks = make(map[int64]*sync.Mutex)
+	}
+	lock := m.locks[key]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		m.locks[key] = lock
+	}
+	m.mu.Unlock()
+	lock.Lock()
+	return lock.Unlock
 }
 
 func NewService(repo Repository, suppliers *suppliersapp.Service, extension *extensionapp.Service, mail RegistrationMailReader, cipher CredentialCipher, client *http.Client) *Service {
@@ -155,6 +241,34 @@ func NewService(repo Repository, suppliers *suppliersapp.Service, extension *ext
 		client:    client,
 		now:       time.Now,
 	}
+}
+
+func (s *Service) WithDirectRegistration(adapter ports.DirectRegistrationAdapter) *Service {
+	if s != nil {
+		s.directRegistration = adapter
+	}
+	return s
+}
+
+func (s *Service) WithDiagnostics(recorder *bizlogs.Recorder) *Service {
+	if s != nil {
+		s.bizlog = recorder
+	}
+	return s
+}
+
+func (s *Service) WithRegistrationLogs(reader RegistrationLogReader) *Service {
+	if s != nil {
+		s.logs = reader
+	}
+	return s
+}
+
+func (s *Service) WithProxyManager(manager ProxyManager) *Service {
+	if s != nil {
+		s.proxyManager = manager
+	}
+	return s
 }
 
 func (s *Service) GetSettings(ctx context.Context) (*adminplusdomain.SiteDiscoverySettings, error) {
@@ -289,9 +403,32 @@ func (s *Service) run(ctx context.Context, in RunInput, emit RunProgressEmitter)
 		return nil, err
 	}
 	emitRunProgress(emit, RunProgressEvent{Type: "started", Level: "info", Message: "采集任务已创建", Run: run})
+	runClient := s.client
+	var proxyAssignment *adminplusdomain.ProxyAssignment
+	proxyReleased := false
+	releaseProxy := func(failed bool, code string, message string) {
+		if proxyAssignment == nil || proxyReleased || s.proxyManager == nil {
+			return
+		}
+		proxyReleased = true
+		_, _ = s.proxyManager.ReleaseAssignment(context.Background(), proxyAssignment.ID, failed, code, message)
+	}
+	if in.ProxyPolicyID > 0 {
+		assignment, client, err := s.acquireProxyForRun(ctx, in.ProxyPolicyID, run, sourceURL)
+		if err != nil {
+			return nil, s.failRunWithProgress(ctx, run, err, emit)
+		}
+		proxyAssignment = assignment
+		runClient = client
+		emitRunProgress(emit, RunProgressEvent{Type: "log", Level: "info", Message: "已绑定代理出口 assignment #" + stringFromInt64(assignment.ID), Run: run})
+		defer func() {
+			releaseProxy(false, "", "")
+		}()
+	}
 	emitRunProgress(emit, RunProgressEvent{Type: "log", Level: "info", Message: "正在读取采集源：" + sourceURL, Run: run})
-	body, err := s.fetchText(ctx, sourceURL, defaultDiscoveryFetchLimit)
+	body, err := s.fetchTextWithClient(ctx, runClient, sourceURL, defaultDiscoveryFetchLimit)
 	if err != nil {
+		releaseProxy(true, "SITE_DISCOVERY_FETCH_FAILED", err.Error())
 		return nil, s.failRunWithProgress(ctx, run, err, emit)
 	}
 	candidates, err := parseDaheiAIItems(sourceURL, body)
@@ -302,7 +439,7 @@ func (s *Service) run(ctx context.Context, in RunInput, emit RunProgressEmitter)
 		candidates = candidates[:in.Limit]
 	}
 	emitRunProgress(emit, RunProgressEvent{Type: "log", Level: "info", Message: "采集源解析完成，发现 " + stringFromInt64(int64(len(candidates))) + " 个候选网址", Run: run, Total: len(candidates)})
-	monitor := s.fetchMonitorData(ctx, sourceURL)
+	monitor := s.fetchMonitorDataWithClient(ctx, runClient, sourceURL)
 	if in.ProbeInterfaces {
 		emitRunProgress(emit, RunProgressEvent{Type: "log", Level: "info", Message: "正在通过公开接口进行二次分类并写入候选库", Run: run, Total: len(candidates)})
 	} else {
@@ -320,7 +457,7 @@ func (s *Service) run(ctx context.Context, in RunInput, emit RunProgressEmitter)
 			applyMonitor(item, m)
 		}
 	}
-	for item := range s.classifyCandidatesStream(classifyCtx, candidates, in.ProbeInterfaces, in.ProbeSites) {
+	for item := range s.classifyCandidatesStreamWithClient(classifyCtx, candidates, in.ProbeInterfaces, in.ProbeSites, runClient) {
 		if item.ClassificationStatus == adminplusdomain.SiteDiscoveryClassificationSupported {
 			supported++
 		}
@@ -364,6 +501,42 @@ func (s *Service) run(ctx context.Context, in RunInput, emit RunProgressEmitter)
 		Result:  result,
 	})
 	return result, nil
+}
+
+func (s *Service) acquireProxyForRun(ctx context.Context, policyID int64, run *adminplusdomain.SiteDiscoveryRun, sourceURL string) (*adminplusdomain.ProxyAssignment, *http.Client, error) {
+	if s.proxyManager == nil {
+		return nil, nil, badRequest("SITE_DISCOVERY_PROXY_NOT_CONFIGURED", "proxy manager is not configured")
+	}
+	parsed, err := url.Parse(sourceURL)
+	if err != nil || parsed.Host == "" {
+		return nil, nil, badRequest("SITE_DISCOVERY_SOURCE_URL_INVALID", "source url must be a valid http or https url")
+	}
+	assignment, err := s.proxyManager.RequestAssignment(ctx, proxyapp.RequestAssignmentInput{
+		TaskType:   "site_discovery",
+		TaskID:     stringFromInt64(run.ID),
+		PolicyID:   policyID,
+		TargetHost: parsed.Host,
+		Purpose:    adminplusdomain.ProxyPurposeSiteDiscovery,
+		Method:     http.MethodGet,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if assignment.MixedPort <= 0 {
+		_, _ = s.proxyManager.ReleaseAssignment(context.Background(), assignment.ID, true, "SITE_DISCOVERY_PROXY_PORT_MISSING", "proxy assignment does not include mixed port")
+		return nil, nil, badRequest("SITE_DISCOVERY_PROXY_PORT_MISSING", "proxy assignment does not include mixed port")
+	}
+	proxyURL, err := url.Parse("http://127.0.0.1:" + stringFromInt64(int64(assignment.MixedPort)))
+	if err != nil {
+		return nil, nil, err
+	}
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
+	}
+	return assignment, client, nil
 }
 
 func (s *Service) ListItems(ctx context.Context, filter ListFilter) ([]*adminplusdomain.SiteDiscoveryItem, error) {
@@ -423,9 +596,15 @@ func (s *Service) ImportItem(ctx context.Context, itemID int64) (*adminplusdomai
 }
 
 func (s *Service) RegisterItem(ctx context.Context, itemID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.ExtensionTask, error) {
-	if s == nil || s.repo == nil || s.extension == nil {
+	return s.RegisterItemWithOptions(ctx, RegisterItemInput{ItemID: itemID})
+}
+
+func (s *Service) RegisterItemWithOptions(ctx context.Context, in RegisterItemInput) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.ExtensionTask, error) {
+	if s == nil || s.repo == nil {
 		return nil, nil, internalError("site discovery registration dependencies are not configured")
 	}
+	unlock := s.registrationLocks.lock(in.ItemID)
+	defer unlock()
 	settings, err := s.GetSettings(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -436,9 +615,23 @@ func (s *Service) RegisterItem(ctx context.Context, itemID int64) (*adminplusdom
 	if strings.TrimSpace(settings.RegistrationEmail) == "" {
 		return nil, nil, badRequest("SITE_DISCOVERY_REGISTRATION_EMAIL_REQUIRED", "registration email is required")
 	}
-	item, err := s.requireSupportedItem(ctx, itemID)
+	item, err := s.requireSupportedItem(ctx, in.ItemID)
 	if err != nil {
 		return nil, nil, err
+	}
+	if item.RegistrationStatus == adminplusdomain.SupplierRegistrationStatusSucceeded {
+		return nil, nil, badRequest("SITE_DISCOVERY_ALREADY_REGISTERED", "site discovery item is already registered")
+	}
+	if isActiveRegistrationStatus(item.RegistrationStatus) {
+		credential, _, err := s.repo.GetRegistrationCredentialByDiscoveryID(ctx, item.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		var task *adminplusdomain.ExtensionTask
+		if credential != nil && credential.ExtensionTaskID > 0 && s.extension != nil {
+			task, _ = s.extension.GetTask(ctx, credential.ExtensionTaskID)
+		}
+		return credential, task, nil
 	}
 	password, err := generateRegistrationPassword(item.ProviderType)
 	if err != nil {
@@ -458,39 +651,213 @@ func (s *Service) RegisterItem(ctx context.Context, itemID int64) (*adminplusdom
 		Email:              settings.RegistrationEmail,
 		PasswordCiphertext: encrypted,
 		PasswordConfigured: true,
-		Status:             adminplusdomain.SupplierRegistrationStatusQueued,
+		Status:             adminplusdomain.SupplierRegistrationStatusRunning,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	task, err := s.extension.CreateTask(ctx, extensionapp.CreateTaskInput{
-		SupplierID:  0,
-		Type:        adminplusdomain.ExtensionTaskTypeRegisterSupplier,
-		ScheduleKey: registrationScheduleKey(item.ID, now),
-		Priority:    50,
-		MaxAttempts: 1,
-		Payload: map[string]any{
-			"discovery_id":     item.ID,
-			"registration_id":  credential.ID,
-			"register_url":     item.RegisterURL,
-			"dashboard_url":    item.DashboardURL,
-			"api_base_url":     item.APIBaseURL,
-			"provider_type":    string(item.ProviderType),
-			"source_site_id":   item.SourceSiteID,
-			"requires_manual":  true,
-			"password_in_task": false,
-		},
+	return s.runRegistrationWorkflow(ctx, item, credential, password, "start_registration", in.ProxyPolicyID)
+}
+
+func (s *Service) ListRegistrationTasks(ctx context.Context, filter ListFilter) ([]*RegistrationTaskView, error) {
+	if s == nil || s.repo == nil || s.extension == nil {
+		return nil, internalError("site discovery registration dependencies are not configured")
+	}
+	if filter.ProviderType != "" && filter.ProviderType != adminplusdomain.SupplierTypeNewAPI && filter.ProviderType != adminplusdomain.SupplierTypeSub2API {
+		return nil, badRequest("SITE_DISCOVERY_PROVIDER_TYPE_UNSUPPORTED", "only new_api and sub2api discovery filters are supported")
+	}
+	if filter.Limit <= 0 || filter.Limit > 1000 {
+		filter.Limit = 1000
+	}
+	filter.Query = strings.TrimSpace(filter.Query)
+	records, err := s.repo.ListRegistrationRecords(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	tasks, err := s.extension.ListTasks(ctx, extensionapp.TaskFilter{
+		Type:  adminplusdomain.ExtensionTaskTypeRegisterSupplier,
+		Limit: 1000,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	credential, err = s.repo.UpdateRegistrationTask(ctx, credential.ID, task.ID, adminplusdomain.SupplierRegistrationStatusQueued, now)
+	byID := make(map[int64]*adminplusdomain.ExtensionTask, len(tasks))
+	for _, task := range tasks {
+		if task != nil {
+			byID[task.ID] = task
+		}
+	}
+	views := make([]*RegistrationTaskView, 0, len(records))
+	for _, record := range records {
+		if record == nil || record.Credential == nil || record.Item == nil {
+			continue
+		}
+		views = append(views, registrationTaskViewFromRecord(record.Credential, record.Item, byID[record.Credential.ExtensionTaskID]))
+	}
+	return views, nil
+}
+
+func (s *Service) RerunRegistration(ctx context.Context, registrationID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.ExtensionTask, error) {
+	if s == nil || s.repo == nil {
+		return nil, nil, internalError("site discovery registration dependencies are not configured")
+	}
+	if registrationID <= 0 {
+		return nil, nil, badRequest("SITE_DISCOVERY_REGISTRATION_ID_INVALID", "invalid registration id")
+	}
+	credential, item, err := s.repo.GetRegistrationCredential(ctx, registrationID)
 	if err != nil {
 		return nil, nil, err
 	}
-	return credential, task, nil
+	if credential == nil || item == nil {
+		return nil, nil, infraerrors.New(http.StatusNotFound, "SITE_DISCOVERY_REGISTRATION_CREDENTIAL_NOT_FOUND", "registration credential not found")
+	}
+	unlock := s.registrationLocks.lock(item.ID)
+	defer unlock()
+	var task *adminplusdomain.ExtensionTask
+	if s.extension != nil && credential.ExtensionTaskID > 0 {
+		task, err = s.extension.GetTask(ctx, credential.ExtensionTaskID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if task.Type != adminplusdomain.ExtensionTaskTypeRegisterSupplier {
+			return nil, nil, badRequest("SITE_DISCOVERY_REGISTRATION_TASK_REQUIRED", "extension task is not a registration task")
+		}
+	}
+	status := item.RegistrationStatus
+	if status == "" {
+		status = credential.Status
+	}
+	status = registrationStatusFromTask(task, status)
+	if !isRerunnableRegistrationStatus(status) {
+		return nil, nil, badRequest("SITE_DISCOVERY_REGISTRATION_NOT_RERUNNABLE", "registration workflow is not rerunnable")
+	}
+	if task != nil && s.extension != nil && task.Status != adminplusdomain.ExtensionTaskStatusSucceeded && task.Status != adminplusdomain.ExtensionTaskStatusCancelled {
+		if _, err := s.extension.CancelTask(ctx, extensionapp.CancelTaskInput{TaskID: task.ID, Reason: "REGISTRATION_RERUN_REQUESTED"}); err != nil {
+			return nil, nil, err
+		}
+	}
+	password, err := s.decryptRegistrationPassword(credential)
+	if err != nil {
+		return nil, nil, err
+	}
+	now := s.now().UTC()
+	credential, err = s.repo.StartRegistrationAttempt(ctx, credential.ID, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.runRegistrationWorkflow(ctx, item, credential, password, "rerun_registration", 0)
+}
+
+func (s *Service) ListRegistrationLogs(ctx context.Context, registrationID int64, limit int) (*RegistrationTaskLogsResult, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("site discovery registration dependencies are not configured")
+	}
+	if registrationID <= 0 {
+		return nil, badRequest("SITE_DISCOVERY_REGISTRATION_ID_INVALID", "invalid registration id")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	credential, item, err := s.repo.GetRegistrationCredential(ctx, registrationID)
+	if err != nil {
+		return nil, err
+	}
+	if credential == nil {
+		return nil, infraerrors.New(http.StatusNotFound, "SITE_DISCOVERY_REGISTRATION_CREDENTIAL_NOT_FOUND", "registration credential not found")
+	}
+	var task *adminplusdomain.ExtensionTask
+	if s.extension != nil && credential.ExtensionTaskID > 0 {
+		if currentTask, err := s.extension.GetTask(ctx, credential.ExtensionTaskID); err == nil {
+			task = currentTask
+		}
+	}
+	components := []string{
+		"admin_plus.registration",
+		"admin_plus.extension",
+	}
+	out := make([]*opsservice.OpsSystemLog, 0, limit)
+	if s.logs != nil {
+		for _, component := range components {
+			if list, err := s.logs.ListSystemLogs(ctx, &opsservice.OpsSystemLogFilter{
+				Page:        1,
+				PageSize:    limit,
+				Component:   component,
+				ExtraEquals: map[string]string{"registration_id": stringFromInt64(credential.ID)},
+			}); err == nil {
+				out = append(out, list.Logs...)
+			}
+		}
+		if mailLogs, err := s.logs.ListSystemLogs(ctx, &opsservice.OpsSystemLogFilter{
+			Page:        1,
+			PageSize:    limit,
+			Component:   "admin_plus.mail",
+			ExtraEquals: map[string]string{"claim_key": registrationClaimKey(credential.ID)},
+		}); err == nil {
+			out = append(out, mailLogs.Logs...)
+		}
+	}
+	out = append(out, registrationWorkflowSnapshotLog(credential, item, task))
+	out = uniqueSystemLogs(out)
+	sortSystemLogs(out)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return &RegistrationTaskLogsResult{Items: out}, nil
+}
+
+func registrationWorkflowSnapshotLog(credential *adminplusdomain.SupplierRegistrationCredential, item *adminplusdomain.SiteDiscoveryItem, task *adminplusdomain.ExtensionTask) *opsservice.OpsSystemLog {
+	if credential == nil {
+		return nil
+	}
+	createdAt := credential.UpdatedAt
+	if credential.LastAttemptAt != nil && credential.LastAttemptAt.After(createdAt) {
+		createdAt = *credential.LastAttemptAt
+	}
+	if createdAt.IsZero() {
+		createdAt = credential.CreatedAt
+	}
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	status := credential.Status
+	if task != nil {
+		status = registrationStatusFromTask(task, status)
+	}
+	extra := map[string]any{
+		"category":            bizlogs.CategoryRegistration,
+		"action":              "current_status",
+		"outcome":             bizlogs.OutcomeSucceeded,
+		"registration_id":     credential.ID,
+		"registration_status": string(status),
+	}
+	if item != nil {
+		extra["discovery_id"] = item.ID
+		extra["host"] = item.Host
+		extra["provider_type"] = string(item.ProviderType)
+		extra["source_site_id"] = item.SourceSiteID
+	}
+	if task != nil {
+		extra["task_id"] = task.ID
+		extra["task_status"] = string(task.Status)
+		extra["attempts"] = task.Attempts
+		extra["max_attempts"] = task.MaxAttempts
+		extra["device_id"] = task.DeviceID
+	}
+	if credential.ErrorCode != "" {
+		extra["reason"] = credential.ErrorCode
+	}
+	if credential.ErrorMessage != "" {
+		extra["error_message"] = credential.ErrorMessage
+	}
+	return &opsservice.OpsSystemLog{
+		CreatedAt: createdAt.UTC(),
+		Level:     bizlogs.LevelInfo,
+		Component: "admin_plus.registration",
+		Message:   "注册流程当前状态",
+		Extra:     extra,
+	}
 }
 
 func (s *Service) GetTaskRegistrationCredential(ctx context.Context, taskID int64, deviceID string, leaseToken string) (*RegisterCredentialView, error) {
@@ -553,7 +920,7 @@ func (s *Service) ReadTaskRegistrationVerificationCode(ctx context.Context, in R
 	return s.mail.ReadVerificationCodeForEmail(ctx, mailverificationapp.ReadVerificationCodeForEmailInput{
 		Provider:            mailverificationapp.ProviderGmail,
 		Email:               credential.Email,
-		ClaimKey:            "registration_task:" + stringFromInt64(task.ID),
+		ClaimKey:            registrationClaimKey(credential.ID),
 		To:                  credential.Email,
 		Keywords:            []string{"验证码", "verification code", "security code", "login code", "code"},
 		SupplierType:        item.ProviderType,
@@ -564,6 +931,10 @@ func (s *Service) ReadTaskRegistrationVerificationCode(ctx context.Context, in R
 		PollIntervalSeconds: normalizeRegistrationCodePollInterval(in.PollIntervalSeconds),
 		MaxResults:          10,
 	})
+}
+
+func registrationClaimKey(registrationID int64) string {
+	return "registration:" + stringFromInt64(registrationID)
 }
 
 func (s *Service) ListRecommendations(ctx context.Context, limit int) ([]*adminplusdomain.SiteDiscoveryRecommendation, error) {
@@ -598,6 +969,607 @@ func normalizeRegistrationCodePollInterval(seconds int) int {
 		return 30
 	}
 	return seconds
+}
+
+func (s *Service) runRegistrationWorkflow(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, password string, action string, proxyPolicyID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.ExtensionTask, error) {
+	if item == nil || credential == nil {
+		return nil, nil, internalError("registration workflow requires discovery item and credential")
+	}
+	s.recordRegistrationEvent(ctx, action, bizlogs.OutcomeSucceeded, "site discovery direct registration started", item, credential, nil, "")
+	proxyCtx, err := s.acquireProxyForRegistration(ctx, proxyPolicyID, item, credential)
+	if err != nil {
+		return s.failDirectRegistration(ctx, item, credential, err)
+	}
+	releaseProxy := func(failed bool, code string, message string) {
+		s.releaseRegistrationProxy(context.Background(), proxyCtx, failed, code, message)
+	}
+	if s.directRegistration == nil {
+		return s.queueBrowserRegistrationFallback(ctx, item, credential, "DIRECT_REGISTRATION_ADAPTER_MISSING", "direct registration adapter is not configured", proxyCtx)
+	}
+	workflowCtx, cancel := context.WithTimeout(ctx, defaultDirectRegistrationTTL)
+	defer cancel()
+	result, err := s.directRegistration.RegisterAccount(workflowCtx, ports.DirectRegistrationInput{
+		ProviderType:        item.ProviderType,
+		Origin:              firstNonEmpty(item.DashboardURL, item.RegisterURL, item.APIBaseURL),
+		APIBaseURL:          item.APIBaseURL,
+		RegisterURL:         item.RegisterURL,
+		Email:               credential.Email,
+		Password:            password,
+		Username:            credential.Email,
+		ProxyURL:            registrationProxyURL(proxyCtx),
+		RegistrationContext: registrationContextPayload(item, credential, proxyCtx),
+	})
+	if err != nil {
+		if registrationRequiresBrowserFallback(err) {
+			return s.queueBrowserRegistrationFallback(ctx, item, credential, infraerrors.Reason(err), safeRegistrationErrorMessage(err), proxyCtx)
+		}
+		releaseProxy(true, infraerrors.Reason(err), safeRegistrationErrorMessage(err))
+		return s.failDirectRegistration(ctx, item, credential, err)
+	}
+	if result == nil {
+		releaseProxy(true, "DIRECT_REGISTRATION_RESULT_EMPTY", "direct registration returned empty result")
+		return s.failDirectRegistration(ctx, item, credential, internalError("direct registration returned empty result"))
+	}
+	if result.Stage == ports.DirectRegistrationStageNeedEmailCode || result.EmailCodeRequired {
+		s.recordRegistrationEvent(ctx, "verification_code_requested", bizlogs.OutcomeSucceeded, "registration verification code requested", item, credential, nil, "")
+		code, readErr := s.readRegistrationVerificationCode(ctx, item, credential, registrationMailSiteName(item, result))
+		if readErr != nil {
+			releaseProxy(true, infraerrors.Reason(readErr), safeRegistrationErrorMessage(readErr))
+			return s.failDirectRegistration(ctx, item, credential, readErr)
+		}
+		s.recordRegistrationEvent(ctx, "verification_code_read", bizlogs.OutcomeSucceeded, "registration verification code read", item, credential, nil, "")
+		result, err = s.directRegistration.RegisterAccount(workflowCtx, ports.DirectRegistrationInput{
+			ProviderType:        item.ProviderType,
+			Origin:              firstNonEmpty(item.DashboardURL, item.RegisterURL, item.APIBaseURL),
+			APIBaseURL:          item.APIBaseURL,
+			RegisterURL:         item.RegisterURL,
+			Email:               credential.Email,
+			Password:            password,
+			Username:            credential.Email,
+			VerificationCode:    code,
+			ProxyURL:            registrationProxyURL(proxyCtx),
+			RegistrationContext: registrationContextPayload(item, credential, proxyCtx),
+		})
+		if err != nil {
+			if registrationRequiresBrowserFallback(err) {
+				return s.queueBrowserRegistrationFallback(ctx, item, credential, infraerrors.Reason(err), safeRegistrationErrorMessage(err), proxyCtx)
+			}
+			releaseProxy(true, infraerrors.Reason(err), safeRegistrationErrorMessage(err))
+			return s.failDirectRegistration(ctx, item, credential, err)
+		}
+	}
+	if result == nil || !result.Submitted {
+		releaseProxy(true, "DIRECT_REGISTRATION_RESULT_INCOMPLETE", "direct registration result is incomplete")
+		return s.failDirectRegistration(ctx, item, credential, infraerrors.New(http.StatusBadGateway, "DIRECT_REGISTRATION_RESULT_INCOMPLETE", "direct registration result is incomplete"))
+	}
+	supplier, err := s.ensureRegisteredSupplier(ctx, item, credential.Email, password)
+	if err != nil {
+		releaseProxy(true, infraerrors.Reason(err), safeRegistrationErrorMessage(err))
+		return nil, nil, err
+	}
+	updated, err := s.repo.CompleteRegistration(ctx, credential.ID, supplier.ID, adminplusdomain.SupplierRegistrationStatusSucceeded, "", "", s.now().UTC())
+	if err != nil {
+		releaseProxy(true, infraerrors.Reason(err), safeRegistrationErrorMessage(err))
+		return nil, nil, err
+	}
+	releaseProxy(false, "", "")
+	s.recordRegistrationEvent(ctx, "direct_registration_succeeded", bizlogs.OutcomeSucceeded, "site discovery direct registration succeeded", item, updated, nil, "")
+	return updated, nil, nil
+}
+
+func (s *Service) readRegistrationVerificationCode(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, siteName string) (string, error) {
+	if s.mail == nil {
+		return "", infraerrors.New(http.StatusConflict, "MAIL_VERIFICATION_READER_NOT_CONFIGURED", "mail verification reader is not configured")
+	}
+	siteName = firstNonEmpty(siteName, item.Name, item.Host)
+	triggeredAt := s.now().UTC().Add(-2 * time.Minute)
+	result, err := s.mail.ReadVerificationCodeForEmail(ctx, mailverificationapp.ReadVerificationCodeForEmailInput{
+		Provider:            mailverificationapp.ProviderGmail,
+		Email:               credential.Email,
+		ClaimKey:            registrationClaimKey(credential.ID),
+		To:                  credential.Email,
+		Keywords:            []string{"验证码", "verification code", "security code", "login code", "code"},
+		SupplierType:        item.ProviderType,
+		ExpectedPurpose:     mailverificationapp.PurposeEmailVerification,
+		SiteName:            siteName,
+		TriggeredAt:         &triggeredAt,
+		TimeoutSeconds:      90,
+		PollIntervalSeconds: 5,
+		MaxResults:          10,
+	})
+	if err != nil {
+		return "", err
+	}
+	if result == nil || strings.TrimSpace(result.Code) == "" {
+		return "", infraerrors.NotFound("MAIL_VERIFICATION_CODE_NOT_FOUND", "mail verification code not found")
+	}
+	return strings.TrimSpace(result.Code), nil
+}
+
+func registrationMailSiteName(item *adminplusdomain.SiteDiscoveryItem, result *ports.DirectRegistrationResult) string {
+	if result != nil && result.Diagnostics != nil {
+		if name := firstNonEmpty(
+			stringFromAny(result.Diagnostics["system_name"]),
+			stringFromAny(result.Diagnostics["systemName"]),
+			stringFromAny(result.Diagnostics["site_name"]),
+			stringFromAny(result.Diagnostics["siteName"]),
+		); name != "" {
+			return name
+		}
+	}
+	if item == nil {
+		return ""
+	}
+	return firstNonEmpty(item.Name, item.Host)
+}
+
+func (s *Service) acquireProxyForRegistration(ctx context.Context, policyID int64, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential) (*registrationProxyContext, error) {
+	if policyID <= 0 {
+		return nil, nil
+	}
+	if s.proxyManager == nil {
+		return nil, badRequest("SITE_DISCOVERY_PROXY_NOT_CONFIGURED", "proxy manager is not configured")
+	}
+	targetHost := registrationTargetHost(item)
+	if targetHost == "" {
+		return nil, badRequest("SITE_DISCOVERY_REGISTRATION_TARGET_INVALID", "registration target host is invalid")
+	}
+	assignment, err := s.proxyManager.RequestAssignment(ctx, proxyapp.RequestAssignmentInput{
+		TaskType:   "registration",
+		TaskID:     stringFromInt64(credential.ID),
+		PolicyID:   policyID,
+		TargetHost: targetHost,
+		Purpose:    adminplusdomain.ProxyPurposeRegistration,
+		Method:     http.MethodPost,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if assignment.MixedPort <= 0 {
+		_, _ = s.proxyManager.ReleaseAssignment(context.Background(), assignment.ID, true, "REGISTRATION_PROXY_PORT_MISSING", "proxy assignment does not include mixed port")
+		return nil, badRequest("REGISTRATION_PROXY_PORT_MISSING", "proxy assignment does not include mixed port")
+	}
+	return &registrationProxyContext{
+		Assignment: assignment,
+		ProxyURL:   "http://127.0.0.1:" + stringFromInt64(int64(assignment.MixedPort)),
+	}, nil
+}
+
+func (s *Service) releaseRegistrationProxy(ctx context.Context, proxyCtx *registrationProxyContext, failed bool, code string, message string) {
+	if s == nil || s.proxyManager == nil || proxyCtx == nil || proxyCtx.Assignment == nil {
+		return
+	}
+	if proxyCtx.Assignment.Status != adminplusdomain.ProxyAssignmentActive {
+		return
+	}
+	_, _ = s.proxyManager.ReleaseAssignment(ctx, proxyCtx.Assignment.ID, failed, code, message)
+	proxyCtx.Assignment.Status = adminplusdomain.ProxyAssignmentReleased
+	if failed {
+		proxyCtx.Assignment.Status = adminplusdomain.ProxyAssignmentFailed
+	}
+}
+
+func registrationTargetHost(item *adminplusdomain.SiteDiscoveryItem) string {
+	if item == nil {
+		return ""
+	}
+	for _, rawURL := range []string{item.RegisterURL, item.DashboardURL, item.APIBaseURL} {
+		parsed, err := url.Parse(strings.TrimSpace(rawURL))
+		if err == nil && parsed.Host != "" {
+			return parsed.Host
+		}
+	}
+	return strings.TrimSpace(item.Host)
+}
+
+func registrationProxyURL(proxyCtx *registrationProxyContext) string {
+	if proxyCtx == nil {
+		return ""
+	}
+	return proxyCtx.ProxyURL
+}
+
+func registrationContextPayload(item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, proxyCtx *registrationProxyContext) map[string]any {
+	payload := map[string]any{
+		"discovery_id":     item.ID,
+		"registration_id":  credential.ID,
+		"provider_type":    string(item.ProviderType),
+		"source_site_id":   item.SourceSiteID,
+		"registration_src": "site_discovery",
+	}
+	if proxyCtx != nil && proxyCtx.Assignment != nil {
+		payload["proxy_assignment_id"] = proxyCtx.Assignment.ID
+		payload["proxy_policy_id"] = proxyCtx.Assignment.PolicyID
+		payload["proxy_slot_id"] = proxyCtx.Assignment.SlotID
+		payload["proxy_node_id"] = proxyCtx.Assignment.NodeID
+		payload["proxy_mixed_port"] = proxyCtx.Assignment.MixedPort
+		payload["proxy_url"] = proxyCtx.ProxyURL
+		payload["proxy_required"] = true
+	}
+	return payload
+}
+
+func (s *Service) failDirectRegistration(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, err error) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.ExtensionTask, error) {
+	reason := firstNonEmpty(infraerrors.Reason(err), "DIRECT_REGISTRATION_FAILED")
+	message := safeRegistrationErrorMessage(err)
+	updated, updateErr := s.repo.CompleteRegistration(ctx, credential.ID, credential.SupplierID, adminplusdomain.SupplierRegistrationStatusFailed, reason, message, s.now().UTC())
+	if updateErr != nil {
+		return nil, nil, updateErr
+	}
+	s.recordRegistrationEvent(ctx, "direct_registration_failed", bizlogs.OutcomeFailed, "site discovery direct registration failed", item, updated, nil, reason)
+	return updated, nil, err
+}
+
+func (s *Service) queueBrowserRegistrationFallback(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, reason string, message string, proxyCtx *registrationProxyContext) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.ExtensionTask, error) {
+	if s.extension == nil {
+		err := infraerrors.New(http.StatusConflict, "BROWSER_FALLBACK_UNAVAILABLE", "browser registration fallback is not configured")
+		s.releaseRegistrationProxy(context.Background(), proxyCtx, true, firstNonEmpty(reason, infraerrors.Reason(err)), firstNonEmpty(message, err.Error()))
+		updated, updateErr := s.repo.CompleteRegistration(ctx, credential.ID, credential.SupplierID, adminplusdomain.SupplierRegistrationStatusFailed, firstNonEmpty(reason, infraerrors.Reason(err)), firstNonEmpty(message, err.Error()), s.now().UTC())
+		if updateErr != nil {
+			return nil, nil, updateErr
+		}
+		s.recordRegistrationEvent(ctx, "direct_registration_browser_fallback_unavailable", bizlogs.OutcomeFailed, "browser registration fallback is unavailable", item, updated, nil, reason)
+		return updated, nil, err
+	}
+	now := s.now().UTC()
+	task, err := s.createRegistrationAttempt(ctx, item, credential, now, proxyCtx)
+	if err != nil {
+		s.releaseRegistrationProxy(context.Background(), proxyCtx, true, infraerrors.Reason(err), safeRegistrationErrorMessage(err))
+		return nil, nil, err
+	}
+	if task == nil {
+		err := internalError("site discovery registration task was not created")
+		s.releaseRegistrationProxy(context.Background(), proxyCtx, true, infraerrors.Reason(err), safeRegistrationErrorMessage(err))
+		return nil, nil, err
+	}
+	updated, err := s.repo.UpdateRegistrationTask(ctx, credential.ID, task.ID, adminplusdomain.SupplierRegistrationStatusQueued, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.recordRegistrationEvent(ctx, "direct_registration_browser_fallback", bizlogs.OutcomeSucceeded, "site discovery registration queued for browser fallback", item, updated, task, reason)
+	return updated, task, nil
+}
+
+func (s *Service) decryptRegistrationPassword(credential *adminplusdomain.SupplierRegistrationCredential) (string, error) {
+	if credential == nil {
+		return "", infraerrors.New(http.StatusNotFound, "SITE_DISCOVERY_REGISTRATION_CREDENTIAL_NOT_FOUND", "registration credential not found")
+	}
+	if s.cipher == nil {
+		return "", internalError("registration credential cipher is not configured")
+	}
+	password, err := s.cipher.Decrypt(credential.PasswordCiphertext)
+	if err != nil {
+		return "", infraerrors.New(http.StatusInternalServerError, "SITE_DISCOVERY_PASSWORD_DECRYPT_FAILED", "failed to decrypt registration password")
+	}
+	return password, nil
+}
+
+func (s *Service) ensureRegisteredSupplier(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, email string, password string) (*adminplusdomain.Supplier, error) {
+	if s.suppliers == nil {
+		return nil, internalError("supplier service is not configured")
+	}
+	if item == nil {
+		return nil, infraerrors.New(http.StatusNotFound, "SITE_DISCOVERY_ITEM_NOT_FOUND", "site discovery item not found")
+	}
+	ensured, err := s.suppliers.EnsureFromSiteCandidateWithOptions(ctx, suppliersapp.CreateFromSiteCandidateInput{
+		Name:         item.Name,
+		Type:         item.ProviderType,
+		DashboardURL: firstNonEmpty(item.DashboardURL, item.RegisterURL, item.APIBaseURL),
+		APIBaseURL:   item.APIBaseURL,
+		SourceHost:   item.Host,
+		SourceURL:    item.RegisterURL,
+		Title:        item.Name,
+	}, suppliersapp.EnsureFromSiteCandidateOptions{AllowCreate: true})
+	if err != nil {
+		return nil, err
+	}
+	if ensured == nil || ensured.Supplier == nil {
+		return nil, internalError("failed to import discovered supplier")
+	}
+	supplier := ensured.Supplier
+	updated, err := s.suppliers.Update(ctx, supplier.ID, suppliersapp.UpdateSupplierInput{
+		Name:                  supplier.Name,
+		Kind:                  supplier.Kind,
+		Type:                  supplier.Type,
+		RuntimeStatus:         supplier.RuntimeStatus,
+		HealthStatus:          supplier.HealthStatus,
+		DashboardURL:          supplier.DashboardURL,
+		APIBaseURL:            supplier.APIBaseURL,
+		ThirdPartyRechargeURL: supplier.ThirdPartyRechargeURL,
+		LocalRechargeURL:      supplier.LocalRechargeURL,
+		Contact:               supplier.Contact,
+		Notes:                 supplier.Notes,
+		BrowserLoginEnabled:   true,
+		BrowserLoginUsername:  email,
+		BrowserLoginPassword:  password,
+		BalanceCents:          supplier.BalanceCents,
+		BalanceCurrency:       supplier.BalanceCurrency,
+		RechargeMultiplier:    supplier.RechargeMultiplier,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.LinkSupplier(ctx, item.ID, updated.ID); err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+func registrationRequiresBrowserFallback(err error) bool {
+	switch infraerrors.Reason(err) {
+	case "BROWSER_FALLBACK_REQUIRED", "BROWSER_CHALLENGE_REQUIRED", "LOGIN_CAPTCHA_REQUIRED", "REGISTRATION_CAPTCHA_REQUIRED":
+		return true
+	default:
+		return false
+	}
+}
+
+func safeRegistrationErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := strings.TrimSpace(err.Error())
+	if message == "" {
+		return ""
+	}
+	message = strings.ReplaceAll(message, "\n", " ")
+	return trimLimit(message, 500)
+}
+
+func (s *Service) createRegistrationAttempt(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, now time.Time, proxyCtx *registrationProxyContext) (*adminplusdomain.ExtensionTask, error) {
+	if item == nil || credential == nil {
+		return nil, internalError("registration attempt requires discovery item and credential")
+	}
+	payload := registrationContextPayload(item, credential, proxyCtx)
+	payload["register_url"] = item.RegisterURL
+	payload["dashboard_url"] = item.DashboardURL
+	payload["api_base_url"] = item.APIBaseURL
+	payload["requires_manual"] = true
+	payload["password_in_task"] = false
+	task, err := s.extension.CreateTask(ctx, extensionapp.CreateTaskInput{
+		SupplierID:  0,
+		Type:        adminplusdomain.ExtensionTaskTypeRegisterSupplier,
+		ScheduleKey: registrationScheduleKey(item.ID, now),
+		Priority:    50,
+		MaxAttempts: 1,
+		Payload:     payload,
+	})
+	if err != nil {
+		s.recordRegistrationEvent(ctx, "create_attempt", bizlogs.OutcomeFailed, "site discovery registration attempt creation failed", item, credential, nil, infraerrors.Reason(err))
+		return nil, err
+	}
+	return task, nil
+}
+
+func (s *Service) recordRegistrationEvent(ctx context.Context, action string, outcome string, message string, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, task *adminplusdomain.ExtensionTask, reason string) {
+	if s == nil || s.bizlog == nil {
+		return
+	}
+	metadata := map[string]any{
+		"action": action,
+	}
+	if item != nil {
+		metadata["discovery_id"] = item.ID
+		metadata["host"] = item.Host
+		metadata["provider_type"] = string(item.ProviderType)
+		metadata["source_site_id"] = item.SourceSiteID
+	}
+	if credential != nil {
+		metadata["registration_id"] = credential.ID
+		metadata["registration_status"] = string(credential.Status)
+		if credential.SupplierID > 0 {
+			metadata["supplier_id"] = credential.SupplierID
+		}
+	}
+	if task != nil {
+		metadata["task_id"] = task.ID
+		metadata["task_status"] = string(task.Status)
+		metadata["attempts"] = task.Attempts
+		metadata["max_attempts"] = task.MaxAttempts
+	}
+	s.bizlog.Record(ctx, bizlogs.Event{
+		Level:        registrationLogLevel(outcome),
+		Category:     bizlogs.CategoryRegistration,
+		Action:       action,
+		Outcome:      outcome,
+		Message:      message,
+		SupplierID:   registrationSupplierID(credential),
+		ProviderType: registrationProviderType(item),
+		Reason:       reason,
+		Metadata:     metadata,
+	})
+}
+
+func registrationLogLevel(outcome string) string {
+	if outcome == bizlogs.OutcomeFailed {
+		return bizlogs.LevelWarn
+	}
+	return bizlogs.LevelInfo
+}
+
+func registrationSupplierID(credential *adminplusdomain.SupplierRegistrationCredential) int64 {
+	if credential == nil {
+		return 0
+	}
+	return credential.SupplierID
+}
+
+func registrationProviderType(item *adminplusdomain.SiteDiscoveryItem) string {
+	if item == nil {
+		return ""
+	}
+	return string(item.ProviderType)
+}
+
+func sortSystemLogs(items []*opsservice.OpsSystemLog) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i] == nil {
+			return false
+		}
+		if items[j] == nil {
+			return true
+		}
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+}
+
+func uniqueSystemLogs(items []*opsservice.OpsSystemLog) []*opsservice.OpsSystemLog {
+	if len(items) == 0 {
+		return items
+	}
+	seen := make(map[int64]struct{}, len(items))
+	out := make([]*opsservice.OpsSystemLog, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if item.ID > 0 {
+			if _, ok := seen[item.ID]; ok {
+				continue
+			}
+			seen[item.ID] = struct{}{}
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func registrationTaskViewFromRecord(credential *adminplusdomain.SupplierRegistrationCredential, item *adminplusdomain.SiteDiscoveryItem, task *adminplusdomain.ExtensionTask) *RegistrationTaskView {
+	if credential == nil || item == nil {
+		return nil
+	}
+	status := credential.Status
+	if status == "" {
+		status = item.RegistrationStatus
+	}
+	if status == "" {
+		status = adminplusdomain.SupplierRegistrationStatusPending
+	}
+	errorCode := firstNonEmpty(credential.ErrorCode, item.RegistrationErrorCode)
+	errorMessage := firstNonEmpty(credential.ErrorMessage, item.RegistrationErrorMessage)
+	createdAt := credential.CreatedAt
+	updatedAt := credential.UpdatedAt
+	if createdAt.IsZero() {
+		createdAt = item.CreatedAt
+	}
+	if updatedAt.IsZero() {
+		updatedAt = item.UpdatedAt
+	}
+	finishedAt := credential.LastAttemptAt
+	taskID := credential.ExtensionTaskID
+	taskStatus := adminplusdomain.ExtensionTaskStatus("")
+	attempts := 0
+	maxAttempts := 0
+	deviceID := ""
+	if task != nil && !isTerminalRegistrationStatus(status) {
+		taskID = task.ID
+		taskStatus = task.Status
+		if derived := registrationStatusFromTask(task, status); derived != "" {
+			status = derived
+		}
+		if task.ErrorCode != "" {
+			errorCode = task.ErrorCode
+		}
+		if task.ErrorMessage != "" {
+			errorMessage = task.ErrorMessage
+		}
+		updatedAt = task.UpdatedAt
+		finishedAt = task.FinishedAt
+		attempts = task.Attempts
+		maxAttempts = task.MaxAttempts
+		deviceID = task.DeviceID
+	}
+	discovery := cloneRegistrationDiscoveryForView(item, credential, status, taskID, errorCode, errorMessage)
+	return &RegistrationTaskView{
+		ID:             credential.ID,
+		DiscoveryID:    item.ID,
+		RegistrationID: credential.ID,
+		TaskID:         taskID,
+		Status:         status,
+		TaskStatus:     taskStatus,
+		Email:          credential.Email,
+		ErrorCode:      errorCode,
+		ErrorMessage:   errorMessage,
+		Attempts:       attempts,
+		MaxAttempts:    maxAttempts,
+		DeviceID:       deviceID,
+		CanRetry:       isRerunnableRegistrationStatus(status),
+		LastAttemptAt:  credential.LastAttemptAt,
+		CreatedAt:      createdAt,
+		UpdatedAt:      updatedAt,
+		FinishedAt:     finishedAt,
+		Discovery:      discovery,
+	}
+}
+
+func cloneRegistrationDiscoveryForView(item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, status adminplusdomain.SupplierRegistrationStatus, taskID int64, errorCode string, errorMessage string) *adminplusdomain.SiteDiscoveryItem {
+	if item == nil {
+		return nil
+	}
+	cp := *item
+	if credential != nil {
+		cp.SupplierID = firstPositiveInt64(credential.SupplierID, cp.SupplierID)
+		cp.RegistrationEmail = credential.Email
+	}
+	cp.RegistrationStatus = status
+	cp.RegistrationTaskID = taskID
+	cp.RegistrationErrorCode = errorCode
+	cp.RegistrationErrorMessage = errorMessage
+	return &cp
+}
+
+func registrationStatusFromTask(task *adminplusdomain.ExtensionTask, fallback adminplusdomain.SupplierRegistrationStatus) adminplusdomain.SupplierRegistrationStatus {
+	if task == nil {
+		return fallback
+	}
+	if isTerminalRegistrationStatus(fallback) {
+		return fallback
+	}
+	switch task.Status {
+	case adminplusdomain.ExtensionTaskStatusPending:
+		return adminplusdomain.SupplierRegistrationStatusQueued
+	case adminplusdomain.ExtensionTaskStatusClaimed, adminplusdomain.ExtensionTaskStatusRunning:
+		return adminplusdomain.SupplierRegistrationStatusRunning
+	case adminplusdomain.ExtensionTaskStatusFailed:
+		if task.ErrorCode == "REGISTRATION_VERIFICATION_REQUIRED" {
+			return adminplusdomain.SupplierRegistrationStatusWaitingManualVerification
+		}
+		return adminplusdomain.SupplierRegistrationStatusFailed
+	case adminplusdomain.ExtensionTaskStatusSucceeded:
+		if fallback != "" {
+			return fallback
+		}
+		return adminplusdomain.SupplierRegistrationStatusSucceeded
+	default:
+		return fallback
+	}
+}
+
+func isTerminalRegistrationStatus(status adminplusdomain.SupplierRegistrationStatus) bool {
+	return status == adminplusdomain.SupplierRegistrationStatusSucceeded || status == adminplusdomain.SupplierRegistrationStatusFailed || status == adminplusdomain.SupplierRegistrationStatusWaitingManualVerification
+}
+
+func isActiveRegistrationStatus(status adminplusdomain.SupplierRegistrationStatus) bool {
+	return status == adminplusdomain.SupplierRegistrationStatusQueued || status == adminplusdomain.SupplierRegistrationStatusRunning || status == adminplusdomain.SupplierRegistrationStatusPending
+}
+
+func isRerunnableRegistrationStatus(status adminplusdomain.SupplierRegistrationStatus) bool {
+	return status == adminplusdomain.SupplierRegistrationStatusQueued ||
+		status == adminplusdomain.SupplierRegistrationStatusRunning ||
+		status == adminplusdomain.SupplierRegistrationStatusFailed ||
+		status == adminplusdomain.SupplierRegistrationStatusWaitingManualVerification
+}
+
+func firstPositiveInt64(values ...int64) int64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func (s *Service) requireSupportedItem(ctx context.Context, itemID int64) (*adminplusdomain.SiteDiscoveryItem, error) {
@@ -747,6 +1719,10 @@ func siteDiscoveryClassifyProgressEvent(current int, total int, item *adminplusd
 }
 
 func (s *Service) classifyCandidatesStream(ctx context.Context, candidates []*adminplusdomain.SiteDiscoveryItem, probeInterfaces bool, probePages bool) <-chan *adminplusdomain.SiteDiscoveryItem {
+	return s.classifyCandidatesStreamWithClient(ctx, candidates, probeInterfaces, probePages, s.client)
+}
+
+func (s *Service) classifyCandidatesStreamWithClient(ctx context.Context, candidates []*adminplusdomain.SiteDiscoveryItem, probeInterfaces bool, probePages bool, client *http.Client) <-chan *adminplusdomain.SiteDiscoveryItem {
 	results := make(chan *adminplusdomain.SiteDiscoveryItem)
 	if len(candidates) == 0 {
 		close(results)
@@ -770,7 +1746,7 @@ func (s *Service) classifyCandidatesStream(ctx context.Context, candidates []*ad
 					if !ok {
 						return
 					}
-					s.classifyCandidate(ctx, item, probeInterfaces, probePages)
+					s.classifyCandidateWithClient(ctx, item, probeInterfaces, probePages, client)
 					select {
 					case <-ctx.Done():
 						return
@@ -797,18 +1773,22 @@ func (s *Service) classifyCandidatesStream(ctx context.Context, candidates []*ad
 	return results
 }
 
-func (s *Service) classifyCandidate(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, probeInterfaces bool, probePages bool) {
+func (s *Service) classifyCandidateWithClient(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, probeInterfaces bool, probePages bool, client *http.Client) {
 	classification := classifyItem(item).Merge(existingClassification(item))
 	if probeInterfaces && classification.Confidence < 0.95 {
-		classification = classification.Merge(s.probeKnownProviderInterfaces(ctx, item))
+		classification = classification.Merge(s.probeKnownProviderInterfacesWithClient(ctx, item, client))
 	}
 	if probePages && classification.Confidence < 0.95 {
-		classification = classification.Merge(s.probeSitePageClassification(ctx, item))
+		classification = classification.Merge(s.probeSitePageClassificationWithClient(ctx, item, client))
 	}
 	item.ProviderType = classification.ProviderType
 	item.ClassificationStatus = classification.Status
 	item.ClassificationConfidence = classification.Confidence
 	item.ClassificationEvidence = classification.Evidence
+}
+
+func (s *Service) classifyCandidate(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, probeInterfaces bool, probePages bool) {
+	s.classifyCandidateWithClient(ctx, item, probeInterfaces, probePages, s.client)
 }
 
 func existingClassification(item *adminplusdomain.SiteDiscoveryItem) classificationResult {
@@ -828,13 +1808,20 @@ func existingClassification(item *adminplusdomain.SiteDiscoveryItem) classificat
 }
 
 func (s *Service) fetchText(ctx context.Context, rawURL string, limit int64) (string, error) {
+	return s.fetchTextWithClient(ctx, s.client, rawURL, limit)
+}
+
+func (s *Service) fetchTextWithClient(ctx context.Context, client *http.Client, rawURL string, limit int64) (string, error) {
+	if client == nil {
+		client = s.client
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("User-Agent", "Sub2API-Admin-Plus-SiteDiscovery/1.0")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/json;q=0.8,*/*;q=0.5")
-	resp, err := s.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -850,12 +1837,16 @@ func (s *Service) fetchText(ctx context.Context, rawURL string, limit int64) (st
 }
 
 func (s *Service) fetchMonitorData(ctx context.Context, sourceURL string) map[string]map[string]any {
+	return s.fetchMonitorDataWithClient(ctx, s.client, sourceURL)
+}
+
+func (s *Service) fetchMonitorDataWithClient(ctx context.Context, client *http.Client, sourceURL string) map[string]map[string]any {
 	parsed, err := url.Parse(sourceURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return nil
 	}
 	monitorURL := parsed.Scheme + "://" + parsed.Host + "/api.php?action=status&days=7"
-	body, err := s.fetchText(ctx, monitorURL, defaultSiteProbeLimit)
+	body, err := s.fetchTextWithClient(ctx, client, monitorURL, defaultSiteProbeLimit)
 	if err != nil {
 		return nil
 	}
@@ -892,13 +1883,17 @@ func (s *Service) probeSiteClassification(ctx context.Context, item *adminplusdo
 }
 
 func (s *Service) probeSitePageClassification(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem) classificationResult {
+	return s.probeSitePageClassificationWithClient(ctx, item, s.client)
+}
+
+func (s *Service) probeSitePageClassificationWithClient(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, client *http.Client) classificationResult {
 	target := firstNonEmpty(item.RegisterURL, item.DashboardURL, item.APIBaseURL)
 	if target == "" {
 		return classificationResult{}
 	}
 	ctx, cancel := context.WithTimeout(ctx, defaultPageProbeTTL)
 	defer cancel()
-	body, err := s.fetchText(ctx, target, defaultSiteProbeLimit)
+	body, err := s.fetchTextWithClient(ctx, client, target, defaultSiteProbeLimit)
 	if err != nil {
 		return classificationResult{}
 	}
@@ -906,6 +1901,10 @@ func (s *Service) probeSitePageClassification(ctx context.Context, item *adminpl
 }
 
 func (s *Service) probeKnownProviderInterfaces(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem) classificationResult {
+	return s.probeKnownProviderInterfacesWithClient(ctx, item, s.client)
+}
+
+func (s *Service) probeKnownProviderInterfacesWithClient(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, client *http.Client) classificationResult {
 	ctx, cancel := context.WithTimeout(ctx, defaultInterfaceProbeTTL)
 	defer cancel()
 	for _, origin := range candidateOrigins(item) {
@@ -913,7 +1912,7 @@ func (s *Service) probeKnownProviderInterfaces(ctx context.Context, item *adminp
 			return classificationResult{}
 		}
 		sub2apiCtx, cancelSub2API := context.WithTimeout(ctx, defaultEndpointProbeTTL)
-		result := s.probeSub2APIInterface(sub2apiCtx, origin)
+		result := s.probeSub2APIInterfaceWithClient(sub2apiCtx, client, origin)
 		cancelSub2API()
 		if result.Status == adminplusdomain.SiteDiscoveryClassificationSupported {
 			return result
@@ -922,7 +1921,7 @@ func (s *Service) probeKnownProviderInterfaces(ctx context.Context, item *adminp
 			return classificationResult{}
 		}
 		newAPICtx, cancelNewAPI := context.WithTimeout(ctx, defaultEndpointProbeTTL)
-		result = s.probeNewAPIInterface(newAPICtx, origin)
+		result = s.probeNewAPIInterfaceWithClient(newAPICtx, client, origin)
 		cancelNewAPI()
 		if result.Status == adminplusdomain.SiteDiscoveryClassificationSupported {
 			return result
@@ -932,7 +1931,11 @@ func (s *Service) probeKnownProviderInterfaces(ctx context.Context, item *adminp
 }
 
 func (s *Service) probeSub2APIInterface(ctx context.Context, origin string) classificationResult {
-	body, err := s.fetchText(ctx, joinURLPath(origin, "/api/v1/settings/public"), defaultSiteProbeLimit)
+	return s.probeSub2APIInterfaceWithClient(ctx, s.client, origin)
+}
+
+func (s *Service) probeSub2APIInterfaceWithClient(ctx context.Context, client *http.Client, origin string) classificationResult {
+	body, err := s.fetchTextWithClient(ctx, client, joinURLPath(origin, "/api/v1/settings/public"), defaultSiteProbeLimit)
 	if err != nil {
 		return classificationResult{}
 	}
@@ -953,7 +1956,11 @@ func (s *Service) probeSub2APIInterface(ctx context.Context, origin string) clas
 }
 
 func (s *Service) probeNewAPIInterface(ctx context.Context, origin string) classificationResult {
-	body, err := s.fetchText(ctx, joinURLPath(origin, "/api/status"), defaultSiteProbeLimit)
+	return s.probeNewAPIInterfaceWithClient(ctx, s.client, origin)
+}
+
+func (s *Service) probeNewAPIInterfaceWithClient(ctx context.Context, client *http.Client, origin string) classificationResult {
+	body, err := s.fetchTextWithClient(ctx, client, joinURLPath(origin, "/api/status"), defaultSiteProbeLimit)
 	if err != nil {
 		return classificationResult{}
 	}
@@ -1372,6 +2379,22 @@ func intFromAny(value any) int {
 	case json.Number:
 		n, _ := v.Int64()
 		return int(n)
+	default:
+		return 0
+	}
+}
+
+func int64FromAny(value any) int64 {
+	switch v := value.(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	case json.Number:
+		n, _ := v.Int64()
+		return n
 	default:
 		return 0
 	}

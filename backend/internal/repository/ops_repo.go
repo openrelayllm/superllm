@@ -1120,6 +1120,18 @@ func buildOpsSystemLogsWhere(filter *service.OpsSystemLogFilter) (string, []any,
 			clauses = append(clauses, "(l.message ILIKE $"+n+" OR COALESCE(l.request_id,'') ILIKE $"+n+" OR COALESCE(l.client_request_id,'') ILIKE $"+n+" OR COALESCE(l.extra::text,'') ILIKE $"+n+")")
 			hasConstraint = true
 		}
+		for key, value := range filter.ExtraEquals {
+			key = strings.TrimSpace(key)
+			value = strings.TrimSpace(value)
+			if key == "" || value == "" {
+				continue
+			}
+			args = append(args, key, value)
+			keyRef := itoa(len(args) - 1)
+			valueRef := itoa(len(args))
+			clauses = append(clauses, "l.extra ->> $"+keyRef+" = $"+valueRef)
+			hasConstraint = true
+		}
 	}
 
 	return "WHERE " + strings.Join(clauses, " AND "), args, hasConstraint

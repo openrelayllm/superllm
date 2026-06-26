@@ -220,6 +220,10 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func nonBlankSecret(value string) bool {
+	return strings.TrimSpace(value) != ""
+}
+
 func originFromRawURL(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Scheme == "" || u.Host == "" {

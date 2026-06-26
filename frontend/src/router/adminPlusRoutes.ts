@@ -80,6 +80,12 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     meta: adminMeta('通知中心')
   },
   {
+    path: '/admin/system-logs',
+    name: 'AdminPlusSystemLogs',
+    component: () => import('@/views/admin/operations/SystemLogsView.vue'),
+    meta: adminMeta('系统日志')
+  },
+  {
     path: '/admin/collection/scheduler',
     redirect: redirectWithQuery('/admin/scheduler')
   },
@@ -110,6 +116,12 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     name: 'AdminPlusMailVerification',
     component: () => import('@/views/admin/operations/MailVerificationView.vue'),
     meta: adminMeta('邮箱验证码')
+  },
+  {
+    path: '/admin/proxy',
+    name: 'AdminPlusProxyManager',
+    component: () => import('@/views/admin/operations/ProxyManagerView.vue'),
+    meta: adminMeta('代理出口管理')
   },
   {
     path: '/admin/events/announcements',
@@ -163,7 +175,7 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/automation/audits',
-    redirect: redirectWithQuery('/admin/suppliers')
+    redirect: redirectWithQuery('/admin/system-logs')
   },
   {
     path: '/admin/operations',
@@ -216,6 +228,10 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   {
     path: '/admin/operations/notifications',
     redirect: redirectWithQuery('/admin/scheduler/notifications')
+  },
+  {
+    path: '/admin/operations/audits',
+    redirect: redirectWithQuery('/admin/system-logs')
   },
   {
     path: '/admin/settings',

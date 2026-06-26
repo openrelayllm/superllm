@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,7 +27,7 @@ func TestClientDirectLoginStoresCookieAndProbesSelfWithUserHeader(t *testing.T) 
 			var payload map[string]any
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
 			require.Equal(t, "ops@example.com", payload["username"])
-			require.Equal(t, "secret", payload["password"])
+			require.Equal(t, " secret ", payload["password"])
 			http.SetCookie(w, &http.Cookie{
 				Name:     "session",
 				Value:    "signed-session",
@@ -55,7 +56,7 @@ func TestClientDirectLoginStoresCookieAndProbesSelfWithUserHeader(t *testing.T) 
 		Origin:     server.URL,
 		APIBaseURL: server.URL,
 		Username:   "ops@example.com",
-		Password:   "secret",
+		Password:   " secret ",
 	})
 
 	require.NoError(t, err)
@@ -539,4 +540,264 @@ func TestClientDirectLoginRequiresBrowserFallbackFor2FAAndTurnstile(t *testing.T
 			require.Equal(t, tt.reason, infraerrors.Reason(err))
 		})
 	}
+}
+
+func TestClientRegisterAccountDirectSuccess(t *testing.T) {
+	var sawStatus bool
+	var sawRegister bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			require.Equal(t, http.MethodGet, r.Method)
+			sawStatus = true
+			_, _ = w.Write([]byte(`{"success":true,"data":{"register_enabled":true,"password_register_enabled":true,"email_verification":false,"turnstile_check":false}}`))
+		case "/api/user/register":
+			require.Equal(t, http.MethodPost, r.Method)
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			require.Equal(t, "ops", payload["username"])
+			require.Equal(t, "ops@example.com", payload["email"])
+			require.Equal(t, " secret ", payload["password"])
+			require.Equal(t, "", payload["verification_code"])
+			sawRegister = true
+			_, _ = w.Write([]byte(`{"success":true,"message":"","data":{"id":42,"username":"ops"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.RegisterAccount(context.Background(), ports.DirectRegistrationInput{
+		ProviderType: "new_api",
+		Origin:       server.URL + "/login",
+		APIBaseURL:   server.URL,
+		Email:        "ops@example.com",
+		Password:     " secret ",
+		Username:     "ops",
+	})
+
+	require.NoError(t, err)
+	require.True(t, sawStatus)
+	require.True(t, sawRegister)
+	require.Equal(t, ports.DirectRegistrationStageCompleted, result.Stage)
+	require.True(t, result.Submitted)
+	require.Equal(t, server.URL, result.Origin)
+	require.Equal(t, server.URL, result.APIBaseURL)
+}
+
+func TestClientRegisterAccountRequestsEmailVerificationCode(t *testing.T) {
+	var sawVerification bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"register_enabled":true,"password_register_enabled":true,"email_verification":true,"turnstile_check":false,"system_name":"大模型云算力Token","site_name":"大模型云算力"}}`))
+		case "/api/verification":
+			require.Equal(t, http.MethodGet, r.Method)
+			require.Equal(t, "ops@example.com", r.URL.Query().Get("email"))
+			sawVerification = true
+			_, _ = w.Write([]byte(`{"success":true,"message":"","data":{}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.RegisterAccount(context.Background(), ports.DirectRegistrationInput{
+		ProviderType: "new_api",
+		Origin:       server.URL,
+		APIBaseURL:   server.URL,
+		Email:        "ops@example.com",
+		Password:     "secret",
+	})
+
+	require.NoError(t, err)
+	require.True(t, sawVerification)
+	require.Equal(t, ports.DirectRegistrationStageNeedEmailCode, result.Stage)
+	require.True(t, result.EmailCodeRequired)
+	require.Equal(t, "大模型云算力Token", result.Diagnostics["system_name"])
+	require.Equal(t, "大模型云算力", result.Diagnostics["site_name"])
+}
+
+func TestClientRegisterAccountRetriesTransientStatusEOF(t *testing.T) {
+	var statusAttempts int
+	var sawVerification bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			statusAttempts++
+			if statusAttempts < 3 {
+				panic(http.ErrAbortHandler)
+			}
+			_, _ = w.Write([]byte(`{"success":true,"data":{"register_enabled":true,"password_register_enabled":true,"email_verification":true,"turnstile_check":false}}`))
+		case "/api/verification":
+			sawVerification = true
+			_, _ = w.Write([]byte(`{"success":true,"message":"","data":{}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.RegisterAccount(context.Background(), ports.DirectRegistrationInput{
+		ProviderType: "new_api",
+		Origin:       server.URL,
+		APIBaseURL:   server.URL,
+		Email:        "ops@example.com",
+		Password:     "secret",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 3, statusAttempts)
+	require.True(t, sawVerification)
+	require.Equal(t, ports.DirectRegistrationStageNeedEmailCode, result.Stage)
+}
+
+func TestClientRegisterAccountDecodesStatusBeforeConnectionClose(t *testing.T) {
+	statusStarted := make(chan struct{})
+	releaseStatus := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"register_enabled":false,"password_register_enabled":false,"email_verification":true,"turnstile_check":false,"system_name":"HTH"}}`))
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			close(statusStarted)
+			<-releaseStatus
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	defer close(releaseStatus)
+
+	httpClient := server.Client()
+	httpClient.Timeout = 5 * time.Second
+	client := NewClient(httpClient)
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := client.RegisterAccount(context.Background(), ports.DirectRegistrationInput{
+			ProviderType: "new_api",
+			Origin:       server.URL,
+			APIBaseURL:   server.URL,
+			Email:        "ops@example.com",
+			Password:     "secret",
+		})
+		errCh <- err
+	}()
+
+	<-statusStarted
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+		require.Equal(t, "REGISTRATION_DISABLED", infraerrors.Reason(err))
+	case <-time.After(time.Second):
+		t.Fatal("expected status JSON to be decoded without waiting for connection close")
+	}
+}
+
+func TestClientRegisterAccountTurnstileStatusDoesNotSkipEmailVerification(t *testing.T) {
+	var sawVerification bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"register_enabled":true,"password_register_enabled":true,"email_verification":true,"turnstile_check":true}}`))
+		case "/api/verification":
+			require.Equal(t, http.MethodGet, r.Method)
+			require.Equal(t, "ops@example.com", r.URL.Query().Get("email"))
+			sawVerification = true
+			_, _ = w.Write([]byte(`{"success":true,"message":"","data":{}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.RegisterAccount(context.Background(), ports.DirectRegistrationInput{
+		ProviderType: "new_api",
+		Origin:       server.URL + "/sign-up",
+		APIBaseURL:   server.URL,
+		Email:        "ops@example.com",
+		Password:     "secret",
+	})
+
+	require.NoError(t, err)
+	require.True(t, sawVerification)
+	require.Equal(t, ports.DirectRegistrationStageNeedEmailCode, result.Stage)
+	require.True(t, result.EmailCodeRequired)
+	require.Equal(t, true, result.Diagnostics["turnstile_check"])
+}
+
+func TestClientRegisterAccountTurnstileStatusDoesNotSkipRegistrationSubmit(t *testing.T) {
+	var sawRegister bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"register_enabled":true,"password_register_enabled":true,"email_verification":false,"turnstile_check":true}}`))
+		case "/api/user/register":
+			require.Equal(t, http.MethodPost, r.Method)
+			sawRegister = true
+			_, _ = w.Write([]byte(`{"success":true,"message":"","data":{"id":42,"username":"ops"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.RegisterAccount(context.Background(), ports.DirectRegistrationInput{
+		ProviderType: "new_api",
+		Origin:       server.URL + "/sign-up",
+		APIBaseURL:   server.URL,
+		Email:        "ops@example.com",
+		Password:     "secret",
+	})
+
+	require.NoError(t, err)
+	require.True(t, sawRegister)
+	require.Equal(t, ports.DirectRegistrationStageCompleted, result.Stage)
+	require.True(t, result.Submitted)
+	require.Equal(t, true, result.Diagnostics["turnstile_check"])
+}
+
+func TestClientRegisterAccountEmailVerificationMessageDoesNotRequireBrowserFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"register_enabled":true,"password_register_enabled":true,"email_verification":true,"turnstile_check":false}}`))
+		case "/api/verification":
+			_, _ = w.Write([]byte(`{"success":false,"message":"邮箱验证失败，请稍后重试"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	_, err := client.RegisterAccount(context.Background(), ports.DirectRegistrationInput{
+		ProviderType: "new_api",
+		Origin:       server.URL,
+		APIBaseURL:   server.URL,
+		Email:        "ops@example.com",
+		Password:     "secret",
+	})
+
+	require.Error(t, err)
+	require.Equal(t, "SUPPLIER_VERIFICATION_CODE_FAILED", infraerrors.Reason(err))
+}
+
+func TestIsRetryableRegistrationStatusError(t *testing.T) {
+	require.True(t, isRetryableRegistrationStatusError(io.EOF))
+	require.False(t, isRetryableRegistrationStatusError(context.DeadlineExceeded))
 }

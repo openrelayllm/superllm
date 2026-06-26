@@ -67,6 +67,9 @@ func RegisterAdminPlusRoutes(
 			siteDiscovery.GET("/items", h.AdminPlus.SiteDiscovery.ListItems)
 			siteDiscovery.POST("/items/:id/import", h.AdminPlus.SiteDiscovery.ImportItem)
 			siteDiscovery.POST("/items/:id/register", h.AdminPlus.SiteDiscovery.RegisterItem)
+			siteDiscovery.GET("/registrations", h.AdminPlus.SiteDiscovery.ListRegistrationTasks)
+			siteDiscovery.GET("/registrations/:id/logs", h.AdminPlus.SiteDiscovery.ListRegistrationLogs)
+			siteDiscovery.POST("/registrations/:id/rerun", h.AdminPlus.SiteDiscovery.RerunRegistration)
 			siteDiscovery.GET("/recommendations", h.AdminPlus.SiteDiscovery.Recommendations)
 		}
 
@@ -138,6 +141,35 @@ func RegisterAdminPlusRoutes(
 			notifications.POST("/test", h.AdminPlus.Notification.Test)
 			notifications.GET("/deliveries", h.AdminPlus.Notification.ListDeliveries)
 			notifications.POST("/deliveries/:id/retry", h.AdminPlus.Notification.RetryDelivery)
+		}
+
+		proxy := adminPlus.Group("/proxy")
+		{
+			proxy.GET("/center/status", h.AdminPlus.Proxy.CenterStatus)
+			proxy.GET("/subscriptions", h.AdminPlus.Proxy.ListSubscriptions)
+			proxy.POST("/subscriptions", h.AdminPlus.Proxy.CreateSubscription)
+			proxy.PATCH("/subscriptions/:id", h.AdminPlus.Proxy.UpdateSubscription)
+			proxy.POST("/subscriptions/:id/refresh", h.AdminPlus.Proxy.RefreshSubscription)
+			proxy.DELETE("/subscriptions/:id", h.AdminPlus.Proxy.DeleteSubscription)
+			proxy.GET("/nodes", h.AdminPlus.Proxy.ListNodes)
+			proxy.POST("/nodes/:id/check", h.AdminPlus.Proxy.CheckNode)
+			proxy.POST("/nodes/:id/disable", h.AdminPlus.Proxy.DisableNode)
+			proxy.POST("/nodes/:id/enable", h.AdminPlus.Proxy.EnableNode)
+			proxy.GET("/policies", h.AdminPlus.Proxy.ListPolicies)
+			proxy.POST("/policies", h.AdminPlus.Proxy.CreatePolicy)
+			proxy.PATCH("/policies/:id", h.AdminPlus.Proxy.UpdatePolicy)
+			proxy.DELETE("/policies/:id", h.AdminPlus.Proxy.DeletePolicy)
+			proxy.GET("/policies/:id/targets", h.AdminPlus.Proxy.ListTargets)
+			proxy.POST("/policies/:id/targets", h.AdminPlus.Proxy.CreateTarget)
+			proxy.PATCH("/policies/:id/targets/:targetID", h.AdminPlus.Proxy.UpdateTarget)
+			proxy.DELETE("/policies/:id/targets/:targetID", h.AdminPlus.Proxy.DeleteTarget)
+			proxy.GET("/runtime-slots", h.AdminPlus.Proxy.ListRuntimeSlots)
+			proxy.POST("/runtime-slots/:id/restart", h.AdminPlus.Proxy.RestartRuntimeSlot)
+			proxy.GET("/assignments", h.AdminPlus.Proxy.ListAssignments)
+			proxy.POST("/assignments", h.AdminPlus.Proxy.CreateAssignment)
+			proxy.POST("/assignments/:id/release", h.AdminPlus.Proxy.ReleaseAssignment)
+			proxy.POST("/assignments/:id/switch", h.AdminPlus.Proxy.SwitchAssignment)
+			proxy.GET("/audit-events", h.AdminPlus.Proxy.ListAuditEvents)
 		}
 
 		mails := adminPlus.Group("/mails")

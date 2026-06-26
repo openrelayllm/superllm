@@ -144,10 +144,6 @@ class AdminPlusClient {
     })
   }
 
-  async createDiscoveredSupplier(payload) {
-    return this.reportSupplierCandidate(payload)
-  }
-
   async reportSupplierCandidate(payload) {
     return this.request('/api/v1/admin-plus/extension/suppliers/report-candidate', {
       method: 'POST',
@@ -558,9 +554,6 @@ async function captureSupplierSession(supplierID, autoCreate, candidate = null, 
   if (!supplier && candidate?.supplier_id) {
     supplier = supplierFromCandidateHint(candidate)
   }
-  if (!supplier && candidate) {
-    supplier = await reportSupplierCandidateForCapture(client, config.deviceID, identification, candidate, credentials)
-  }
   if (!supplier) {
     supplier = supplierFromCurrentSite(identification, autoCreate)
   }
@@ -710,35 +703,6 @@ async function collectFrameCredential(tabId) {
     null
 }
 
-async function reportSupplierCandidateForCapture(client, deviceID, identification, candidate, credentials) {
-  const payload = buildSupplierCandidatePayload(deviceID, identification, candidate, credentials)
-  const response = await client.reportSupplierCandidate(payload)
-  if (!response?.supplier_id) {
-    const error = new Error(response?.message || 'supplier candidate report failed')
-    error.reason = response?.already_exists ? 'SUPPLIER_SITE_ALREADY_EXISTS' : 'SUPPLIER_SITE_REPORT_FAILED'
-    throw error
-  }
-  return {
-    id: response.supplier_id,
-    supplier_id: response.supplier_id,
-    name: response.supplier_name || payload.name || '当前供应商',
-    type: payload.provider_type || payload.system_type || '',
-    dashboard_url: payload.dashboard_url || '',
-    api_base_url: payload.api_base_url || '',
-    third_party_recharge_url: payload.third_party_recharge_url || '',
-    local_recharge_url: payload.local_recharge_url || '',
-    credential: {
-      browser_login_enabled: Boolean(payload.browser_login_enabled),
-      browser_login_username_configured: response.credential_saved && Boolean(payload.browser_login_username),
-      browser_login_password_configured: response.credential_saved && Boolean(payload.browser_login_password),
-      browser_login_token_configured: response.credential_saved && Boolean(payload.browser_login_token),
-      masked_browser_login_username: response.masked_username || ''
-    },
-    already_exists: Boolean(response.already_exists),
-    created: Boolean(response.created)
-  }
-}
-
 function buildSupplierCandidatePayload(deviceID, identification, candidate, credentials) {
   const activeTab = identification.activeTab || {}
   const page = candidate?.page || {}
@@ -765,7 +729,7 @@ function buildSupplierCandidatePayload(deviceID, identification, candidate, cred
   }
   return {
     device_id: firstNonEmpty(deviceID, ''),
-    auto_create_supplier: true,
+    auto_create_supplier: false,
     provider_type: providerType,
     system_type: providerType,
     type: providerType,
@@ -785,11 +749,11 @@ function buildSupplierCandidatePayload(deviceID, identification, candidate, cred
     source_host: page.host || activeTab.host || '',
     source_url: page.url || activeTab.url || '',
     origin: page.origin || activeTab.origin || '',
-    browser_login_enabled: true,
+    browser_login_enabled: Boolean(firstNonEmpty(credentials?.username, candidate?.credential?.username) && firstNonEmpty(credentials?.password, candidate?.credential?.password)),
     browser_login_username: firstNonEmpty(credentials?.username, candidate?.credential?.username),
     browser_login_password: firstNonEmpty(credentials?.password, candidate?.credential?.password),
     browser_login_token: firstNonEmpty(credentials?.token, candidate?.credential?.token),
-    notes: firstNonEmpty(candidate?.notes, 'created from Chrome plugin'),
+    notes: firstNonEmpty(candidate?.notes, 'reported from Chrome plugin'),
     page_context: pageContext
   }
 }
@@ -1248,32 +1212,8 @@ async function enrichCaptureResult(result, supplier, fallbackURL) {
   }
 }
 
-async function discoverSupplierFromCurrentSite(client, identification) {
-  const tab = identification.activeTab || summarizeTab(await getActiveTab())
-  const parsed = safeURL(tab?.url || '')
-  if (!parsed || !/^https?:$/.test(parsed.protocol)) {
-    const error = new Error('当前页面不能自动创建供应商')
-    error.reason = 'SUPPLIER_SITE_UNSUPPORTED'
-    throw error
-  }
-  const supplier = await client.createDiscoveredSupplier({
-    name: suggestedSupplierName(parsed, tab),
-    type: providerTypeFromIdentification(identification),
-    dashboard_url: parsed.href,
-    api_base_url: parsed.origin,
-    third_party_recharge_url: inferThirdPartyRechargeURL(parsed.href),
-    source_host: parsed.host,
-    source_url: parsed.href
-  })
-  return {
-    ...supplier,
-    auto_created: true,
-    score: 100
-  }
-}
-
 function supplierFromCurrentSite(identification, autoCreate) {
-  const error = new Error(autoCreate ? '请先创建供应商后再上报当前会话' : '当前网站未匹配可上报的供应商')
+  const error = new Error(autoCreate ? '请先完成注册并入库供应商后再上报当前会话' : '当前网站未匹配可上报的供应商')
   error.reason = 'SUPPLIER_SITE_NOT_MATCHED'
   throw error
 }

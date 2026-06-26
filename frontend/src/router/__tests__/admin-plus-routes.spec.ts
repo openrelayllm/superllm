@@ -27,12 +27,14 @@ describe('adminPlusRoutes', () => {
       '/admin/supplier-bindings',
       '/admin/scheduler',
       '/admin/scheduler/notifications',
+      '/admin/system-logs',
       '/admin/collection/scheduler',
       '/admin/collection/plugin-tasks',
       '/admin/collection/sessions',
       '/admin/collection/site-discovery',
       '/admin/site-catalog',
       '/admin/mails',
+      '/admin/proxy',
       '/admin/events/announcements',
       '/admin/monitoring/rates',
       '/admin/monitoring/balances',
@@ -58,6 +60,7 @@ describe('adminPlusRoutes', () => {
       '/admin/operations/billing',
       '/admin/operations/actions',
       '/admin/operations/notifications',
+      '/admin/operations/audits',
       '/admin/settings',
       '/:pathMatch(.*)*'
     ])
@@ -104,6 +107,7 @@ describe('adminPlusRoutes', () => {
         '/admin/supplier-bindings',
         '/admin/scheduler',
         '/admin/scheduler/notifications',
+        '/admin/system-logs',
         '/admin/collection/sessions',
         '/admin/collection/site-discovery',
         '/admin/site-catalog',
@@ -115,7 +119,7 @@ describe('adminPlusRoutes', () => {
       ].includes(route.path)
     )
 
-    expect(adminRoutes).toHaveLength(13)
+    expect(adminRoutes).toHaveLength(14)
     for (const route of adminRoutes) {
       expect(route.meta?.requiresAuth).toBe(true)
       expect(route.meta?.requiresAdmin).toBe(true)
@@ -148,9 +152,10 @@ describe('adminPlusRoutes', () => {
         ['/admin/operations/billing', '/admin/finance/costs'],
         ['/admin/automation/actions', '/admin/suppliers'],
         ['/admin/automation/notifications', '/admin/scheduler/notifications'],
-        ['/admin/automation/audits', '/admin/suppliers'],
+        ['/admin/automation/audits', '/admin/system-logs'],
         ['/admin/operations/actions', '/admin/suppliers'],
-        ['/admin/operations/notifications', '/admin/scheduler/notifications']
+        ['/admin/operations/notifications', '/admin/scheduler/notifications'],
+        ['/admin/operations/audits', '/admin/system-logs']
       ]
     )
 

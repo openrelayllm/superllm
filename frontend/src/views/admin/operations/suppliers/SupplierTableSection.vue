@@ -318,6 +318,7 @@
                 分组
               </button>
               <button
+                v-if="bestChannelProbeVisible(row)"
                 type="button"
                 class="btn btn-secondary btn-sm"
                 :disabled="rowChannelCheckSupplierID === row.id"
@@ -652,6 +653,7 @@ const {
   openGroupsDialog,
   loginSupplierFromRow,
   openBestChannelProbeDialog,
+  bestChannelProbeVisible,
   syncSupplierChannelFromRow,
   syncSelectedChannelChecks,
   openBestChannelScheduleDialog,

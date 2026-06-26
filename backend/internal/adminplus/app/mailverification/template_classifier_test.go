@@ -23,6 +23,19 @@ func TestDefaultTemplateClassifier(t *testing.T) {
 		require.Equal(t, PurposeEmailVerification, match.Purpose)
 	})
 
+	t.Run("new api email verification with status system name", func(t *testing.T) {
+		match := classifier.Classify(TemplateClassifyInput{
+			SupplierType: adminplusdomain.SupplierTypeNewAPI,
+			SiteName:     "大模型云算力Token",
+			Subject:      "大模型云算力Token邮箱验证邮件",
+			Text:         "您好，你正在进行大模型云算力Token邮箱验证。您的验证码为: 123456 验证码 10 分钟内有效",
+		})
+
+		require.True(t, match.Matched)
+		require.Equal(t, "new_api.email_verification", match.Family)
+		require.Equal(t, PurposeEmailVerification, match.Purpose)
+	})
+
 	t.Run("sub2api auth verification english", func(t *testing.T) {
 		match := classifier.Classify(TemplateClassifyInput{
 			SupplierType: adminplusdomain.SupplierTypeSub2API,

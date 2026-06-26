@@ -168,6 +168,12 @@ type AdminPlusConfig struct {
 	Sub2APIAdminBaseURL         string `mapstructure:"sub2api_admin_base_url"`
 	Sub2APIAdminAPIKey          string `mapstructure:"sub2api_admin_api_key"`
 	AllowEmbeddedSub2APIGateway bool   `mapstructure:"allow_embedded_sub2api_gateway"`
+	ProxyMihomoBinaryPath       string `mapstructure:"proxy_mihomo_binary_path"`
+	ProxyRuntimeDir             string `mapstructure:"proxy_runtime_dir"`
+	ProxyBaseMixedPort          int    `mapstructure:"proxy_base_mixed_port"`
+	ProxyBaseControllerPort     int    `mapstructure:"proxy_base_controller_port"`
+	ProxyMaxSlots               int    `mapstructure:"proxy_max_slots"`
+	ProxyEgressCheckURL         string `mapstructure:"proxy_egress_check_url"`
 }
 
 type IdempotencyConfig struct {

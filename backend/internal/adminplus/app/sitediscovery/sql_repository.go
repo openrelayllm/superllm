@@ -362,6 +362,58 @@ func (r *SQLRepository) ListItems(ctx context.Context, filter ListFilter) ([]*ad
 	return items, nil
 }
 
+func (r *SQLRepository) ListRegistrationRecords(ctx context.Context, filter ListFilter) ([]*RegistrationRecord, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	where := []string{"TRUE"}
+	args := make([]any, 0, 5)
+	addArg := func(value any) string {
+		args = append(args, value)
+		return fmt.Sprintf("$%d", len(args))
+	}
+	if filter.Query != "" {
+		query := "%" + strings.ToLower(filter.Query) + "%"
+		where = append(where, "(LOWER(d.name) LIKE "+addArg(query)+" OR LOWER(d.host) LIKE "+addArg(query)+" OR LOWER(d.description) LIKE "+addArg(query)+")")
+	}
+	if filter.ProviderType != "" {
+		where = append(where, "d.provider_type = "+addArg(string(filter.ProviderType)))
+	}
+	if filter.RegistrationStatus != "" {
+		where = append(where, registrationStatusSQL("rc.id", "rc.status", "t.status", "t.error_code")+" = "+addArg(string(filter.RegistrationStatus)))
+	}
+	limitRef := addArg(filter.Limit)
+	query := `
+		SELECT rc.id, rc.discovery_id, rc.supplier_id, rc.email, rc.password_ciphertext, rc.status,
+			rc.verification_status, rc.extension_task_id, rc.error_code, rc.error_message,
+			rc.last_attempt_at, rc.created_at, rc.updated_at,
+			` + siteDiscoveryColumnList("d") + `
+		FROM admin_plus_supplier_registration_credentials rc
+		INNER JOIN admin_plus_site_discoveries d ON d.id = rc.discovery_id
+		LEFT JOIN admin_plus_extension_tasks t ON t.id = rc.extension_task_id
+		WHERE ` + strings.Join(where, " AND ") + `
+		ORDER BY rc.updated_at DESC, rc.id DESC
+		LIMIT ` + limitRef
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	records := make([]*RegistrationRecord, 0)
+	for rows.Next() {
+		credential, item, err := scanRegistrationCredentialWithItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, &RegistrationRecord{Credential: credential, Item: item})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
 func (r *SQLRepository) LinkSupplier(ctx context.Context, itemID int64, supplierID int64) (*adminplusdomain.SiteDiscoveryItem, error) {
 	if r == nil || r.db == nil {
 		return nil, dbNotConfigured()
@@ -447,6 +499,31 @@ func (r *SQLRepository) UpdateRegistrationTask(ctx context.Context, credentialID
 	return scanRegistrationCredential(row)
 }
 
+func (r *SQLRepository) StartRegistrationAttempt(ctx context.Context, credentialID int64, attemptedAt time.Time) (*adminplusdomain.SupplierRegistrationCredential, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	row := r.db.QueryRowContext(ctx, `
+		UPDATE admin_plus_supplier_registration_credentials
+		SET status = $2,
+			verification_status = '',
+			extension_task_id = NULL,
+			error_code = '',
+			error_message = '',
+			last_attempt_at = $3,
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, discovery_id, supplier_id, email, password_ciphertext, status,
+			verification_status, extension_task_id, error_code, error_message,
+			last_attempt_at, created_at, updated_at
+	`, credentialID, string(adminplusdomain.SupplierRegistrationStatusRunning), nullableTimeValue(attemptedAt))
+	credential, err := scanRegistrationCredential(row)
+	if err == sql.ErrNoRows {
+		return nil, infraerrors.New(http.StatusNotFound, "SITE_DISCOVERY_REGISTRATION_CREDENTIAL_NOT_FOUND", "registration credential not found")
+	}
+	return credential, err
+}
+
 func (r *SQLRepository) CompleteRegistration(ctx context.Context, credentialID int64, supplierID int64, status adminplusdomain.SupplierRegistrationStatus, errorCode string, errorMessage string, attemptedAt time.Time) (*adminplusdomain.SupplierRegistrationCredential, error) {
 	if r == nil || r.db == nil {
 		return nil, dbNotConfigured()
@@ -470,6 +547,48 @@ func (r *SQLRepository) CompleteRegistration(ctx context.Context, credentialID i
 		return nil, infraerrors.New(http.StatusNotFound, "SITE_DISCOVERY_REGISTRATION_CREDENTIAL_NOT_FOUND", "registration credential not found")
 	}
 	return credential, err
+}
+
+func (r *SQLRepository) GetRegistrationCredential(ctx context.Context, credentialID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.SiteDiscoveryItem, error) {
+	if r == nil || r.db == nil {
+		return nil, nil, dbNotConfigured()
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT rc.id, rc.discovery_id, rc.supplier_id, rc.email, rc.password_ciphertext, rc.status,
+			rc.verification_status, rc.extension_task_id, rc.error_code, rc.error_message,
+			rc.last_attempt_at, rc.created_at, rc.updated_at,
+			`+siteDiscoveryColumnList("d")+`
+		FROM admin_plus_supplier_registration_credentials rc
+		INNER JOIN admin_plus_site_discoveries d ON d.id = rc.discovery_id
+		WHERE rc.id = $1
+	`, credentialID)
+	credential, item, err := scanRegistrationCredentialWithItem(row)
+	if err == sql.ErrNoRows {
+		return nil, nil, infraerrors.New(http.StatusNotFound, "SITE_DISCOVERY_REGISTRATION_CREDENTIAL_NOT_FOUND", "registration credential not found")
+	}
+	return credential, item, err
+}
+
+func (r *SQLRepository) GetRegistrationCredentialByDiscoveryID(ctx context.Context, discoveryID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.SiteDiscoveryItem, error) {
+	if r == nil || r.db == nil {
+		return nil, nil, dbNotConfigured()
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT rc.id, rc.discovery_id, rc.supplier_id, rc.email, rc.password_ciphertext, rc.status,
+			rc.verification_status, rc.extension_task_id, rc.error_code, rc.error_message,
+			rc.last_attempt_at, rc.created_at, rc.updated_at,
+			`+siteDiscoveryColumnList("d")+`
+		FROM admin_plus_supplier_registration_credentials rc
+		INNER JOIN admin_plus_site_discoveries d ON d.id = rc.discovery_id
+		WHERE rc.discovery_id = $1
+		ORDER BY rc.updated_at DESC, rc.id DESC
+		LIMIT 1
+	`, discoveryID)
+	credential, item, err := scanRegistrationCredentialWithItem(row)
+	if err == sql.ErrNoRows {
+		return nil, nil, nil
+	}
+	return credential, item, err
 }
 
 func (r *SQLRepository) GetRegistrationCredentialByTaskID(ctx context.Context, taskID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.SiteDiscoveryItem, error) {
@@ -807,15 +926,7 @@ func (s recommendationScanner) Scan(dest ...any) error {
 func siteDiscoverySelectClause() string {
 	return `
 		SELECT ` + siteDiscoveryColumnList("d") + `,
-			CASE
-				WHEN rc.registration_id IS NULL THEN ''
-				WHEN rc.registration_status IN ('succeeded', 'failed', 'waiting_manual_verification') THEN rc.registration_status
-				WHEN rc.task_status IN ('claimed', 'running') THEN 'running'
-				WHEN rc.task_status = 'pending' THEN 'queued'
-				WHEN rc.task_status = 'failed' AND rc.task_error_code = 'REGISTRATION_VERIFICATION_REQUIRED' THEN 'waiting_manual_verification'
-				WHEN rc.task_status = 'failed' THEN 'failed'
-				ELSE rc.registration_status
-			END AS registration_status,
+			` + registrationStatusSQL("rc.registration_id", "rc.registration_status", "rc.task_status", "rc.task_error_code") + ` AS registration_status,
 			rc.extension_task_id,
 			rc.registration_email,
 			COALESCE(NULLIF(rc.task_error_code, ''), rc.registration_error_code) AS registration_error_code,
@@ -838,6 +949,18 @@ func siteDiscoverySelectClause() string {
 			LIMIT 1
 		) rc ON TRUE
 	`
+}
+
+func registrationStatusSQL(registrationIDExpr string, registrationStatusExpr string, taskStatusExpr string, taskErrorCodeExpr string) string {
+	return `CASE
+				WHEN ` + registrationIDExpr + ` IS NULL THEN ''
+				WHEN ` + registrationStatusExpr + ` IN ('succeeded', 'failed', 'waiting_manual_verification') THEN ` + registrationStatusExpr + `
+				WHEN ` + taskStatusExpr + ` IN ('claimed', 'running') THEN 'running'
+				WHEN ` + taskStatusExpr + ` = 'pending' THEN 'queued'
+				WHEN ` + taskStatusExpr + ` = 'failed' AND ` + taskErrorCodeExpr + ` = 'REGISTRATION_VERIFICATION_REQUIRED' THEN 'waiting_manual_verification'
+				WHEN ` + taskStatusExpr + ` = 'failed' THEN 'failed'
+				ELSE ` + registrationStatusExpr + `
+			END`
 }
 
 func siteDiscoveryReturningClause() string {

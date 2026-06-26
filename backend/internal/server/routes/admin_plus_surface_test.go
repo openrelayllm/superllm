@@ -16,6 +16,7 @@ import (
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	mailverificationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
 	notificationsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
+	proxyapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/proxy"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	schedulerapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
@@ -93,6 +94,7 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 			Scheduler:        adminplushandler.NewSchedulerHandler(schedulerapp.NewService(supplierService, extensionService)),
 			Action:           adminplushandler.NewActionHandler(actionsapp.NewRuleService()),
 			Sub2API:          adminplushandler.NewSub2APIHandler(sub2apiapp.NewService(newRouteSurfaceSub2APIRepository(), newRouteSurfaceSub2APIRuntimeReader())),
+			Proxy:            adminplushandler.NewProxyHandler(proxyapp.NewService(nil, nil, nil, nil, proxyapp.RuntimeConfig{})),
 		},
 	}
 
@@ -208,6 +210,9 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin-plus/costs/ledger-overview",
 		"GET /api/v1/admin-plus/costs/suppliers",
 		"GET /api/v1/admin-plus/supplier-channel-checks/best",
+		"GET /api/v1/admin-plus/site-discovery/registrations",
+		"GET /api/v1/admin-plus/site-discovery/registrations/:id/logs",
+		"POST /api/v1/admin-plus/site-discovery/registrations/:id/rerun",
 		"POST /api/v1/admin-plus/extension/tasks",
 		"GET /api/v1/admin-plus/extension/tasks",
 		"POST /api/v1/admin-plus/extension/tasks/claim",
@@ -301,6 +306,9 @@ func TestAdminPlusDeadPathsReturn404(t *testing.T) {
 		{http.MethodPost, "/api/v1/admin-plus/promotions"},
 		{http.MethodGet, "/api/v1/admin-plus/promotions"},
 		{http.MethodPatch, "/api/v1/admin-plus/promotions/1/ack"},
+		{http.MethodGet, "/api/v1/admin-plus/site-discovery/registration-tasks"},
+		{http.MethodGet, "/api/v1/admin-plus/site-discovery/registration-tasks/1/logs"},
+		{http.MethodPost, "/api/v1/admin-plus/site-discovery/registration-tasks/1/retry"},
 		{http.MethodPost, "/v1/chat/completions"},
 	}
 

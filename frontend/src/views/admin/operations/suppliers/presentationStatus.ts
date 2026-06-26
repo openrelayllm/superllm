@@ -89,6 +89,11 @@ export function attachPresentationStatus(ctx: any) {
     return '校验本地分组绑定后，将该最佳渠道对应本地账号加入调度'
   }
 
+  function bestChannelProbeVisible(supplier: Supplier): boolean {
+    const current = supplierBestChannel(supplier.id)
+    return Boolean(current && channelHasLocalBinding(current))
+  }
+
   function groupScheduleActionLabel(group: SupplierGroup): string {
     const check = groupChannelCheck(group.id)
     if (!groupHasLocalBinding(group)) return '先开通'
@@ -420,6 +425,9 @@ export function attachPresentationStatus(ctx: any) {
     if (code && ['LOGIN_CAPTCHA_REQUIRED', 'LOGIN_MFA_REQUIRED', 'BROWSER_FALLBACK_REQUIRED'].includes(code)) {
       return '供应商登录需要验证码、2FA 或浏览器上下文，请使用 Chrome 插件采集会话'
     }
+    if (code === 'LOGIN_CREDENTIAL_INVALID') {
+      return withDiagnostic('供应商直登失败：账号或密码无效，请编辑供应商更新登录凭据后重试', diagnostic)
+    }
     if (code === 'SUPPLIER_DIRECT_LOGIN_ADMIN_REQUIRED') {
       return '供应商启用了后台模式，后端直登需要供应商管理员账号'
     }
@@ -473,6 +481,8 @@ export function attachPresentationStatus(ctx: any) {
   }
 
   function errorMessage(error: unknown, fallback: string): string {
+    const code = extractApiErrorCode(error)
+    if (code === 'LOGIN_CREDENTIAL_INVALID') return '供应商直登失败：账号或密码无效，请编辑供应商更新登录凭据后重试'
     return (error as { message?: string })?.message || fallback
   }
 
@@ -550,6 +560,7 @@ export function attachPresentationStatus(ctx: any) {
     bestChannelActionLabel,
     bestChannelActionIcon,
     bestChannelActionTitle,
+    bestChannelProbeVisible,
     groupScheduleActionLabel,
     groupScheduleActionIcon,
     groupScheduleActionDisabled,

@@ -220,6 +220,7 @@ type OpsSystemLogFilter struct {
 	Platform        string
 	Model           string
 	Query           string
+	ExtraEquals     map[string]string
 
 	Page     int
 	PageSize int

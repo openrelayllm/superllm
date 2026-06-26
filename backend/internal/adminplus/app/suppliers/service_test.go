@@ -33,6 +33,33 @@ func TestServiceCreateSupplierDefaultsToMonitorOnly(t *testing.T) {
 	require.Equal(t, "USD", supplier.BalanceCurrency)
 }
 
+func TestServiceCreateSupplierPreservesBrowserLoginSecrets(t *testing.T) {
+	svc := NewService(NewMemoryRepository())
+
+	supplier, err := svc.Create(context.Background(), CreateSupplierInput{
+		Name:                 "Relay",
+		Kind:                 adminplusdomain.SupplierKindRelay,
+		Type:                 adminplusdomain.SupplierTypeSub2API,
+		DashboardURL:         "https://relay.example.com",
+		BrowserLoginEnabled:  true,
+		BrowserLoginUsername: " ops@example.com ",
+		BrowserLoginPassword: " secret-with-spaces ",
+		BrowserLoginToken:    " token-with-spaces ",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "ops@example.com", supplier.BrowserLoginUsername)
+	require.Equal(t, " secret-with-spaces ", supplier.BrowserLoginPassword)
+	require.Equal(t, " token-with-spaces ", supplier.BrowserLoginToken)
+	require.True(t, supplier.Credential.BrowserLoginPasswordConfigured)
+	require.True(t, supplier.Credential.BrowserLoginTokenConfigured)
+
+	credential, err := svc.GetBrowserCredential(context.Background(), supplier.ID)
+	require.NoError(t, err)
+	require.Equal(t, " secret-with-spaces ", credential.Password)
+	require.Equal(t, " token-with-spaces ", credential.Token)
+}
+
 func TestServiceCreateCandidateRequiresPositiveBalance(t *testing.T) {
 	svc := NewService(NewMemoryRepository())
 
@@ -226,13 +253,13 @@ func TestServiceMatchSitePrefersExactHostPort(t *testing.T) {
 func TestServiceEnsureFromSiteCandidateCreatesSub2APISupplier(t *testing.T) {
 	svc := NewService(NewMemoryRepository())
 
-	result, err := svc.EnsureFromSiteCandidate(context.Background(), CreateFromSiteCandidateInput{
+	result, err := svc.EnsureFromSiteCandidateWithOptions(context.Background(), CreateFromSiteCandidateInput{
 		Name:         "AI Pixel",
 		DashboardURL: "https://ai-pixel.online/dashboard",
 		APIBaseURL:   "https://ai-pixel.online",
 		SourceHost:   "ai-pixel.online",
 		SourceURL:    "https://ai-pixel.online/dashboard",
-	})
+	}, EnsureFromSiteCandidateOptions{AllowCreate: true})
 
 	require.NoError(t, err)
 	require.True(t, result.Created)
@@ -251,17 +278,33 @@ func TestServiceEnsureFromSiteCandidateCreatesSub2APISupplier(t *testing.T) {
 	require.Equal(t, result.Supplier.ID, matched.Supplier.ID)
 }
 
-func TestServiceEnsureFromSiteCandidateCreatesNewAPISupplier(t *testing.T) {
+func TestServiceEnsureFromSiteCandidateRequiresRegistrationBeforeCreate(t *testing.T) {
 	svc := NewService(NewMemoryRepository())
 
 	result, err := svc.EnsureFromSiteCandidate(context.Background(), CreateFromSiteCandidateInput{
+		Name:         "AI Pixel",
+		DashboardURL: "https://ai-pixel.online/dashboard",
+		APIBaseURL:   "https://ai-pixel.online",
+		SourceHost:   "ai-pixel.online",
+		SourceURL:    "https://ai-pixel.online/dashboard",
+	})
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Equal(t, "SUPPLIER_SITE_REGISTRATION_REQUIRED", infraerrors.Reason(err))
+}
+
+func TestServiceEnsureFromSiteCandidateCreatesNewAPISupplier(t *testing.T) {
+	svc := NewService(NewMemoryRepository())
+
+	result, err := svc.EnsureFromSiteCandidateWithOptions(context.Background(), CreateFromSiteCandidateInput{
 		Name:         "Codex APIs",
 		Type:         adminplusdomain.SupplierTypeNewAPI,
 		DashboardURL: "https://www.codexapis.com/console",
 		APIBaseURL:   "https://www.codexapis.com",
 		SourceHost:   "www.codexapis.com",
 		SourceURL:    "https://www.codexapis.com/console",
-	})
+	}, EnsureFromSiteCandidateOptions{AllowCreate: true})
 
 	require.NoError(t, err)
 	require.True(t, result.Created)
@@ -276,11 +319,11 @@ func TestServiceEnsureFromSiteCandidateCreatesNewAPISupplier(t *testing.T) {
 func TestServiceEnsureFromSiteCandidateInfersThirdPartyRechargeURL(t *testing.T) {
 	svc := NewService(NewMemoryRepository())
 
-	result, err := svc.EnsureFromSiteCandidate(context.Background(), CreateFromSiteCandidateInput{
+	result, err := svc.EnsureFromSiteCandidateWithOptions(context.Background(), CreateFromSiteCandidateInput{
 		Name:       "AI Pixel",
 		SourceHost: "ai-pixel.online",
 		SourceURL:  "https://ai-pixel.online/custom/9acb40a98e688a94",
-	})
+	}, EnsureFromSiteCandidateOptions{AllowCreate: true})
 
 	require.NoError(t, err)
 	require.True(t, result.Created)
@@ -350,6 +393,45 @@ func TestServiceUpdateSupplierKeepsBrowserCredentialWhenSecretsOmitted(t *testin
 	require.Equal(t, "ops@example.com", credential.Username)
 	require.Equal(t, "secret", credential.Password)
 	require.Equal(t, "token", credential.Token)
+}
+
+func TestServiceUpdateSupplierPreservesBrowserLoginSecrets(t *testing.T) {
+	svc := NewService(NewMemoryRepository())
+	supplier, err := svc.Create(context.Background(), CreateSupplierInput{
+		Name:                 "Relay",
+		Kind:                 adminplusdomain.SupplierKindRelay,
+		Type:                 adminplusdomain.SupplierTypeSub2API,
+		DashboardURL:         "https://relay.example.com",
+		BrowserLoginEnabled:  true,
+		BrowserLoginUsername: "ops@example.com",
+		BrowserLoginPassword: "secret",
+		BrowserLoginToken:    "token",
+	})
+	require.NoError(t, err)
+
+	updated, err := svc.Update(context.Background(), supplier.ID, UpdateSupplierInput{
+		Name:                 "Relay Updated",
+		Kind:                 adminplusdomain.SupplierKindRelay,
+		Type:                 adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus:        adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:         adminplusdomain.SupplierHealthStatusNormal,
+		DashboardURL:         "https://relay.example.com",
+		BrowserLoginEnabled:  true,
+		BrowserLoginUsername: " ops2@example.com ",
+		BrowserLoginPassword: " changed-secret ",
+		BrowserLoginToken:    " changed-token ",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "ops2@example.com", updated.BrowserLoginUsername)
+	require.Equal(t, " changed-secret ", updated.BrowserLoginPassword)
+	require.Equal(t, " changed-token ", updated.BrowserLoginToken)
+
+	credential, err := svc.GetBrowserCredential(context.Background(), supplier.ID)
+	require.NoError(t, err)
+	require.Equal(t, "ops2@example.com", credential.Username)
+	require.Equal(t, " changed-secret ", credential.Password)
+	require.Equal(t, " changed-token ", credential.Token)
 }
 
 func TestServiceDeleteSupplierCascadesAccountsInRepository(t *testing.T) {

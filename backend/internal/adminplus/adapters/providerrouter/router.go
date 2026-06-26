@@ -36,6 +36,23 @@ func (r *Router) DirectLogin(ctx context.Context, in ports.DirectLoginInput) (*p
 	}
 }
 
+func (r *Router) RegisterAccount(ctx context.Context, in ports.DirectRegistrationInput) (*ports.DirectRegistrationResult, error) {
+	switch normalizeProviderType(string(in.ProviderType)) {
+	case "new_api":
+		if r == nil || r.newapi == nil {
+			return nil, internalError()
+		}
+		return r.newapi.RegisterAccount(ctx, in)
+	case "sub2api", "":
+		if r == nil || r.sub2api == nil {
+			return nil, internalError()
+		}
+		return r.sub2api.RegisterAccount(ctx, in)
+	default:
+		return nil, capabilityMissing("SUPPLIER_DIRECT_REGISTRATION_UNSUPPORTED", "supplier type does not support direct registration")
+	}
+}
+
 func (r *Router) ProbeSub2APIUserProfile(ctx context.Context, in ports.SessionProbeInput) (*ports.SessionProbeResult, error) {
 	if providerTypeFromBundle(in.Bundle) == "new_api" {
 		if r == nil || r.newapi == nil {

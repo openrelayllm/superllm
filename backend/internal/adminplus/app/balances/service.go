@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -103,6 +104,7 @@ type Service struct {
 	session  SessionReader
 	reader   ports.SessionProbeAdapter
 	cache    BalanceCache
+	bizlog   *bizlogs.Recorder
 	freshFor time.Duration
 	cacheTTL time.Duration
 	now      func() time.Time
@@ -141,6 +143,13 @@ func NewServiceWithCurrentCache(repo Repository, notifier Notifier, session Sess
 	service := NewServiceWithDependencies(repo, notifier, session, reader)
 	service.cache = cache
 	return service
+}
+
+func (s *Service) WithDiagnostics(recorder *bizlogs.Recorder) *Service {
+	if s != nil {
+		s.bizlog = recorder
+	}
+	return s
 }
 
 func (s *Service) CanSyncFromSession() bool {
@@ -203,10 +212,15 @@ func (s *Service) SyncFromSession(ctx context.Context, in SyncFromSessionInput) 
 	}
 	probeInput, err := s.session.DecryptedProbeInput(ctx, in.SupplierID)
 	if err != nil {
+		s.recordSyncFailure(ctx, in.SupplierID, "decrypt_session", err, nil)
 		return nil, err
 	}
 	probe, err := s.reader.ProbeSub2APIUserProfile(ctx, probeInput)
 	if err != nil {
+		s.recordSyncFailure(ctx, in.SupplierID, "probe_profile", err, map[string]any{
+			"origin":       probeInput.Origin,
+			"api_base_url": probeInput.APIBaseURL,
+		})
 		return nil, err
 	}
 	result := &SyncFromSessionResult{
@@ -237,6 +251,11 @@ func (s *Service) SyncFromSession(ctx context.Context, in SyncFromSessionInput) 
 				CapturedAt: &probe.ProbedAt,
 			})
 			if err != nil {
+				s.recordSyncFailure(ctx, in.SupplierID, "record_snapshot", err, map[string]any{
+					"system_type":  probe.SystemType,
+					"origin":       probe.Origin,
+					"api_base_url": probe.APIBaseURL,
+				})
 				return nil, err
 			}
 			result.Event = event
@@ -246,7 +265,64 @@ func (s *Service) SyncFromSession(ctx context.Context, in SyncFromSessionInput) 
 	if result.SyncedAt.IsZero() {
 		result.SyncedAt = s.now().UTC()
 	}
+	s.recordSyncSuccess(ctx, result)
 	return result, nil
+}
+
+func (s *Service) recordSyncFailure(ctx context.Context, supplierID int64, action string, err error, metadata map[string]any) {
+	if s == nil || s.bizlog == nil {
+		return
+	}
+	if strings.TrimSpace(action) == "" {
+		action = "sync_from_session"
+	}
+	event := bizlogs.EventFromError(bizlogs.Event{
+		Level:      bizlogs.LevelWarn,
+		Category:   bizlogs.CategoryBalance,
+		Action:     action,
+		Outcome:    bizlogs.OutcomeFailed,
+		Message:    "supplier balance sync failed",
+		SupplierID: supplierID,
+		Metadata:   metadata,
+	}, err)
+	s.bizlog.Record(ctx, event)
+}
+
+func (s *Service) recordSyncSuccess(ctx context.Context, result *SyncFromSessionResult) {
+	if s == nil || s.bizlog == nil || result == nil {
+		return
+	}
+	metadata := map[string]any{
+		"system_type":  result.SystemType,
+		"origin":       result.Origin,
+		"api_base_url": result.APIBaseURL,
+	}
+	if result.Probe != nil {
+		metadata["probe_status"] = result.Probe.Status
+	}
+	if result.Snapshot != nil {
+		metadata["balance_cents"] = result.Snapshot.BalanceCents
+		metadata["currency"] = result.Snapshot.Currency
+		metadata["switch_eligible"] = result.Snapshot.SwitchEligible
+	}
+	if result.Event != nil {
+		metadata["event_type"] = string(result.Event.Type)
+		metadata["event_status"] = string(result.Event.Status)
+	}
+	message := "supplier balance sync succeeded"
+	if result.Snapshot == nil {
+		message = "supplier balance sync succeeded without balance snapshot"
+	}
+	s.bizlog.Record(ctx, bizlogs.Event{
+		Level:        bizlogs.LevelInfo,
+		Category:     bizlogs.CategoryBalance,
+		Action:       "sync_from_session",
+		Outcome:      bizlogs.OutcomeSucceeded,
+		Message:      message,
+		SupplierID:   result.SupplierID,
+		ProviderType: result.SystemType,
+		Metadata:     metadata,
+	})
 }
 
 func (s *Service) GetCurrent(ctx context.Context, in CurrentBalanceInput) (*CurrentBalance, error) {

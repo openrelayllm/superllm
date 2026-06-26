@@ -278,6 +278,24 @@ func TestExtensionHandlerReportSupplierCandidateCreatesSupplierWithCredential(t 
 	require.Contains(t, credential.Body.String(), `"token":"pixel-token"`)
 }
 
+func TestExtensionHandlerReportSupplierCandidateRequiresRegisteredCredential(t *testing.T) {
+	router := newOperationsHandlerTestRouter()
+
+	reported := performJSON(t, router, http.MethodPost, "/extension/suppliers/report-candidate", `{
+		"device_id": "chrome-1",
+		"name": "Unregistered Relay",
+		"type": "new_api",
+		"dashboard_url": "https://unregistered.example.com/dashboard",
+		"api_base_url": "https://unregistered.example.com",
+		"source_url": "https://unregistered.example.com/dashboard",
+		"source_host": "unregistered.example.com",
+		"auto_create_supplier": true
+	}`)
+
+	require.Equal(t, http.StatusConflict, reported.Code, reported.Body.String())
+	require.Contains(t, reported.Body.String(), "SUPPLIER_SITE_REGISTRATION_REQUIRED")
+}
+
 func TestExtensionHandlerReportSupplierCandidateIgnoresExistingSupplierWithoutUpdating(t *testing.T) {
 	router := newOperationsHandlerTestRouter()
 
@@ -529,7 +547,10 @@ func TestCaptureSessionUsesReportedSupplierWithoutSyncingBalance(t *testing.T) {
 		"api_base_url": "`+server.URL+`",
 		"source_url": "`+server.URL+`/dashboard",
 		"source_host": "`+strings.TrimPrefix(server.URL, "http://")+`",
-		"auto_create_supplier": true
+		"auto_create_supplier": true,
+		"browser_login_enabled": true,
+		"browser_login_username": "registered@example.com",
+		"browser_login_password": "registered-secret"
 	}`)
 	require.Equal(t, http.StatusOK, reported.Code, reported.Body.String())
 	var reportBody struct {

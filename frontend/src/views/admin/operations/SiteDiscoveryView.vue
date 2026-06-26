@@ -5,7 +5,7 @@
         <div>
           <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">渠道索引采集</h1>
           <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-            daheiai 渠道索引、注册任务、已注册账号和低倍率充值推荐。
+            daheiai 渠道索引、自动注册流程、已注册账号和低倍率充值推荐。
           </p>
         </div>
         <div class="flex flex-wrap gap-2">
@@ -84,10 +84,17 @@
                 </button>
               </div>
             </div>
-            <div class="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_140px_140px_120px] lg:items-end">
+            <div class="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_160px_120px_140px_120px] lg:items-end">
               <label class="block">
                 <span class="input-label">采集源</span>
                 <input v-model.trim="sourceURL" class="input font-mono text-sm" />
+              </label>
+              <label class="block">
+                <span class="input-label">代理策略</span>
+                <select v-model.number="proxyPolicyID" class="input">
+                  <option :value="0">不使用代理</option>
+                  <option v-for="policy in proxyPolicies" :key="policy.id" :value="policy.id">{{ policy.name }}</option>
+                </select>
               </label>
               <label class="block">
                 <span class="input-label">本次上限</span>
@@ -140,7 +147,7 @@
             <div class="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-dark-700">
               <div>
                 <h2 class="text-lg font-semibold text-gray-900 dark:text-white">最近注册</h2>
-                <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">插件已提交注册表单的渠道。</p>
+                <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">后端已完成注册并自动入库的渠道。</p>
               </div>
               <button type="button" class="btn btn-secondary btn-sm" @click="activeTab = 'registered'">查看全部</button>
             </div>
@@ -165,7 +172,7 @@
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">注册配置</h2>
             <dl class="mt-4 space-y-3 text-sm">
               <div class="flex items-center justify-between gap-4">
-                <dt class="text-gray-500 dark:text-dark-400">插件注册</dt>
+                <dt class="text-gray-500 dark:text-dark-400">自动注册</dt>
                 <dd class="font-medium" :class="settings.registration_enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-dark-400'">
                   {{ settings.registration_enabled ? '已启用' : '未启用' }}
                 </dd>
@@ -184,17 +191,17 @@
 
           <div class="card overflow-hidden">
             <div class="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-dark-700">
-              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">注册任务</h2>
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">注册流程</h2>
               <button type="button" class="btn btn-secondary btn-sm" @click="activeTab = 'tasks'">查看</button>
             </div>
             <div class="divide-y divide-gray-100 dark:divide-dark-700">
-              <div v-if="registrationTaskItems.length === 0" class="px-5 py-8 text-center text-sm text-gray-500 dark:text-dark-400">暂无注册任务</div>
-              <div v-for="item in registrationTaskItems.slice(0, 5)" :key="item.id" class="px-5 py-4">
+              <div v-if="registrationTasks.length === 0" class="px-5 py-8 text-center text-sm text-gray-500 dark:text-dark-400">暂无注册流程</div>
+              <div v-for="task in registrationTasks.slice(0, 5)" :key="task.id" class="px-5 py-4">
                 <div class="flex items-center justify-between gap-3">
-                  <span class="min-w-0 truncate text-sm font-medium text-gray-900 dark:text-white">{{ item.name }}</span>
-                  <span class="badge shrink-0" :class="registrationClass(item.registration_status)">{{ registrationLabel(item.registration_status) }}</span>
+                  <span class="min-w-0 truncate text-sm font-medium text-gray-900 dark:text-white">{{ task.discovery.name }}</span>
+                  <span class="badge shrink-0" :class="registrationClass(task.status)">{{ registrationLabel(task.status) }}</span>
                 </div>
-                <p v-if="item.registration_error_message" class="mt-1 truncate text-xs text-rose-500">{{ item.registration_error_message }}</p>
+                <p v-if="task.error_message" class="mt-1 truncate text-xs text-rose-500">{{ task.error_message }}</p>
               </div>
             </div>
           </div>
@@ -319,15 +326,20 @@
                 <td class="px-4 py-4">
                   <span class="badge" :class="importClass(item.import_status)">{{ importLabel(item.import_status) }}</span>
                   <div v-if="item.supplier_id" class="mt-1 font-mono text-xs text-gray-500">#{{ item.supplier_id }}</div>
+                  <div v-else class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ siteDiscoveryImportHint(item) }}</div>
                 </td>
                 <td class="px-4 py-4">
                   <span class="badge" :class="registrationClass(item.registration_status)">{{ registrationLabel(item.registration_status) }}</span>
+                  <div v-if="activeTab === 'tasks' && taskIDForItem(item)" class="mt-1 font-mono text-xs text-gray-500">浏览器兜底任务 #{{ taskIDForItem(item) }}</div>
                   <div v-if="item.registration_status === 'waiting_manual_verification'" class="mt-1 max-w-[280px] text-xs text-amber-600 dark:text-amber-400">
                     请人工完成验证码或邮箱验证后重试；未完成前不会入库供应商。
                   </div>
-                  <div v-if="item.registration_task_id" class="mt-1 font-mono text-xs text-gray-500">任务 #{{ item.registration_task_id }}</div>
+                  <div v-if="activeTab !== 'tasks' && item.registration_task_id" class="mt-1 font-mono text-xs text-gray-500">浏览器兜底任务 #{{ item.registration_task_id }}</div>
                   <div v-if="item.registration_email" class="mt-1 max-w-[220px] truncate font-mono text-xs text-gray-500">{{ item.registration_email }}</div>
                   <div v-if="item.registration_error_message" class="mt-1 max-w-[260px] truncate text-xs text-rose-500">{{ item.registration_error_message }}</div>
+                  <div v-if="activeTab === 'tasks' && taskStatusForItem(item)" class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                    浏览器兜底：{{ extensionTaskStatusLabel(taskStatusForItem(item)) }}
+                  </div>
                 </td>
                 <td class="px-4 py-4">
                   <span class="badge" :class="processedClass(item)">{{ processedLabel(item) }}</span>
@@ -335,14 +347,20 @@
                 </td>
                 <td class="px-4 py-4">
                   <div class="flex justify-end gap-2">
-                    <button type="button" class="btn btn-secondary btn-sm" :disabled="!canAddToCatalog(item) || busyItemID === item.id" @click="openCatalogDialog(item)">
+                    <button v-if="activeTab !== 'tasks'" type="button" class="btn btn-secondary btn-sm" :disabled="!canAddToCatalog(item) || busyItemID === item.id" @click="openCatalogDialog(item)">
                       加入目录
                     </button>
-                    <button type="button" class="btn btn-secondary btn-sm" :disabled="!canImport(item) || busyItemID === item.id" @click="importItem(item)">
-                      导入
+                    <button v-if="activeTab !== 'tasks' && canShowImportButton(item)" type="button" class="btn btn-secondary btn-sm" :disabled="!canImport(item) || busyItemID === item.id" @click="importItem(item)">
+                      {{ item.supplier_id ? '已入库' : '导入' }}
                     </button>
-                    <button type="button" class="btn btn-primary btn-sm" :disabled="!canRegister(item) || busyItemID === item.id" @click="registerItem(item)">
+                    <button v-if="activeTab !== 'tasks'" type="button" class="btn btn-primary btn-sm" :disabled="!canRegister(item) || busyItemID === item.id" @click="registerItem(item)">
                       注册
+                    </button>
+                    <button v-else type="button" class="btn btn-primary btn-sm" :disabled="!canRerunTask(item) || busyItemID === item.id" @click="rerunRegistration(item)">
+                      重新运行
+                    </button>
+                    <button v-if="activeTab === 'tasks'" type="button" class="btn btn-secondary btn-sm" :disabled="logsLoadingRegistrationID === registrationIDForItem(item)" @click="openRegistrationLogs(item)">
+                      日志
                     </button>
                     <a :href="item.register_url" target="_blank" rel="noreferrer" class="btn btn-secondary btn-sm">打开</a>
                   </div>
@@ -407,7 +425,7 @@
             </label>
             <label class="inline-flex items-center gap-2 pb-2 text-sm text-gray-700 dark:text-dark-200">
               <input v-model="settings.registration_enabled" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" />
-              允许插件注册
+              允许自动注册
             </label>
           </div>
         </div>
@@ -418,6 +436,13 @@
             <label class="block">
               <span class="input-label">采集源</span>
               <input v-model.trim="sourceURL" class="input font-mono text-sm" />
+            </label>
+            <label class="block">
+              <span class="input-label">代理策略</span>
+              <select v-model.number="proxyPolicyID" class="input">
+                <option :value="0">不使用代理</option>
+                <option v-for="policy in proxyPolicies" :key="policy.id" :value="policy.id">{{ policy.name }}</option>
+              </select>
             </label>
             <label class="block">
               <span class="input-label">本次上限</span>
@@ -434,6 +459,41 @@
           </div>
         </aside>
       </section>
+    </div>
+
+    <div v-if="registrationLogsDialogOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div class="w-full max-w-4xl overflow-hidden rounded-lg bg-white shadow-xl dark:bg-dark-900">
+        <div class="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-dark-700">
+          <div>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">注册日志</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ selectedRegistrationTask?.discovery.name || '-' }}</p>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" @click="closeRegistrationLogs">关闭</button>
+        </div>
+        <div class="max-h-[70vh] overflow-y-auto p-5">
+          <div v-if="registrationLogsLoading" class="py-10 text-center text-sm text-gray-500 dark:text-dark-400">加载中...</div>
+          <div v-else-if="registrationLogs.length === 0" class="py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无注册日志</div>
+          <div v-else class="space-y-3">
+            <div v-for="log in registrationLogs" :key="`${log.component}:${log.id}`" class="rounded-md border border-gray-100 p-4 dark:border-dark-700">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="badge" :class="systemLogLevelClass(log.level)">{{ systemLogLevelLabel(log.level) }}</span>
+                <span class="badge badge-gray">{{ systemLogComponentLabel(log.component) }}</span>
+                <span class="font-mono text-xs text-gray-500 dark:text-dark-400">{{ formatDateTime(log.created_at) }}</span>
+              </div>
+              <div class="mt-2 text-sm font-medium text-gray-900 dark:text-white">{{ log.message || '-' }}</div>
+              <div class="mt-3 grid gap-2 md:grid-cols-2">
+                <div v-for="entry in registrationLogEntries(log)" :key="entry.key" class="text-xs">
+                  <span class="text-gray-500 dark:text-dark-400">{{ entry.label }}：</span>
+                  <span class="font-mono text-gray-800 dark:text-dark-100">{{ entry.value }}</span>
+                </div>
+              </div>
+              <div v-if="stringExtra(log, 'error_message')" class="mt-3 whitespace-pre-wrap break-words rounded bg-gray-50 p-3 font-mono text-xs text-rose-600 dark:bg-dark-800 dark:text-rose-300">
+                {{ stringExtra(log, 'error_message') }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div v-if="catalogDialogOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -563,9 +623,15 @@ import {
   listSiteCatalogTags,
   listSiteDiscoveryItems,
   listSiteDiscoveryRecommendations,
+  listSiteDiscoveryRegistrationLogs,
+  listSiteDiscoveryRegistrationTasks,
+  listProxyPolicies,
   registerSiteDiscoveryItem,
+  rerunSiteDiscoveryRegistration,
   runSiteDiscoveryStream,
   updateSiteDiscoverySettings,
+  type AdminPlusSystemLog,
+  type ExtensionTask,
   type AddDiscoveryCandidateToCatalogPayload,
   type SiteCatalogCategory,
   type SiteCatalogKind,
@@ -573,13 +639,26 @@ import {
   type SiteCatalogStatus,
   type SiteCatalogTag,
   type SiteCatalogVisibility,
+  type RegisterSiteDiscoveryItemResponse,
   type SiteDiscoveryItem,
   type SiteDiscoveryRecommendation,
+  type SiteDiscoveryRegistrationTask,
   type SiteDiscoveryRunProgressEvent,
   type SiteDiscoveryRunProgressLevel,
   type SiteDiscoveryRunResult,
-  type SiteDiscoverySettings
+  type SiteDiscoverySettings,
+  type ProxyPolicy
 } from '@/api/admin/adminPlus'
+import {
+  canImportDiscoveredSupplier,
+  canQueueSiteRegistration,
+  canRerunRegistration,
+  isSiteDiscoveryProcessed,
+  registrationClass,
+  registrationLabel,
+  siteDiscoveryProcessedLabel,
+  siteDiscoveryImportHint
+} from './siteDiscoveryPresentation'
 
 type SiteDiscoveryTab = 'dashboard' | 'urls' | 'registered' | 'tasks' | 'recommendations' | 'settings'
 type SiteDiscoveryPagination = {
@@ -618,7 +697,7 @@ const tabs: { value: SiteDiscoveryTab; label: string }[] = [
   { value: 'dashboard', label: '工作台' },
   { value: 'urls', label: '采集网址' },
   { value: 'registered', label: '注册列表' },
-  { value: 'tasks', label: '注册任务' },
+  { value: 'tasks', label: '注册流程' },
   { value: 'recommendations', label: '低倍率推荐' },
   { value: 'settings', label: '设置' }
 ]
@@ -634,9 +713,17 @@ const sourceURL = ref('https://api.daheiai.com/')
 const probeInterfaces = ref(true)
 const probeSites = ref(false)
 const runLimit = ref(0)
+const proxyPolicyID = ref(0)
+const proxyPolicies = ref<ProxyPolicy[]>([])
 const items = ref<SiteDiscoveryItem[]>([])
 const registeredItems = ref<SiteDiscoveryItem[]>([])
+const registrationTasks = ref<SiteDiscoveryRegistrationTask[]>([])
 const registrationTaskItems = ref<SiteDiscoveryItem[]>([])
+const registrationLogs = ref<AdminPlusSystemLog[]>([])
+const registrationLogsDialogOpen = ref(false)
+const registrationLogsLoading = ref(false)
+const logsLoadingRegistrationID = ref<number | null>(null)
+const selectedRegistrationTask = ref<SiteDiscoveryRegistrationTask | null>(null)
 const recommendations = ref<SiteDiscoveryRecommendation[]>([])
 const logContainerRef = ref<HTMLElement | null>(null)
 const discoveryLogs = ref<DiscoveryLogEntry[]>([])
@@ -701,7 +788,7 @@ const taskPagination = reactive<SiteDiscoveryPagination>(defaultPagination())
 
 const isTableTab = computed(() => ['urls', 'registered', 'tasks'].includes(activeTab.value))
 const supportedCount = computed(() => items.value.filter((item) => item.classification_status === 'supported').length)
-const manualCount = computed(() => registrationTaskItems.value.filter((item) => item.registration_status === 'waiting_manual_verification').length)
+const manualCount = computed(() => registrationTasks.value.filter((task) => task.status === 'waiting_manual_verification').length)
 const discoveryProgressPercent = computed(() => {
   if (!discoveryProgress.total) return running.value ? 2 : 0
   return Math.min(100, Math.round((discoveryProgress.current / discoveryProgress.total) * 100))
@@ -728,7 +815,7 @@ const activeTablePagination = computed(() => {
 
 const activeTableTitle = computed(() => {
   if (activeTab.value === 'registered') return '已注册列表'
-  if (activeTab.value === 'tasks') return '注册任务列表'
+  if (activeTab.value === 'tasks') return '注册流程列表'
   return '采集网址列表'
 })
 
@@ -740,7 +827,7 @@ const activeTableDescription = computed(() => {
 
 const activeEmptyLabel = computed(() => {
   if (activeTab.value === 'registered') return '暂无已注册记录'
-  if (activeTab.value === 'tasks') return '暂无注册任务'
+  if (activeTab.value === 'tasks') return '暂无注册流程'
   return '暂无采集网址'
 })
 
@@ -768,7 +855,7 @@ function defaultPagination(): SiteDiscoveryPagination {
 async function loadPage() {
   loading.value = true
   try {
-    await Promise.all([loadSettings(), loadItems(), loadRegisteredItems(), loadRegistrationTasks(), loadRecommendations()])
+    await Promise.all([loadSettings(), loadProxyPolicies(), loadItems(), loadRegisteredItems(), loadRegistrationTasks(), loadRecommendations()])
   } catch (error) {
     appStore.showError(errorMessage(error))
   } finally {
@@ -779,6 +866,11 @@ async function loadPage() {
 async function loadSettings() {
   const next = await getSiteDiscoverySettings()
   Object.assign(settings, next)
+}
+
+async function loadProxyPolicies() {
+  const result = await listProxyPolicies({ enabled: true, page: 1, page_size: 100 })
+  proxyPolicies.value = result.items || []
 }
 
 async function loadItems() {
@@ -809,30 +901,16 @@ async function loadRegisteredItems() {
 }
 
 async function loadRegistrationTasks() {
-  if (taskFilters.registration_status) {
-    const result = await listSiteDiscoveryItems({
-      page: taskPagination.page,
-      page_size: taskPagination.page_size,
-      q: taskFilters.q || undefined,
-      provider_type: normalizeEmpty(taskFilters.provider_type) as 'new_api' | 'sub2api' | '',
-      registration_status: taskFilters.registration_status as never
-    })
-    registrationTaskItems.value = result.items
-    applyPagination(taskPagination, result)
-    return
-  }
-
-  const result = await listSiteDiscoveryItems({
-    page: 1,
-    page_size: 1000,
+  const result = await listSiteDiscoveryRegistrationTasks({
+    page: taskPagination.page,
+    page_size: taskPagination.page_size,
     q: taskFilters.q || undefined,
-    provider_type: normalizeEmpty(taskFilters.provider_type) as 'new_api' | 'sub2api' | ''
+    provider_type: normalizeEmpty(taskFilters.provider_type) as 'new_api' | 'sub2api' | '',
+    registration_status: normalizeEmpty(taskFilters.registration_status) as never
   })
-  const filtered = result.items.filter((item) => Boolean(item.registration_status))
-  taskPagination.total = filtered.length
-  taskPagination.pages = Math.ceil(filtered.length / taskPagination.page_size)
-  const start = (taskPagination.page - 1) * taskPagination.page_size
-  registrationTaskItems.value = filtered.slice(start, start + taskPagination.page_size)
+  registrationTasks.value = result.items
+  registrationTaskItems.value = result.items.map(registrationTaskDiscovery)
+  applyPagination(taskPagination, result)
 }
 
 async function loadRecommendations() {
@@ -864,7 +942,8 @@ async function runDiscoveryNow() {
       source_url: sourceURL.value,
       probe_interfaces: probeInterfaces.value,
       probe_sites: probeSites.value,
-      limit: runLimit.value > 0 ? runLimit.value : undefined
+      limit: runLimit.value > 0 ? runLimit.value : undefined,
+      proxy_policy_id: proxyPolicyID.value > 0 ? proxyPolicyID.value : undefined
     }, (event) => {
       handleDiscoveryProgressEvent(event)
       if (event.result) completedResult.value = event.result
@@ -1013,6 +1092,7 @@ async function importItem(item: SiteDiscoveryItem) {
     await refreshActiveLists()
   } catch (error) {
     appStore.showError(errorMessage(error))
+    await refreshActiveLists()
   } finally {
     busyItemID.value = null
   }
@@ -1021,14 +1101,71 @@ async function importItem(item: SiteDiscoveryItem) {
 async function registerItem(item: SiteDiscoveryItem) {
   busyItemID.value = item.id
   try {
-    await registerSiteDiscoveryItem(item.id)
-    appStore.showSuccess('注册任务已排队；注册成功并取得凭据后才会入库供应商')
+    const result = await registerSiteDiscoveryItem(item.id)
+    appStore.showSuccess(registrationActionSuccessMessage(result))
+    taskPagination.page = 1
+    taskFilters.registration_status = ''
+    activeTab.value = 'tasks'
+    await refreshActiveLists()
+    const queued = registrationTasks.value.find((task) => task.registration_id === result.credential.id || task.id === result.credential.id)
+    if (queued) selectedRegistrationTask.value = queued
+  } catch (error) {
+    appStore.showError(errorMessage(error))
+    await refreshActiveLists()
+  } finally {
+    busyItemID.value = null
+  }
+}
+
+async function rerunRegistration(item: SiteDiscoveryItem) {
+  const task = registrationTaskForItem(item)
+  const registrationID = task?.registration_id || task?.id || 0
+  if (!task || !registrationID) return
+  busyItemID.value = item.id
+  try {
+    const result = await rerunSiteDiscoveryRegistration(registrationID)
+    appStore.showSuccess(registrationActionSuccessMessage(result, true))
     await refreshActiveLists()
   } catch (error) {
     appStore.showError(errorMessage(error))
   } finally {
     busyItemID.value = null
   }
+}
+
+function registrationActionSuccessMessage(result: RegisterSiteDiscoveryItemResponse, rerun = false): string {
+  const status = result.credential?.status || ''
+  if (status === 'succeeded') return rerun ? '注册流程已重新执行并完成入库' : '自动注册已完成并入库供应商'
+  if (status === 'failed') return '自动注册执行失败，请查看注册日志'
+  if (status === 'waiting_manual_verification') return '注册流程需要人工验证，请查看注册日志'
+  if (result.task?.id || result.credential?.extension_task_id) return '自动注册需要浏览器兜底，已创建 Chrome 插件任务'
+  if (status === 'running') return rerun ? '注册流程已重新执行' : '自动注册已开始执行'
+  return rerun ? '注册流程已重新运行' : '注册流程已开始'
+}
+
+async function openRegistrationLogs(item: SiteDiscoveryItem) {
+  const task = registrationTaskForItem(item)
+  const registrationID = task?.registration_id || task?.id || 0
+  if (!task || !registrationID) return
+  selectedRegistrationTask.value = task
+  registrationLogsDialogOpen.value = true
+  registrationLogsLoading.value = true
+  logsLoadingRegistrationID.value = registrationID
+  try {
+    const result = await listSiteDiscoveryRegistrationLogs(registrationID, { limit: 80 })
+    registrationLogs.value = result.items || []
+  } catch (error) {
+    appStore.showError(errorMessage(error))
+  } finally {
+    registrationLogsLoading.value = false
+    logsLoadingRegistrationID.value = null
+  }
+}
+
+function closeRegistrationLogs() {
+  registrationLogsDialogOpen.value = false
+  selectedRegistrationTask.value = null
+  registrationLogs.value = []
 }
 
 async function openCatalogDialog(item: SiteDiscoveryItem) {
@@ -1220,7 +1357,11 @@ function applyPagination(target: SiteDiscoveryPagination, result: { total: numbe
 }
 
 function canImport(item: SiteDiscoveryItem): boolean {
-  return item.classification_status === 'supported' && item.import_status !== 'imported' && ['new_api', 'sub2api'].includes(item.provider_type || '')
+  return item.import_status !== 'imported' && canImportDiscoveredSupplier(item)
+}
+
+function canShowImportButton(item: SiteDiscoveryItem): boolean {
+  return Boolean(item.supplier_id) || item.registration_status === 'succeeded'
 }
 
 function canAddToCatalog(item: SiteDiscoveryItem): boolean {
@@ -1228,11 +1369,40 @@ function canAddToCatalog(item: SiteDiscoveryItem): boolean {
 }
 
 function canRegister(item: SiteDiscoveryItem): boolean {
-  return settings.registration_enabled && canImportOrImported(item) && !['queued', 'running', 'succeeded'].includes(item.registration_status || '')
+  return canQueueSiteRegistration(item, settings.registration_enabled)
 }
 
-function canImportOrImported(item: SiteDiscoveryItem): boolean {
-  return item.classification_status === 'supported' && ['new_api', 'sub2api'].includes(item.provider_type || '')
+function registrationTaskDiscovery(task: SiteDiscoveryRegistrationTask): SiteDiscoveryItem {
+  return {
+    ...task.discovery,
+    registration_status: task.status,
+    registration_task_id: task.task_id,
+    registration_email: task.email,
+    registration_error_code: task.error_code,
+    registration_error_message: task.error_message
+  }
+}
+
+function canRerunTask(item: SiteDiscoveryItem): boolean {
+  const task = registrationTaskForItem(item)
+  return Boolean(task && canRerunRegistration(task))
+}
+
+function registrationTaskForItem(item: SiteDiscoveryItem): SiteDiscoveryRegistrationTask | undefined {
+  return registrationTasks.value.find((task) => task.discovery_id === item.id)
+}
+
+function taskIDForItem(item: SiteDiscoveryItem): number {
+  return registrationTaskForItem(item)?.task_id || item.registration_task_id || 0
+}
+
+function registrationIDForItem(item: SiteDiscoveryItem): number {
+  const task = registrationTaskForItem(item)
+  return task?.registration_id || task?.id || 0
+}
+
+function taskStatusForItem(item: SiteDiscoveryItem): ExtensionTask['status'] | '' {
+  return registrationTaskForItem(item)?.task_status || ''
 }
 
 function providerLabel(item: SiteDiscoveryItem): string {
@@ -1271,30 +1441,8 @@ function importClass(status: SiteDiscoveryItem['import_status']): string {
   return 'badge-gray'
 }
 
-function registrationLabel(status?: SiteDiscoveryItem['registration_status']): string {
-  return {
-    pending: '待处理',
-    queued: '已排队',
-    running: '执行中',
-    waiting_manual_verification: '待人工验证',
-    succeeded: '成功',
-    failed: '失败',
-    '': '未注册'
-  }[status || ''] || status || '未注册'
-}
-
-function registrationClass(status?: SiteDiscoveryItem['registration_status']): string {
-  if (status === 'succeeded') return 'badge-success'
-  if (status === 'failed') return 'badge-danger'
-  if (status === 'waiting_manual_verification' || status === 'queued' || status === 'running') return 'badge-warning'
-  return 'badge-gray'
-}
-
 function processedLabel(item: SiteDiscoveryItem): string {
-  if (item.process_status === 'added_to_catalog') return '已入目录'
-  if (item.process_status === 'registered') return '已注册'
-  if (item.process_status === 'ignored') return '已忽略'
-  return isProcessed(item) ? '已处理' : '未处理'
+  return siteDiscoveryProcessedLabel(item)
 }
 
 function processedClass(item: SiteDiscoveryItem): string {
@@ -1302,7 +1450,7 @@ function processedClass(item: SiteDiscoveryItem): string {
 }
 
 function isProcessed(item: SiteDiscoveryItem): boolean {
-  return Boolean(item.process_status && item.process_status !== 'unprocessed') || item.import_status !== 'new' || Boolean(item.registration_status)
+  return isSiteDiscoveryProcessed(item)
 }
 
 function processedFilterClass(value: 'processed' | 'unprocessed' | ''): string {
@@ -1327,6 +1475,67 @@ function monitorClass(value?: boolean | null): string {
   if (value === true) return 'badge-success'
   if (value === false) return 'badge-danger'
   return 'badge-gray'
+}
+
+function extensionTaskStatusLabel(statusValue?: ExtensionTask['status'] | ''): string {
+  return {
+    pending: '待领取',
+    claimed: '已领取',
+    running: '执行中',
+    succeeded: '成功',
+    failed: '失败',
+    cancelled: '已取消',
+    '': '-'
+  }[statusValue || ''] || statusValue || '-'
+}
+
+function stringExtra(log: AdminPlusSystemLog, key: string): string {
+  const value = log.extra?.[key]
+  if (value == null) return ''
+  return String(value)
+}
+
+function registrationLogEntries(log: AdminPlusSystemLog): Array<{ key: string; label: string; value: string }> {
+  const keys: Array<{ key: string; label: string }> = [
+    { key: 'action', label: '动作' },
+    { key: 'outcome', label: '结果' },
+    { key: 'registration_id', label: '注册' },
+    { key: 'registration_status', label: '注册状态' },
+    { key: 'task_id', label: '任务' },
+    { key: 'task_status', label: '任务状态' },
+    { key: 'reason', label: '原因' },
+    { key: 'provider_type', label: '类型' },
+    { key: 'host', label: '站点' },
+    { key: 'device_id', label: '设备' },
+    { key: 'message_id', label: '邮件' }
+  ]
+  return keys
+    .map((entry) => ({ ...entry, value: stringExtra(log, entry.key) }))
+    .filter((entry) => entry.value)
+}
+
+function systemLogComponentLabel(component: string): string {
+  if (component === 'admin_plus.registration') return '注册'
+  if (component === 'admin_plus.extension') return '插件'
+  if (component === 'admin_plus.mail') return '验证码'
+  return component
+}
+
+function systemLogLevelLabel(level: string): string {
+  return level ? level.toUpperCase() : '-'
+}
+
+function systemLogLevelClass(level: string): string {
+  if (level === 'error') return 'badge-danger'
+  if (level === 'warn' || level === 'warning') return 'badge-warning'
+  return 'badge-gray'
+}
+
+function formatDateTime(value?: string | null): string {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return date.toLocaleString()
 }
 
 function monitorSummary(item: SiteDiscoveryItem): string {

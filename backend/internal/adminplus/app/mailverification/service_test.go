@@ -2,11 +2,14 @@ package mailverification
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -62,6 +65,51 @@ func TestServiceReadVerificationCodeUsesSupplierTemplate(t *testing.T) {
 	updated, err := repo.GetCredential(ctx, credential.ID)
 	require.NoError(t, err)
 	require.Equal(t, "new-access-token", updated.AccessToken)
+}
+
+func TestServiceReadVerificationCodeRecordsSuccessWithoutCode(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	repo := NewMemoryRepository()
+	credential := saveTestMailCredential(t, ctx, repo)
+	provider := &fakeMailProvider{
+		result: &ProviderSearchResult{
+			Messages: []MailMessage{
+				{
+					ID:           "verification-message",
+					Subject:      "[Lime] Email Verification Code",
+					Text:         "Your verification code is: 654321. It expires in 15 minutes.",
+					InternalDate: now.Add(-30 * time.Second),
+				},
+			},
+		},
+	}
+	writer := &mailLogWriter{}
+	service := newTestMailVerificationService(repo, provider, now).WithDiagnostics(bizlogs.NewRecorder(writer))
+
+	result, err := service.ReadVerificationCode(ctx, ReadVerificationCodeInput{
+		CredentialID:    credential.ID,
+		To:              "operator@example.com",
+		SupplierType:    adminplusdomain.SupplierTypeSub2API,
+		SiteName:        "Lime",
+		TriggeredAt:     ptrTime(now.Add(-5 * time.Minute)),
+		TimeoutSeconds:  2,
+		ExpectedPurpose: PurposeEmailVerification,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "654321", result.Code)
+	require.Len(t, writer.inputs, 1)
+	input := writer.inputs[0]
+	require.Equal(t, "admin_plus.mail", input.Component)
+	require.NotContains(t, input.ExtraJSON, "654321")
+	require.NotContains(t, input.ExtraJSON, "Your verification code")
+	var extra map[string]any
+	require.NoError(t, json.Unmarshal([]byte(input.ExtraJSON), &extra))
+	require.Equal(t, "read_verification_code", extra["action"])
+	require.Equal(t, "succeeded", extra["outcome"])
+	require.Equal(t, "verification-message", extra["message_id"])
+	require.Equal(t, "sub2api.auth_verify_code", extra["template_family"])
 }
 
 func TestServiceReadVerificationCodeRejectsSiteMismatch(t *testing.T) {
@@ -386,4 +434,13 @@ func (s *fakeEmailSender) SendEmail(_ context.Context, to, subject, body string)
 	s.subject = subject
 	s.body = body
 	return nil
+}
+
+type mailLogWriter struct {
+	inputs []*service.OpsInsertSystemLogInput
+}
+
+func (w *mailLogWriter) BatchInsertSystemLogs(_ context.Context, inputs []*service.OpsInsertSystemLogInput) (int64, error) {
+	w.inputs = append(w.inputs, inputs...)
+	return int64(len(inputs)), nil
 }

@@ -37,10 +37,6 @@ export class AdminPlusClient {
     })
   }
 
-  async createDiscoveredSupplier(payload) {
-    return this.reportSupplierCandidate(payload)
-  }
-
   async reportSupplierCandidate(payload) {
     return this.request('/api/v1/admin-plus/extension/suppliers/report-candidate', {
       method: 'POST',

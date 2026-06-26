@@ -91,8 +91,8 @@
     <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
       <div class="mb-3 flex items-center justify-between gap-3">
         <div>
-          <h3 class="text-sm font-medium text-gray-900 dark:text-gray-100">Chrome 插件登录凭据</h3>
-          <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">作为下游客户无法拿到 Admin Key 时，由插件使用账号密码或临时 Token 登录供应商后台采集。</p>
+          <h3 class="text-sm font-medium text-gray-900 dark:text-gray-100">供应商登录凭据</h3>
+          <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">用于后台一键登录和插件采集供应商后台会话。</p>
         </div>
         <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
           <input v-model="form.browser_login_enabled" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
@@ -101,16 +101,16 @@
       </div>
       <div class="grid gap-4 sm:grid-cols-3">
         <label class="block">
-          <span class="input-label">登录账号</span>
-          <input v-model.trim="form.browser_login_username" class="input" autocomplete="username" :placeholder="editingSupplier ? '留空不修改' : ''" />
+          <span class="input-label">{{ browserLoginIdentityLabel(form.type) }}</span>
+          <input v-model.trim="form.browser_login_username" class="input" autocomplete="username" :placeholder="browserLoginIdentityPlaceholder(form.type)" />
         </label>
         <label class="block">
           <span class="input-label">登录密码</span>
-          <input v-model.trim="form.browser_login_password" type="password" class="input" autocomplete="new-password" :placeholder="editingSupplier ? '留空不修改' : ''" />
+          <input v-model="form.browser_login_password" type="password" class="input" autocomplete="new-password" :placeholder="editingSupplier ? '留空不修改' : ''" />
         </label>
         <label class="block">
           <span class="input-label">临时 Token</span>
-          <input v-model.trim="form.browser_login_token" type="password" class="input" autocomplete="off" :placeholder="editingSupplier ? '留空不修改' : ''" />
+          <input v-model="form.browser_login_token" type="password" class="input" autocomplete="off" :placeholder="editingSupplier ? '留空不修改' : ''" />
         </label>
       </div>
     </div>
@@ -180,4 +180,17 @@ const {
   submitSupplier,
   submitStatus
 } = props.vm
+
+function browserLoginIdentityLabel(type: string): string {
+  if (type === 'sub2api') return '登录邮箱'
+  if (type === 'new_api') return '登录用户名'
+  return '登录账号'
+}
+
+function browserLoginIdentityPlaceholder(type: string): string {
+  if (editingSupplier) return '留空不修改'
+  if (type === 'sub2api') return 'ops@example.com'
+  if (type === 'new_api') return 'username'
+  return ''
+}
 </script>

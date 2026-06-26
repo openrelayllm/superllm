@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
@@ -28,6 +29,7 @@ type Service struct {
 	email      EmailSender
 	claims     map[string]messageClaim
 	claimsMu   sync.Mutex
+	bizlog     *bizlogs.Recorder
 	now        func() time.Time
 }
 
@@ -52,6 +54,13 @@ func NewService(repo Repository, gmailProvider *GmailProvider, classifier Templa
 		claims:     make(map[string]messageClaim),
 		now:        time.Now,
 	}
+}
+
+func (s *Service) WithDiagnostics(recorder *bizlogs.Recorder) *Service {
+	if s != nil {
+		s.bizlog = recorder
+	}
+	return s
 }
 
 func (s *Service) AuthorizeURL(ctx context.Context, in OAuthAuthorizeInput) (*OAuthAuthorizeResult, error) {
@@ -270,23 +279,29 @@ func (s *Service) ReadVerificationCode(ctx context.Context, in ReadVerificationC
 	for {
 		result, err := provider.SearchMessages(deadlineCtx, credential, filter)
 		if err != nil {
+			s.recordReadFailure(ctx, in, credential, providerName, "search_messages", err)
 			return nil, err
 		}
 		if result != nil && result.TokenUpdate != nil {
 			credential, err = s.repo.UpdateTokens(deadlineCtx, credential.ID, *result.TokenUpdate)
 			if err != nil {
+				s.recordReadFailure(ctx, in, credential, providerName, "update_tokens", err)
 				return nil, err
 			}
 		}
 		if code := s.findCode(result, filter, claimKey); code != nil {
+			s.recordReadSuccess(ctx, in, credential, code)
 			return code, nil
 		}
 
 		select {
 		case <-deadlineCtx.Done():
 			if errors.Is(deadlineCtx.Err(), context.DeadlineExceeded) {
-				return nil, infraerrors.NotFound("MAIL_VERIFICATION_CODE_NOT_FOUND", "mail verification code not found")
+				err := infraerrors.NotFound("MAIL_VERIFICATION_CODE_NOT_FOUND", "mail verification code not found")
+				s.recordReadFailure(ctx, in, credential, providerName, "poll_timeout", err)
+				return nil, err
 			}
+			s.recordReadFailure(ctx, in, credential, providerName, "context_done", deadlineCtx.Err())
 			return nil, deadlineCtx.Err()
 		case <-time.After(pollInterval):
 		}
@@ -307,6 +322,7 @@ func (s *Service) ReadVerificationCodeForEmail(ctx context.Context, in ReadVerif
 	}
 	credential, err := s.selectCredentialForEmail(ctx, provider, email)
 	if err != nil {
+		s.recordReadForEmailFailure(ctx, in, provider, err)
 		return nil, err
 	}
 	return s.ReadVerificationCode(ctx, ReadVerificationCodeInput{
@@ -324,6 +340,98 @@ func (s *Service) ReadVerificationCodeForEmail(ctx context.Context, in ReadVerif
 		PollIntervalSeconds: in.PollIntervalSeconds,
 		MaxResults:          in.MaxResults,
 	})
+}
+
+func (s *Service) recordReadSuccess(ctx context.Context, in ReadVerificationCodeInput, credential *Credential, result *ReadVerificationCodeResult) {
+	if s == nil || s.bizlog == nil || result == nil {
+		return
+	}
+	metadata := mailReadMetadata(in, credential)
+	metadata["message_id"] = result.MessageID
+	if !result.ReceivedAt.IsZero() {
+		metadata["received_at"] = result.ReceivedAt.UTC().Format(time.RFC3339)
+	}
+	metadata["template_family"] = result.TemplateFamily
+	metadata["confidence"] = result.Confidence
+	metadata["supplier_type"] = string(result.SupplierType)
+	metadata["purpose"] = result.Purpose
+	s.bizlog.Record(ctx, bizlogs.Event{
+		Level:        bizlogs.LevelInfo,
+		Category:     bizlogs.CategoryMail,
+		Action:       "read_verification_code",
+		Outcome:      bizlogs.OutcomeSucceeded,
+		Message:      "mail verification code read succeeded",
+		ProviderType: string(result.Provider),
+		Metadata:     metadata,
+	})
+}
+
+func (s *Service) recordReadFailure(ctx context.Context, in ReadVerificationCodeInput, credential *Credential, provider adminplusdomain.MailVerificationProvider, action string, err error) {
+	if s == nil || s.bizlog == nil {
+		return
+	}
+	metadata := mailReadMetadata(in, credential)
+	event := bizlogs.EventFromError(bizlogs.Event{
+		Level:        bizlogs.LevelWarn,
+		Category:     bizlogs.CategoryMail,
+		Action:       action,
+		Outcome:      bizlogs.OutcomeFailed,
+		Message:      "mail verification code read failed",
+		ProviderType: string(provider),
+		Metadata:     metadata,
+	}, err)
+	s.bizlog.Record(ctx, event)
+}
+
+func (s *Service) recordReadForEmailFailure(ctx context.Context, in ReadVerificationCodeForEmailInput, provider adminplusdomain.MailVerificationProvider, err error) {
+	if s == nil || s.bizlog == nil {
+		return
+	}
+	metadata := map[string]any{
+		"target_email":      maskEmail(in.Email),
+		"supplier_type":     string(in.SupplierType),
+		"expected_purpose":  in.ExpectedPurpose,
+		"site_name":         in.SiteName,
+		"timeout_seconds":   in.TimeoutSeconds,
+		"poll_interval_sec": in.PollIntervalSeconds,
+		"max_results":       in.MaxResults,
+	}
+	event := bizlogs.EventFromError(bizlogs.Event{
+		Level:        bizlogs.LevelWarn,
+		Category:     bizlogs.CategoryMail,
+		Action:       "select_credential",
+		Outcome:      bizlogs.OutcomeFailed,
+		Message:      "mail credential selection failed",
+		ProviderType: string(provider),
+		Metadata:     metadata,
+	}, err)
+	s.bizlog.Record(ctx, event)
+}
+
+func mailReadMetadata(in ReadVerificationCodeInput, credential *Credential) map[string]any {
+	out := map[string]any{
+		"credential_id":     in.CredentialID,
+		"provider":          string(in.Provider),
+		"target_email":      maskEmail(in.To),
+		"supplier_type":     string(in.SupplierType),
+		"expected_purpose":  in.ExpectedPurpose,
+		"site_name":         in.SiteName,
+		"claim_key":         in.ClaimKey,
+		"timeout_seconds":   in.TimeoutSeconds,
+		"poll_interval_sec": in.PollIntervalSeconds,
+		"max_results":       in.MaxResults,
+	}
+	if credential != nil {
+		out["credential_id"] = credential.ID
+		out["provider"] = string(credential.Provider)
+		if out["target_email"] == "" {
+			out["target_email"] = credential.EmailMasked
+		}
+	}
+	if in.TriggeredAt != nil && !in.TriggeredAt.IsZero() {
+		out["triggered_at"] = in.TriggeredAt.UTC().Format(time.RFC3339)
+	}
+	return out
 }
 
 func (s *Service) selectCredentialForEmail(ctx context.Context, provider adminplusdomain.MailVerificationProvider, email string) (*Credential, error) {

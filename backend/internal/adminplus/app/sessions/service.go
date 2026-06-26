@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -67,6 +68,7 @@ type Service struct {
 	prober      ports.SessionProbeAdapter
 	monitors    ports.SessionChannelMonitorAdapter
 	login       ports.SessionLoginAdapter
+	bizlog      *bizlogs.Recorder
 	now         func() time.Time
 }
 
@@ -98,6 +100,13 @@ func NewServiceWithDependencies(repo Repository, cipher Cipher, suppliers Suppli
 func (s *Service) WithChannelMonitorReader(reader ports.SessionChannelMonitorAdapter) *Service {
 	if s != nil {
 		s.monitors = reader
+	}
+	return s
+}
+
+func (s *Service) WithDiagnostics(recorder *bizlogs.Recorder) *Service {
+	if s != nil {
+		s.bizlog = recorder
 	}
 	return s
 }
@@ -175,10 +184,10 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_DIRECT_LOGIN_UNSUPPORTED", "supplier direct login is only implemented for Sub2API and New API suppliers")
 	}
 	username := strings.TrimSpace(in.Username)
-	password := strings.TrimSpace(in.Password)
-	token := strings.TrimSpace(in.Token)
+	password := in.Password
+	token := in.Token
 	apiBaseURL := firstNonEmpty(in.APIBaseURL, supplier.APIBaseURL, supplier.DashboardURL)
-	origin := firstNonEmpty(in.Origin, supplier.DashboardURL, originFromRawURL(apiBaseURL))
+	origin := firstOrigin(in.Origin, supplier.DashboardURL, apiBaseURL)
 	if username == "" && password == "" && token == "" {
 		if s.credentials == nil {
 			return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED", "supplier login credential is required")
@@ -188,12 +197,12 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 			return nil, err
 		}
 		username = strings.TrimSpace(credential.Username)
-		password = strings.TrimSpace(credential.Password)
-		token = strings.TrimSpace(credential.Token)
+		password = credential.Password
+		token = credential.Token
 		apiBaseURL = firstNonEmpty(in.APIBaseURL, credential.APIBaseURL, supplier.APIBaseURL, credential.DashboardURL, supplier.DashboardURL)
-		origin = firstNonEmpty(in.Origin, credential.DashboardURL, supplier.DashboardURL, originFromRawURL(apiBaseURL))
+		origin = firstOrigin(in.Origin, credential.DashboardURL, supplier.DashboardURL, apiBaseURL)
 	}
-	if token == "" && (username == "" || password == "") {
+	if !nonBlankSecret(token) && (username == "" || !nonBlankSecret(password)) {
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED", "supplier username and password or access token is required")
 	}
 	loginContext := cloneMap(in.LoginContext)
@@ -209,10 +218,13 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 		LoginContext: loginContext,
 	})
 	if err != nil {
+		s.recordLoginFailure(ctx, supplier, err, apiBaseURL, origin)
 		return nil, err
 	}
 	if loginResult == nil || len(loginResult.SessionBundle) == 0 {
-		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_EMPTY_SESSION", "supplier direct login returned empty session")
+		err := infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_EMPTY_SESSION", "supplier direct login returned empty session")
+		s.recordLoginFailure(ctx, supplier, err, apiBaseURL, origin)
+		return nil, err
 	}
 	session, err := s.Upsert(ctx, UpsertInput{
 		SupplierID:     in.SupplierID,
@@ -225,12 +237,84 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 		ExpiresAt:      loginResult.ExpiresAt,
 	})
 	if err != nil {
+		s.recordLoginFailure(ctx, supplier, err, apiBaseURL, origin)
 		return nil, err
 	}
+	s.recordLoginSuccess(ctx, supplier, session, loginResult)
 	return &LoginResult{
 		Session:     session,
 		Diagnostics: cloneMap(loginResult.Diagnostics),
 	}, nil
+}
+
+func (s *Service) recordLoginFailure(ctx context.Context, supplier *adminplusdomain.Supplier, err error, apiBaseURL string, origin string) {
+	if s == nil || s.bizlog == nil {
+		return
+	}
+	event := bizlogs.EventFromError(bizlogs.Event{
+		Level:        bizlogs.LevelWarn,
+		Category:     bizlogs.CategoryLogin,
+		Action:       "direct_login",
+		Outcome:      bizlogs.OutcomeFailed,
+		Message:      "supplier direct login failed",
+		SupplierID:   supplierIDFromSupplier(supplier),
+		SupplierName: supplierNameFromSupplier(supplier),
+		ProviderType: supplierTypeFromSupplier(supplier),
+		Metadata: map[string]any{
+			"api_base_url": apiBaseURL,
+			"origin":       origin,
+		},
+	}, err)
+	s.bizlog.Record(ctx, event)
+}
+
+func (s *Service) recordLoginSuccess(ctx context.Context, supplier *adminplusdomain.Supplier, session *adminplusdomain.SupplierBrowserSession, result *ports.DirectLoginResult) {
+	if s == nil || s.bizlog == nil {
+		return
+	}
+	metadata := map[string]any{}
+	if session != nil {
+		metadata["origin"] = session.Origin
+		metadata["api_base_url"] = session.APIBaseURL
+		metadata["session_source"] = string(session.SessionSource)
+	}
+	if result != nil && len(result.Diagnostics) > 0 {
+		for key, value := range result.Diagnostics {
+			metadata[key] = value
+		}
+	}
+	s.bizlog.Record(ctx, bizlogs.Event{
+		Level:        bizlogs.LevelInfo,
+		Category:     bizlogs.CategoryLogin,
+		Action:       "direct_login",
+		Outcome:      bizlogs.OutcomeSucceeded,
+		Message:      "supplier direct login succeeded",
+		SupplierID:   supplierIDFromSupplier(supplier),
+		SupplierName: supplierNameFromSupplier(supplier),
+		ProviderType: supplierTypeFromSupplier(supplier),
+		Metadata:     metadata,
+	})
+}
+
+func supplierIDFromSupplier(supplier *adminplusdomain.Supplier) int64 {
+	if supplier == nil {
+		return 0
+	}
+	return supplier.ID
+}
+
+func supplierNameFromSupplier(supplier *adminplusdomain.Supplier) string {
+	if supplier == nil {
+		return ""
+	}
+	return supplier.Name
+}
+
+func supplierTypeFromSupplier(supplier *adminplusdomain.Supplier) string {
+	if supplier == nil {
+		return ""
+	}
+	return string(supplier.Type)
 }
 
 func (s *Service) Get(ctx context.Context, supplierID int64) (*adminplusdomain.SupplierBrowserSession, error) {
@@ -443,6 +527,19 @@ func originFromRawURL(raw string) string {
 		return ""
 	}
 	return u.Scheme + "://" + u.Host
+}
+
+func firstOrigin(values ...string) string {
+	for _, value := range values {
+		if origin := originFromRawURL(value); origin != "" {
+			return origin
+		}
+	}
+	return ""
+}
+
+func nonBlankSecret(value string) bool {
+	return strings.TrimSpace(value) != ""
 }
 
 func mapValue(in map[string]any, key string) map[string]any {

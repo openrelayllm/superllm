@@ -13,6 +13,8 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyutil"
 )
 
 const browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
@@ -29,14 +31,29 @@ func NewClient(client *http.Client) *Client {
 	return &Client{httpClient: client, now: time.Now}
 }
 
+func (c *Client) httpClientForProxy(rawProxyURL string) (*http.Client, error) {
+	trimmed, parsed, err := proxyurl.Parse(rawProxyURL)
+	if err != nil {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_PROXY_URL_INVALID", "supplier proxy url is invalid").WithCause(err)
+	}
+	if trimmed == "" {
+		return c.httpClient, nil
+	}
+	transport := &http.Transport{}
+	if err := proxyutil.ConfigureTransportProxy(transport, parsed); err != nil {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_PROXY_URL_INVALID", "supplier proxy url is invalid").WithCause(err)
+	}
+	return &http.Client{Transport: transport, Timeout: c.httpClient.Timeout}, nil
+}
+
 func (c *Client) DirectLogin(ctx context.Context, in ports.DirectLoginInput) (*ports.DirectLoginResult, error) {
 	if c == nil || c.httpClient == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", "new api provider adapter is not configured")
 	}
-	if strings.TrimSpace(in.Token) != "" && (strings.TrimSpace(in.Username) == "" || strings.TrimSpace(in.Password) == "") {
+	if nonBlankSecret(in.Token) && (strings.TrimSpace(in.Username) == "" || !nonBlankSecret(in.Password)) {
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED", "new api direct login requires username and password")
 	}
-	if strings.TrimSpace(in.Username) == "" || strings.TrimSpace(in.Password) == "" {
+	if strings.TrimSpace(in.Username) == "" || !nonBlankSecret(in.Password) {
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED", "new api username and password are required")
 	}
 	apiBaseURL, origin, err := normalizeBaseURLs(in.APIBaseURL, in.Origin)
@@ -49,7 +66,7 @@ func (c *Client) DirectLogin(ctx context.Context, in ports.DirectLoginInput) (*p
 	}
 	payload := map[string]any{
 		"username": strings.TrimSpace(in.Username),
-		"password": strings.TrimSpace(in.Password),
+		"password": in.Password,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

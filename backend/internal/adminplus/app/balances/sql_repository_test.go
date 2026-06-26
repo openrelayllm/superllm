@@ -22,20 +22,24 @@ func newBalanceSQLMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	return db, mock
 }
 
+const updateSupplierBalanceSQLPattern = `UPDATE admin_plus_suppliers\s+SET balance_cents = \$2::BIGINT,\s+balance_currency = \$3::TEXT,\s+balance_updated_at = \$4::TIMESTAMPTZ,\s+runtime_status = CASE\s+WHEN \$2::BIGINT <= 0 AND runtime_status IN \('candidate', 'active'\) THEN 'monitor_only'\s+ELSE runtime_status\s+END,\s+updated_at = NOW\(\)\s+WHERE id = \$1::BIGINT`
+
 func TestSQLRepositoryCreateBalanceSnapshot(t *testing.T) {
 	db, mock := newBalanceSQLMock(t)
 	repo := NewSQLRepository(db)
 	capturedAt := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
 	createdAt := capturedAt.Add(time.Second)
 
+	mock.ExpectBegin()
 	mock.ExpectQuery(`INSERT INTO admin_plus_balance_snapshots`).
 		WithArgs(int64(7), "manual", "candidate", int64(5000), "USD", true, sqlmock.AnyArg(), capturedAt).
 		WillReturnRows(newBalanceSnapshotRows().AddRow(
 			int64(11), int64(7), "manual", "candidate", int64(5000), "USD", true, []byte(`{"source":"manual"}`), capturedAt, createdAt,
 		))
-	mock.ExpectExec(`UPDATE admin_plus_suppliers`).
+	mock.ExpectExec(updateSupplierBalanceSQLPattern).
 		WithArgs(int64(7), int64(5000), "USD", capturedAt).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
 	got, err := repo.CreateSnapshot(context.Background(), &adminplusdomain.BalanceSnapshot{
 		SupplierID:     7,
@@ -52,6 +56,40 @@ func TestSQLRepositoryCreateBalanceSnapshot(t *testing.T) {
 	require.Equal(t, int64(11), got.ID)
 	require.Equal(t, adminplusdomain.SupplierRuntimeStatusCandidate, got.RuntimeStatus)
 	require.Equal(t, "manual", got.RawPayload["source"])
+}
+
+func TestSQLRepositoryCreateBalanceSnapshotRollsBackWhenSupplierUpdateFails(t *testing.T) {
+	db, mock := newBalanceSQLMock(t)
+	repo := NewSQLRepository(db)
+	capturedAt := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	createdAt := capturedAt.Add(time.Second)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`INSERT INTO admin_plus_balance_snapshots`).
+		WithArgs(int64(7), "provider_session", "monitor_only", int64(0), "USD", false, sqlmock.AnyArg(), capturedAt).
+		WillReturnRows(newBalanceSnapshotRows().AddRow(
+			int64(11), int64(7), "provider_session", "monitor_only", int64(0), "USD", false, []byte(`{"source":"probe"}`), capturedAt, createdAt,
+		))
+	mock.ExpectExec(updateSupplierBalanceSQLPattern).
+		WithArgs(int64(7), int64(0), "USD", capturedAt).
+		WillReturnError(sql.ErrConnDone)
+	mock.ExpectRollback()
+
+	got, err := repo.CreateSnapshot(context.Background(), &adminplusdomain.BalanceSnapshot{
+		SupplierID:     7,
+		Source:         "provider_session",
+		RuntimeStatus:  adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		BalanceCents:   0,
+		Currency:       "USD",
+		SwitchEligible: false,
+		RawPayload:     map[string]any{"source": "probe"},
+		CapturedAt:     capturedAt,
+	})
+
+	require.Nil(t, got)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "BALANCE_STORE_FAILED")
+	require.Contains(t, err.Error(), "update_supplier_balance")
 }
 
 func TestSQLRepositoryFindLatestBalanceSnapshotNoRows(t *testing.T) {

@@ -293,7 +293,8 @@ const adminNavItems = computed((): NavItem[] => [
     icon: OperationsIcon,
     children: [
       { path: '/admin/collection/sessions', label: '采集会话', icon: OperationsIcon },
-      { path: '/admin/collection/site-discovery', label: '渠道索引采集', icon: OperationsIcon }
+      { path: '/admin/collection/site-discovery', label: '渠道索引采集', icon: OperationsIcon },
+      { path: '/admin/proxy', label: '代理出口管理', icon: OperationsIcon }
     ]
   },
   { path: '/admin/mails', label: '邮箱验证码', icon: OperationsIcon },
@@ -311,7 +312,8 @@ const adminNavItems = computed((): NavItem[] => [
     icon: OperationsIcon,
     children: [
       { path: '/admin/scheduler', label: '工作台', icon: OperationsIcon },
-      { path: '/admin/scheduler/notifications', label: '通知中心', icon: OperationsIcon }
+      { path: '/admin/scheduler/notifications', label: '通知中心', icon: OperationsIcon },
+      { path: '/admin/system-logs', label: '系统日志', icon: OperationsIcon }
     ]
   },
   {

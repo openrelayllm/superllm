@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -77,8 +78,12 @@ type apiEnvelope struct {
 }
 
 func decodeEnvelope(data []byte) (*apiEnvelope, error) {
+	return decodeEnvelopeReader(bytes.NewReader(data))
+}
+
+func decodeEnvelopeReader(reader io.Reader) (*apiEnvelope, error) {
 	var root map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder := json.NewDecoder(reader)
 	decoder.UseNumber()
 	if err := decoder.Decode(&root); err != nil {
 		return nil, err

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,7 +30,18 @@ func (r *SQLRepository) CreateSnapshot(ctx context.Context, snapshot *adminplusd
 	if err != nil {
 		return nil, err
 	}
-	row := r.db.QueryRowContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, balanceStoreError("begin_transaction", err, snapshot.SupplierID)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	row := tx.QueryRowContext(ctx, `
 		INSERT INTO admin_plus_balance_snapshots (
 			supplier_id, source, runtime_status, balance_cents, currency,
 			switch_eligible, raw_payload, captured_at
@@ -49,22 +61,34 @@ func (r *SQLRepository) CreateSnapshot(ctx context.Context, snapshot *adminplusd
 	)
 	created, err := scanBalanceSnapshot(row)
 	if err != nil {
-		return nil, err
+		return nil, balanceStoreError("insert_snapshot", err, snapshot.SupplierID)
 	}
-	if _, err := r.db.ExecContext(ctx, `
-		UPDATE admin_plus_suppliers
-		SET balance_cents = $2,
-			balance_currency = $3,
-			balance_updated_at = $4,
-			runtime_status = CASE
-				WHEN $2 <= 0 AND runtime_status IN ('candidate', 'active') THEN 'monitor_only'
-				ELSE runtime_status
-			END,
-			updated_at = NOW()
-		WHERE id = $1
-	`, created.SupplierID, created.BalanceCents, created.Currency, created.CapturedAt); err != nil {
-		return nil, err
+	result, err := tx.ExecContext(ctx, `
+			UPDATE admin_plus_suppliers
+			SET balance_cents = $2::BIGINT,
+				balance_currency = $3::TEXT,
+				balance_updated_at = $4::TIMESTAMPTZ,
+				runtime_status = CASE
+					WHEN $2::BIGINT <= 0 AND runtime_status IN ('candidate', 'active') THEN 'monitor_only'
+					ELSE runtime_status
+				END,
+				updated_at = NOW()
+			WHERE id = $1::BIGINT
+			`, created.SupplierID, created.BalanceCents, created.Currency, created.CapturedAt)
+	if err != nil {
+		return nil, balanceStoreError("update_supplier_balance", err, created.SupplierID)
 	}
+	if rows, err := result.RowsAffected(); err == nil && rows == 0 {
+		return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_NOT_FOUND", "supplier not found while recording balance snapshot").
+			WithMetadata(map[string]string{
+				"store_step":  "update_supplier_balance",
+				"supplier_id": strconv.FormatInt(created.SupplierID, 10),
+			})
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, balanceStoreError("commit_transaction", err, created.SupplierID)
+	}
+	committed = true
 	return created, nil
 }
 
@@ -312,4 +336,17 @@ func nullableInt64(value *int64) any {
 
 func dbNotConfigured() error {
 	return infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
+}
+
+func balanceStoreError(step string, err error, supplierID int64) error {
+	if err == nil {
+		return nil
+	}
+	return infraerrors.New(http.StatusInternalServerError, "BALANCE_STORE_FAILED", "failed to record supplier balance snapshot").
+		WithCause(err).
+		WithMetadata(map[string]string{
+			"store_step":    step,
+			"supplier_id":   strconv.FormatInt(supplierID, 10),
+			"error_message": err.Error(),
+		})
 }
