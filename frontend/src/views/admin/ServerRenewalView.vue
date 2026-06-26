@@ -87,29 +87,29 @@
 
             <div class="mt-5 grid gap-3 md:grid-cols-2">
               <div class="rounded-md border border-gray-100 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/50">
-                <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-dark-400">IP</p>
+                <p class="text-xs font-semibold uppercase text-gray-500 dark:text-dark-400">IP</p>
                 <p class="mt-2 break-all font-mono text-sm font-semibold text-gray-900 dark:text-white">{{ form.ip_address || '-' }}</p>
               </div>
               <div class="rounded-md border border-gray-100 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/50">
-                <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-dark-400">系统</p>
+                <p class="text-xs font-semibold uppercase text-gray-500 dark:text-dark-400">系统</p>
                 <p class="mt-2 break-all text-sm font-semibold text-gray-900 dark:text-white">{{ form.operating_system || '-' }}</p>
               </div>
               <div class="rounded-md border border-gray-100 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/50">
-                <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-dark-400">用户名</p>
+                <p class="text-xs font-semibold uppercase text-gray-500 dark:text-dark-400">用户名</p>
                 <p class="mt-2 break-all font-mono text-sm font-semibold text-gray-900 dark:text-white">{{ form.ssh_username || '-' }}</p>
               </div>
               <div class="rounded-md border border-gray-100 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/50">
-                <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-dark-400">SSH 端口</p>
+                <p class="text-xs font-semibold uppercase text-gray-500 dark:text-dark-400">SSH 端口</p>
                 <p class="mt-2 font-mono text-sm font-semibold text-gray-900 dark:text-white">{{ form.ssh_port || 22 }}</p>
               </div>
               <div class="rounded-md border border-gray-100 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/50">
-                <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-dark-400">SSH 密码</p>
+                <p class="text-xs font-semibold uppercase text-gray-500 dark:text-dark-400">SSH 密码</p>
                 <p class="mt-2 text-sm font-semibold" :class="form.ssh_password_configured || form.ssh_password ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-500 dark:text-dark-400'">
                   {{ form.ssh_password_configured || form.ssh_password ? '已配置' : '未配置' }}
                 </p>
               </div>
               <div class="rounded-md border border-gray-100 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/50">
-                <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-dark-400">服务商</p>
+                <p class="text-xs font-semibold uppercase text-gray-500 dark:text-dark-400">服务商</p>
                 <p class="mt-2 break-all text-sm font-semibold text-gray-900 dark:text-white">{{ form.provider || '-' }}</p>
               </div>
             </div>

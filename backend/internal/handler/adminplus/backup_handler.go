@@ -523,15 +523,16 @@ func (h *BackupHandler) maybeDispatchRenewalReminder(ctx context.Context, now ti
 	if status.LastNotifiedKey == key {
 		return nil
 	}
+	serverLabel := renewalServerLabel(status)
 	text := fmt.Sprintf("服务器续费提醒：%s（%s）到期日 %s，剩余 %d 天，请及时续费。",
-		firstNonEmptyBackupValue(status.ServerName, "服务器"),
+		serverLabel,
 		firstNonEmptyBackupValue(status.Provider, "未知服务商"),
 		status.ExpiresAt,
 		status.DaysRemaining,
 	)
 	if status.DaysRemaining < 0 {
 		text = fmt.Sprintf("服务器续费提醒：%s（%s）已于 %s 到期，请立即处理。",
-			firstNonEmptyBackupValue(status.ServerName, "服务器"),
+			serverLabel,
 			firstNonEmptyBackupValue(status.Provider, "未知服务商"),
 			status.ExpiresAt,
 		)
@@ -544,11 +545,15 @@ func (h *BackupHandler) maybeDispatchRenewalReminder(ctx context.Context, now ti
 		ThrottleWindow: 24 * time.Hour,
 		Text:           text,
 		Payload: map[string]any{
-			"server_name":    status.ServerName,
-			"provider":       status.Provider,
-			"expires_at":     status.ExpiresAt,
-			"days_remaining": status.DaysRemaining,
-			"state":          status.State,
+			"server_name":      status.ServerName,
+			"provider":         status.Provider,
+			"host_id":          status.HostID,
+			"ip_address":       status.IPAddress,
+			"operating_system": status.OperatingSystem,
+			"expires_at":       status.ExpiresAt,
+			"expires_at_time":  status.ExpiresAtTime,
+			"days_remaining":   status.DaysRemaining,
+			"state":            status.State,
 		},
 	}); err != nil {
 		return err
@@ -709,6 +714,17 @@ func firstNonEmptyBackupValue(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func renewalServerLabel(status serverRenewalStatus) string {
+	parts := []string{firstNonEmptyBackupValue(status.ServerName, "服务器")}
+	if strings.TrimSpace(status.HostID) != "" {
+		parts = append(parts, "Host ID "+strings.TrimSpace(status.HostID))
+	}
+	if strings.TrimSpace(status.IPAddress) != "" {
+		parts = append(parts, strings.TrimSpace(status.IPAddress))
+	}
+	return strings.Join(parts, " / ")
 }
 
 func absInt(value int) int {
