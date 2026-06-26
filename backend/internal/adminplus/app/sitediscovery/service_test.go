@@ -702,12 +702,14 @@ func TestRegisterItemRecordsRegistrationWorkflowLogWithoutSecrets(t *testing.T) 
 		if err := json.Unmarshal([]byte(input.ExtraJSON), &extra); err != nil {
 			t.Fatalf("parse log extra: %v", err)
 		}
-		if int64(extra["registration_id"].(float64)) != credential.ID {
+		registrationID, _ := extra["registration_id"].(float64)
+		if int64(registrationID) != credential.ID {
 			t.Fatalf("expected registration id %d in log, got %#v", credential.ID, extra["registration_id"])
 		}
 		if extra["action"] == "direct_registration_browser_fallback" {
 			seenFallback = true
-			if int64(extra["task_id"].(float64)) != task.ID {
+			taskID, _ := extra["task_id"].(float64)
+			if int64(taskID) != task.ID {
 				t.Fatalf("expected task id %d in fallback log, got %#v", task.ID, extra["task_id"])
 			}
 		}

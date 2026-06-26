@@ -1044,7 +1044,7 @@ func (s *Service) fetchSubscription(ctx context.Context, rawURL string) ([]byte,
 	if err != nil {
 		return nil, unavailable("PROXY_SUBSCRIPTION_FETCH_FAILED", "failed to fetch proxy subscription").WithCause(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		return nil, unavailable("PROXY_SUBSCRIPTION_FETCH_FAILED", fmt.Sprintf("subscription endpoint returned HTTP %d", resp.StatusCode))
 	}

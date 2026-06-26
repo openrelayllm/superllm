@@ -178,7 +178,7 @@ func (r *LocalMihomoRuntime) SwitchNode(ctx context.Context, slot *adminplusdoma
 	if err != nil {
 		return unavailable("PROXY_NODE_SWITCH_FAILED", "failed to switch proxy node").WithCause(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		return unavailable("PROXY_NODE_SWITCH_FAILED", "mihomo controller rejected node switch")
 	}

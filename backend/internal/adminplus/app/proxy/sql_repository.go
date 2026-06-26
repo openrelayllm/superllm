@@ -176,7 +176,7 @@ func (r *SQLRepository) ListSubscriptions(ctx context.Context, filter Subscripti
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanSubscriptions(rows)
 }
 
@@ -309,7 +309,7 @@ func (r *SQLRepository) ListNodes(ctx context.Context, filter NodeFilter) ([]*ad
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanNodes(rows)
 }
 
@@ -390,7 +390,7 @@ func (r *SQLRepository) ListPolicies(ctx context.Context, filter PolicyFilter) (
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanPolicies(rows)
 }
 

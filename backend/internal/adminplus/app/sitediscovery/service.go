@@ -1839,10 +1839,6 @@ func (s *Service) fetchTextWithClient(ctx context.Context, client *http.Client, 
 	return string(body), nil
 }
 
-func (s *Service) fetchMonitorData(ctx context.Context, sourceURL string) map[string]map[string]any {
-	return s.fetchMonitorDataWithClient(ctx, s.client, sourceURL)
-}
-
 func (s *Service) fetchMonitorDataWithClient(ctx context.Context, client *http.Client, sourceURL string) map[string]map[string]any {
 	parsed, err := url.Parse(sourceURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -1883,10 +1879,6 @@ func (s *Service) probeSiteClassification(ctx context.Context, item *adminplusdo
 		return classificationResult{}
 	}
 	return classifyText(body, "site")
-}
-
-func (s *Service) probeSitePageClassification(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem) classificationResult {
-	return s.probeSitePageClassificationWithClient(ctx, item, s.client)
 }
 
 func (s *Service) probeSitePageClassificationWithClient(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, client *http.Client) classificationResult {
@@ -1931,10 +1923,6 @@ func (s *Service) probeKnownProviderInterfacesWithClient(ctx context.Context, it
 		}
 	}
 	return classificationResult{}
-}
-
-func (s *Service) probeSub2APIInterface(ctx context.Context, origin string) classificationResult {
-	return s.probeSub2APIInterfaceWithClient(ctx, s.client, origin)
 }
 
 func (s *Service) probeSub2APIInterfaceWithClient(ctx context.Context, client *http.Client, origin string) classificationResult {
