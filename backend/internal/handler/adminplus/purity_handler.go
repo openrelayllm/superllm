@@ -2,7 +2,9 @@ package adminplus
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 
 	purityapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/purity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -12,12 +14,13 @@ import (
 )
 
 type PurityHandler struct {
-	service     *purityapp.Service
-	authService *service.AuthService
+	service          *purityapp.Service
+	settingService   *service.SettingService
+	turnstileService *service.TurnstileService
 }
 
-func NewPurityHandler(purityService *purityapp.Service, authService *service.AuthService) *PurityHandler {
-	return &PurityHandler{service: purityService, authService: authService}
+func NewPurityHandler(purityService *purityapp.Service, settingService *service.SettingService, turnstileService *service.TurnstileService) *PurityHandler {
+	return &PurityHandler{service: purityService, settingService: settingService, turnstileService: turnstileService}
 }
 
 type publicPurityCheckRequest struct {
@@ -67,10 +70,8 @@ func (h *PurityHandler) runPublicCheck(c *gin.Context, verifyTurnstile bool, dev
 		return
 	}
 	clientIP := ip.GetClientIP(c)
-	if verifyTurnstile && h != nil && h.authService != nil {
-		if err := h.authService.VerifyTurnstile(c.Request.Context(), req.TurnstileToken, clientIP); response.ErrorFrom(c, err) {
-			return
-		}
+	if verifyTurnstile && h.verifyWebPurityTurnstile(c, req.TurnstileToken, clientIP) {
+		return
 	}
 	if h == nil || h.service == nil {
 		response.InternalError(c, "purity service is not configured")
@@ -106,10 +107,8 @@ func (h *PurityHandler) runPublicCheckStream(c *gin.Context, verifyTurnstile boo
 		return
 	}
 	clientIP := ip.GetClientIP(c)
-	if verifyTurnstile && h != nil && h.authService != nil {
-		if err := h.authService.VerifyTurnstile(c.Request.Context(), req.TurnstileToken, clientIP); response.ErrorFrom(c, err) {
-			return
-		}
+	if verifyTurnstile && h.verifyWebPurityTurnstile(c, req.TurnstileToken, clientIP) {
+		return
 	}
 	if h == nil || h.service == nil {
 		response.InternalError(c, "purity service is not configured")
@@ -161,6 +160,36 @@ func (h *PurityHandler) runPublicCheckStream(c *gin.Context, verifyTurnstile boo
 		c.Writer.Flush()
 		return
 	}
+}
+
+func (h *PurityHandler) verifyWebPurityTurnstile(c *gin.Context, token string, clientIP string) bool {
+	if h == nil || h.settingService == nil {
+		return false
+	}
+	config, err := h.settingService.GetProxyAIPurityTurnstileConfig(c.Request.Context())
+	if response.ErrorFrom(c, err) {
+		return true
+	}
+	if !config.Enabled {
+		return false
+	}
+	if strings.TrimSpace(config.SiteKey) == "" || strings.TrimSpace(config.SecretKey) == "" || h.turnstileService == nil {
+		response.ErrorWithDetails(c, http.StatusServiceUnavailable, "proxyai purity captcha is not configured", "TURNSTILE_NOT_CONFIGURED", nil)
+		return true
+	}
+	if strings.TrimSpace(token) == "" {
+		response.ErrorWithDetails(c, http.StatusForbidden, "captcha verification is required for web purity checks", "TURNSTILE_TOKEN_REQUIRED", nil)
+		return true
+	}
+	if err := h.turnstileService.VerifyTokenWithSecret(c.Request.Context(), config.SecretKey, token, clientIP); err != nil {
+		if errors.Is(err, service.ErrTurnstileNotConfigured) {
+			response.ErrorFrom(c, err)
+			return true
+		}
+		response.ErrorWithDetails(c, http.StatusForbidden, "captcha verification failed", "TURNSTILE_TOKEN_INVALID", nil)
+		return true
+	}
+	return false
 }
 
 func (h *PurityHandler) AccountCheckStream(c *gin.Context) {

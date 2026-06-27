@@ -25,7 +25,7 @@ func TestPublicProxyAIListSitesProjectsOnlyPublicPublishedSites(t *testing.T) {
 			publicProxyAITestSite(3, "private", adminplusdomain.SiteCatalogVisibilityPrivate, adminplusdomain.SiteCatalogStatusPublished, adminplusdomain.SiteCatalogQualityComplete),
 			publicProxyAITestSite(4, "duplicate", adminplusdomain.SiteCatalogVisibilityPublic, adminplusdomain.SiteCatalogStatusPublished, adminplusdomain.SiteCatalogQualityDuplicate),
 		},
-	}))
+	}), nil)
 	handler.now = func() time.Time { return now }
 
 	router := gin.New()
@@ -83,7 +83,7 @@ func TestPublicProxyAIGetSiteDoesNotRevealPrivateSite(t *testing.T) {
 		sites: []*adminplusdomain.SiteCatalogSite{
 			publicProxyAITestSite(1, "private", adminplusdomain.SiteCatalogVisibilityPrivate, adminplusdomain.SiteCatalogStatusPublished, adminplusdomain.SiteCatalogQualityComplete),
 		},
-	}))
+	}), nil)
 
 	router := gin.New()
 	router.GET("/api/v1/public/proxyai/sites/:slug", handler.GetSite)

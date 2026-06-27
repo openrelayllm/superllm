@@ -219,7 +219,6 @@ func (s *Service) runClaudeCheck(ctx context.Context, in PublicCheckInput, emit 
 	report.HasVertex = hasVertexFingerprint(report.APIBaseHost, messagesProbe.Headers, streamProbe.Headers)
 	report.IsKiro = hasKiroFingerprint(report.APIBaseHost, messagesProbe.Headers, streamProbe.Headers)
 	emitProgress(report, emit, 7, "evaluate")
-	report.Metrics.ErrorClass, report.Metrics.ErrorMessage = firstProbeError(report.Checks)
 	report.Metrics.LatencyMS = int64(s.currentTime().Sub(startedAt) / time.Millisecond)
 	s.finalizeAndSave(ctx, report, baseURL)
 	emitFinalReport(report, emit)
@@ -528,6 +527,9 @@ func buildClaudeMessagesSchemaCheck(probe httpProbe, apiKey string) CheckResult 
 	if probe.StatusCode == 0 {
 		return failCheck("claude_messages_schema", "Messages 非流式结构", 20, "无法连接 Messages 端点。", details)
 	}
+	if probe.ErrorClass == errorClassAccountBalanceInsufficient {
+		return failCheck("claude_messages_schema", "Messages 非流式结构", 20, "账号余额不足，Messages 探测无法执行。", details)
+	}
 	if probe.StatusCode == http.StatusUnauthorized || probe.StatusCode == http.StatusForbidden {
 		return failCheck("claude_messages_schema", "Messages 非流式结构", 20, "API Key 鉴权失败。", details)
 	}
@@ -585,6 +587,9 @@ func buildClaudeMultimodalCheck(probe httpProbe, apiKey string) CheckResult {
 	}
 	if probe.StatusCode == 0 {
 		return failCheck("claude_multimodal", "多模态输入", 10, "无法连接 Messages 多模态探测端点。", details)
+	}
+	if probe.ErrorClass == errorClassAccountBalanceInsufficient {
+		return failCheck("claude_multimodal", "多模态输入", 10, "账号余额不足，多模态探测无法执行。", details)
 	}
 	if probe.StatusCode >= 200 && probe.StatusCode < 300 && gjson.GetBytes(probe.Body, "type").String() == "message" {
 		return passCheck("claude_multimodal", "多模态输入", 10, "Messages 接受 image block 多模态输入结构。", details)
@@ -680,8 +685,9 @@ func (s *Service) probeClaudeStream(ctx context.Context, client *http.Client, ba
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxProbeBodyBytes))
 		result.TotalLatencyMS = int64(s.currentTime().Sub(started) / time.Millisecond)
-		result.ErrorClass = errorClassForStatus(resp.StatusCode)
-		result.ErrorMessage = sanitizeMessage(upstreamErrorMessage(bodyBytes), apiKey)
+		errorMessage := upstreamErrorMessage(bodyBytes)
+		result.ErrorClass = errorClassForStatusAndMessage(resp.StatusCode, errorMessage)
+		result.ErrorMessage = sanitizeMessage(errorMessage, apiKey)
 		return result
 	}
 	readClaudeStream(resp.Body, started, s.currentTime, &result, apiKey)
@@ -753,6 +759,9 @@ func buildClaudeStreamingCheck(probe claudeStreamProbe, apiKey string) CheckResu
 	}
 	if probe.StatusCode == 0 {
 		return failCheck("claude_streaming", "Messages 流式事件", 15, "无法连接 Messages 流式端点。", details)
+	}
+	if probe.ErrorClass == errorClassAccountBalanceInsufficient {
+		return failCheck("claude_streaming", "Messages 流式事件", 15, "账号余额不足，Messages 流式探测无法执行。", details)
 	}
 	if probe.StatusCode < 200 || probe.StatusCode >= 300 {
 		return failCheck("claude_streaming", "Messages 流式事件", 15, "Messages 流式端点未返回可用响应。", details)

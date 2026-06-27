@@ -18,6 +18,8 @@ func RegisterPublicProxyAIRoutes(v1 *gin.RouterGroup, h *handler.Handlers, apiKe
 		if h.AdminPlus.PublicProxyAI != nil {
 			public.GET("/summary", h.AdminPlus.PublicProxyAI.Summary)
 			public.HEAD("/summary", h.AdminPlus.PublicProxyAI.Summary)
+			public.GET("/runtime-config", h.AdminPlus.PublicProxyAI.RuntimeConfig)
+			public.HEAD("/runtime-config", h.AdminPlus.PublicProxyAI.RuntimeConfig)
 			public.GET("/sites", h.AdminPlus.PublicProxyAI.ListSites)
 			public.HEAD("/sites", h.AdminPlus.PublicProxyAI.ListSites)
 			public.GET("/sites/:slug", h.AdminPlus.PublicProxyAI.GetSite)

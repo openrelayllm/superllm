@@ -91,8 +91,8 @@ func ProvideSettingHandler(settingService *service.SettingService, buildInfo Bui
 }
 
 // ProvideAdminSettingHandler creates the Admin Plus settings handler.
-func ProvideAdminSettingHandler(settingService *service.SettingService, opsService *service.OpsService) *admin.SettingHandler {
-	return admin.NewSettingHandler(settingService, opsService)
+func ProvideAdminSettingHandler(settingService *service.SettingService, opsService *service.OpsService, turnstileService *service.TurnstileService) *admin.SettingHandler {
+	return admin.NewSettingHandler(settingService, opsService, turnstileService)
 }
 
 // ProvideAdminGroupHandler creates the Admin Plus read-only group handler.

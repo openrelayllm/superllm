@@ -703,6 +703,31 @@ func (s *SettingService) GetAllSettings(ctx context.Context) (*SystemSettings, e
 	return s.parseSettings(settings), nil
 }
 
+type ProxyAIPurityTurnstileConfig struct {
+	Enabled   bool
+	SiteKey   string
+	SecretKey string
+}
+
+func (s *SettingService) GetProxyAIPurityTurnstileConfig(ctx context.Context) (ProxyAIPurityTurnstileConfig, error) {
+	if s == nil || s.settingRepo == nil {
+		return ProxyAIPurityTurnstileConfig{}, nil
+	}
+	settings, err := s.settingRepo.GetMultiple(ctx, []string{
+		SettingKeyProxyAIPurityTurnstileEnabled,
+		SettingKeyProxyAIPurityTurnstileSiteKey,
+		SettingKeyProxyAIPurityTurnstileSecretKey,
+	})
+	if err != nil {
+		return ProxyAIPurityTurnstileConfig{}, fmt.Errorf("get proxyai purity turnstile settings: %w", err)
+	}
+	return ProxyAIPurityTurnstileConfig{
+		Enabled:   settings[SettingKeyProxyAIPurityTurnstileEnabled] == "true",
+		SiteKey:   strings.TrimSpace(settings[SettingKeyProxyAIPurityTurnstileSiteKey]),
+		SecretKey: strings.TrimSpace(settings[SettingKeyProxyAIPurityTurnstileSecretKey]),
+	}, nil
+}
+
 // GetFrontendURL 获取前端基础URL（数据库优先，fallback 到配置文件）
 func (s *SettingService) GetFrontendURL(ctx context.Context) string {
 	val, err := s.settingRepo.GetValue(ctx, SettingKeyFrontendURL)
@@ -1784,6 +1809,11 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyTurnstileSiteKey] = settings.TurnstileSiteKey
 	if settings.TurnstileSecretKey != "" {
 		updates[SettingKeyTurnstileSecretKey] = settings.TurnstileSecretKey
+	}
+	updates[SettingKeyProxyAIPurityTurnstileEnabled] = strconv.FormatBool(settings.ProxyAIPurityTurnstileEnabled)
+	updates[SettingKeyProxyAIPurityTurnstileSiteKey] = settings.ProxyAIPurityTurnstileSiteKey
+	if settings.ProxyAIPurityTurnstileSecretKey != "" {
+		updates[SettingKeyProxyAIPurityTurnstileSecretKey] = settings.ProxyAIPurityTurnstileSecretKey
 	}
 	updates[SettingKeyAPIKeyACLTrustForwardedIP] = strconv.FormatBool(settings.APIKeyACLTrustForwardedIP)
 
@@ -2980,6 +3010,9 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyForceEmailOnThirdPartySignup:              "false",
 		SettingKeySMTPPort:                                  "587",
 		SettingKeySMTPUseTLS:                                "false",
+		SettingKeyProxyAIPurityTurnstileEnabled:             "false",
+		SettingKeyProxyAIPurityTurnstileSiteKey:             "",
+		SettingKeyProxyAIPurityTurnstileSecretKey:           "",
 		// Model fallback defaults
 		SettingKeyEnableModelFallback:      "false",
 		SettingKeyFallbackModelAnthropic:   "claude-3-5-sonnet-20241022",
@@ -3050,41 +3083,44 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		apiKeyACLTrustForwardedIP = s.cfg.Security.TrustForwardedIPForAPIKeyACL
 	}
 	result := &SystemSettings{
-		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
-		EmailVerifyEnabled:               emailVerifyEnabled,
-		RegistrationEmailSuffixWhitelist: ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist]),
-		PromoCodeEnabled:                 settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
-		PasswordResetEnabled:             emailVerifyEnabled && settings[SettingKeyPasswordResetEnabled] == "true",
-		FrontendURL:                      settings[SettingKeyFrontendURL],
-		InvitationCodeEnabled:            settings[SettingKeyInvitationCodeEnabled] == "true",
-		TotpEnabled:                      settings[SettingKeyTotpEnabled] == "true",
-		LoginAgreementEnabled:            settings[SettingKeyLoginAgreementEnabled] == "true",
-		LoginAgreementMode:               normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
-		LoginAgreementUpdatedAt:          loginAgreementUpdatedAt,
-		LoginAgreementDocuments:          loginAgreementDocuments,
-		SMTPHost:                         settings[SettingKeySMTPHost],
-		SMTPUsername:                     settings[SettingKeySMTPUsername],
-		SMTPFrom:                         settings[SettingKeySMTPFrom],
-		SMTPFromName:                     settings[SettingKeySMTPFromName],
-		SMTPUseTLS:                       settings[SettingKeySMTPUseTLS] == "true",
-		SMTPPasswordConfigured:           settings[SettingKeySMTPPassword] != "",
-		TurnstileEnabled:                 settings[SettingKeyTurnstileEnabled] == "true",
-		TurnstileSiteKey:                 settings[SettingKeyTurnstileSiteKey],
-		TurnstileSecretKeyConfigured:     settings[SettingKeyTurnstileSecretKey] != "",
-		APIKeyACLTrustForwardedIP:        apiKeyACLTrustForwardedIP,
-		SiteName:                         s.getStringOrDefault(settings, SettingKeySiteName, defaultProductSiteName),
-		SiteLogo:                         settings[SettingKeySiteLogo],
-		SiteSubtitle:                     s.getStringOrDefault(settings, SettingKeySiteSubtitle, defaultProductSiteSubtitle),
-		APIBaseURL:                       settings[SettingKeyAPIBaseURL],
-		ContactInfo:                      settings[SettingKeyContactInfo],
-		DocURL:                           settings[SettingKeyDocURL],
-		HomeContent:                      settings[SettingKeyHomeContent],
-		HideCcsImportButton:              settings[SettingKeyHideCcsImportButton] == "true",
-		PurchaseSubscriptionEnabled:      settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
-		PurchaseSubscriptionURL:          strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
-		CustomMenuItems:                  settings[SettingKeyCustomMenuItems],
-		CustomEndpoints:                  settings[SettingKeyCustomEndpoints],
-		BackendModeEnabled:               settings[SettingKeyBackendModeEnabled] == "true",
+		RegistrationEnabled:                       settings[SettingKeyRegistrationEnabled] == "true",
+		EmailVerifyEnabled:                        emailVerifyEnabled,
+		RegistrationEmailSuffixWhitelist:          ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist]),
+		PromoCodeEnabled:                          settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
+		PasswordResetEnabled:                      emailVerifyEnabled && settings[SettingKeyPasswordResetEnabled] == "true",
+		FrontendURL:                               settings[SettingKeyFrontendURL],
+		InvitationCodeEnabled:                     settings[SettingKeyInvitationCodeEnabled] == "true",
+		TotpEnabled:                               settings[SettingKeyTotpEnabled] == "true",
+		LoginAgreementEnabled:                     settings[SettingKeyLoginAgreementEnabled] == "true",
+		LoginAgreementMode:                        normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
+		LoginAgreementUpdatedAt:                   loginAgreementUpdatedAt,
+		LoginAgreementDocuments:                   loginAgreementDocuments,
+		SMTPHost:                                  settings[SettingKeySMTPHost],
+		SMTPUsername:                              settings[SettingKeySMTPUsername],
+		SMTPFrom:                                  settings[SettingKeySMTPFrom],
+		SMTPFromName:                              settings[SettingKeySMTPFromName],
+		SMTPUseTLS:                                settings[SettingKeySMTPUseTLS] == "true",
+		SMTPPasswordConfigured:                    settings[SettingKeySMTPPassword] != "",
+		TurnstileEnabled:                          settings[SettingKeyTurnstileEnabled] == "true",
+		TurnstileSiteKey:                          settings[SettingKeyTurnstileSiteKey],
+		TurnstileSecretKeyConfigured:              settings[SettingKeyTurnstileSecretKey] != "",
+		ProxyAIPurityTurnstileEnabled:             settings[SettingKeyProxyAIPurityTurnstileEnabled] == "true",
+		ProxyAIPurityTurnstileSiteKey:             settings[SettingKeyProxyAIPurityTurnstileSiteKey],
+		ProxyAIPurityTurnstileSecretKeyConfigured: settings[SettingKeyProxyAIPurityTurnstileSecretKey] != "",
+		APIKeyACLTrustForwardedIP:                 apiKeyACLTrustForwardedIP,
+		SiteName:                                  s.getStringOrDefault(settings, SettingKeySiteName, defaultProductSiteName),
+		SiteLogo:                                  settings[SettingKeySiteLogo],
+		SiteSubtitle:                              s.getStringOrDefault(settings, SettingKeySiteSubtitle, defaultProductSiteSubtitle),
+		APIBaseURL:                                settings[SettingKeyAPIBaseURL],
+		ContactInfo:                               settings[SettingKeyContactInfo],
+		DocURL:                                    settings[SettingKeyDocURL],
+		HomeContent:                               settings[SettingKeyHomeContent],
+		HideCcsImportButton:                       settings[SettingKeyHideCcsImportButton] == "true",
+		PurchaseSubscriptionEnabled:               settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
+		PurchaseSubscriptionURL:                   strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
+		CustomMenuItems:                           settings[SettingKeyCustomMenuItems],
+		CustomEndpoints:                           settings[SettingKeyCustomEndpoints],
+		BackendModeEnabled:                        settings[SettingKeyBackendModeEnabled] == "true",
 	}
 	result.TableDefaultPageSize, result.TablePageSizeOptions = parseTablePreferences(
 		settings[SettingKeyTableDefaultPageSize],
@@ -3139,6 +3175,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	// 敏感信息直接返回，方便测试连接时使用
 	result.SMTPPassword = settings[SettingKeySMTPPassword]
 	result.TurnstileSecretKey = settings[SettingKeyTurnstileSecretKey]
+	result.ProxyAIPurityTurnstileSecretKey = settings[SettingKeyProxyAIPurityTurnstileSecretKey]
 
 	// LinuxDo Connect 设置：
 	// - 兼容 config.yaml/env（避免老部署因为未迁移到数据库设置而被意外关闭）

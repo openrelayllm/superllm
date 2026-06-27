@@ -41,9 +41,13 @@
       <div v-if="!isSupportedAccount" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-900/20 dark:text-amber-200">
         仅支持 OpenAI 或 Claude API Key 账号执行纯度检测。
       </div>
-      <div v-if="report?.error || metrics.error_message" class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-500/40 dark:bg-red-900/20 dark:text-red-200">
+      <div v-if="fatalReportError" class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-500/40 dark:bg-red-900/20 dark:text-red-200">
         <div class="font-semibold">检测失败</div>
-        <div class="mt-1 break-words">{{ report?.error || metrics.error_message }}</div>
+        <div class="mt-1 break-words">{{ fatalReportError }}</div>
+      </div>
+      <div v-else-if="probeIssueMessage" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-900/20 dark:text-amber-200">
+        <div class="font-semibold">部分探针异常</div>
+        <div class="mt-1 break-words">{{ probeIssueMessage }}</div>
       </div>
 
       <div class="grid gap-3 lg:grid-cols-[260px_1fr]">
@@ -359,6 +363,16 @@ const progressPercent = computed(() => {
 })
 const runningSummary = computed(() => runStatus.value === 'running' ? `后端探针正在执行：${stepLabel.value}` : '尚未开始检测')
 const currentRunningValidation = computed(() => activeValidationByStep[currentStepName.value] || '')
+const fatalReportError = computed(() => {
+  if (report.value?.status === 'error' || report.value?.error) {
+    return report.value?.error || metrics.value.error_message || '检测失败'
+  }
+  return ''
+})
+const probeIssueMessage = computed(() => {
+  if (fatalReportError.value || !metrics.value.error_message) return ''
+  return metrics.value.error_message
+})
 const displayedValidations = computed<DisplayValidation[]>(() => validationDefinitions.map((definition) => {
   const result = validations.value[definition.id]
   if (result) {
@@ -586,7 +600,7 @@ function handleEvent(event: PurityCheckEvent) {
     case 'report':
       if (event.report) {
         applyReportSnapshot(event.report)
-        runStatus.value = 'success'
+        runStatus.value = event.report.status === 'error' ? 'error' : 'success'
       }
       break
     case 'error':

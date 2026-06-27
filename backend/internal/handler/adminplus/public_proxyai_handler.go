@@ -10,6 +10,7 @@ import (
 	sitecatalogapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sitecatalog"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,12 +20,13 @@ const (
 )
 
 type PublicProxyAIHandler struct {
-	service *sitecatalogapp.Service
-	now     func() time.Time
+	service        *sitecatalogapp.Service
+	settingService *service.SettingService
+	now            func() time.Time
 }
 
-func NewPublicProxyAIHandler(service *sitecatalogapp.Service) *PublicProxyAIHandler {
-	return &PublicProxyAIHandler{service: service, now: time.Now}
+func NewPublicProxyAIHandler(service *sitecatalogapp.Service, settingService *service.SettingService) *PublicProxyAIHandler {
+	return &PublicProxyAIHandler{service: service, settingService: settingService, now: time.Now}
 }
 
 type publicProxyAISummary struct {
@@ -99,6 +101,26 @@ type publicProxyAIPage struct {
 	PageSize    int                  `json:"page_size"`
 	Pages       int                  `json:"pages"`
 	GeneratedAt time.Time            `json:"generated_at"`
+}
+
+type publicProxyAIRuntimeConfig struct {
+	TurnstileSiteKey           string `json:"turnstile_site_key"`
+	WebPurityRequiresTurnstile bool   `json:"web_purity_requires_turnstile"`
+}
+
+func (h *PublicProxyAIHandler) RuntimeConfig(c *gin.Context) {
+	if h == nil || h.settingService == nil {
+		response.Success(c, publicProxyAIRuntimeConfig{})
+		return
+	}
+	config, err := h.settingService.GetProxyAIPurityTurnstileConfig(c.Request.Context())
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, publicProxyAIRuntimeConfig{
+		TurnstileSiteKey:           config.SiteKey,
+		WebPurityRequiresTurnstile: config.Enabled,
+	})
 }
 
 func (h *PublicProxyAIHandler) Summary(c *gin.Context) {

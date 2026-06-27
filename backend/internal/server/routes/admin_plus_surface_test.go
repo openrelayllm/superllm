@@ -89,8 +89,8 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 			ChannelCheck:     adminplushandler.NewChannelCheckHandler(channelchecksapp.NewService(nil, supplierService, sessionService, healthapp.NewService(healthapp.NewMemoryRepository()))),
 			Extension:        adminplushandler.NewExtensionHandler(extensionService, nil),
 			SiteDiscovery:    adminplushandler.NewSiteDiscoveryHandler(siteDiscoveryService),
-			PublicProxyAI:    adminplushandler.NewPublicProxyAIHandler(nil),
-			Purity:           adminplushandler.NewPurityHandler(purityapp.NewService(nil), nil),
+			PublicProxyAI:    adminplushandler.NewPublicProxyAIHandler(nil, nil),
+			Purity:           adminplushandler.NewPurityHandler(purityapp.NewService(nil), nil, nil),
 			MailVerification: adminplushandler.NewMailVerificationHandler(mailVerificationService),
 			Session:          adminplushandler.NewSessionHandler(sessionService, nil),
 			Scheduler:        adminplushandler.NewSchedulerHandler(schedulerapp.NewService(supplierService, extensionService)),
@@ -134,6 +134,7 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 	currentRoutes := []string{
 		"GET /api/v1/settings/public",
 		"GET /api/v1/public/proxyai/summary",
+		"GET /api/v1/public/proxyai/runtime-config",
 		"GET /api/v1/public/proxyai/sites",
 		"GET /api/v1/public/proxyai/sites/:slug",
 		"POST /api/v1/public/proxyai/web/purity/checks",
@@ -380,7 +381,7 @@ func TestPublicProxyAIDeveloperAPIRoutesFailClosedWithoutAuthMiddleware(t *testi
 	v1 := router.Group("/api/v1")
 	handlers := &handler.Handlers{
 		AdminPlus: &handler.AdminPlusHandlers{
-			Purity: adminplushandler.NewPurityHandler(nil, nil),
+			Purity: adminplushandler.NewPurityHandler(nil, nil, nil),
 		},
 	}
 	RegisterPublicProxyAIRoutes(v1, handlers, nil)

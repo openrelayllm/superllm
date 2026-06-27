@@ -157,6 +157,11 @@ const (
 	SettingKeyTurnstileSiteKey   = "turnstile_site_key"   // Turnstile Site Key
 	SettingKeyTurnstileSecretKey = "turnstile_secret_key" // Turnstile Secret Key
 
+	// ProxyAI 公开纯度检测 Turnstile 设置
+	SettingKeyProxyAIPurityTurnstileEnabled   = "proxyai_purity_turnstile_enabled"    // 是否为 2C 纯度检测启用 Turnstile
+	SettingKeyProxyAIPurityTurnstileSiteKey   = "proxyai_purity_turnstile_site_key"   // 2C 纯度检测 Turnstile Site Key
+	SettingKeyProxyAIPurityTurnstileSecretKey = "proxyai_purity_turnstile_secret_key" // 2C 纯度检测 Turnstile Secret Key
+
 	// API Key IP 访问控制设置
 	SettingKeyAPIKeyACLTrustForwardedIP = "api_key_acl_trust_forwarded_ip" // API Key IP 白/黑名单是否信任转发 IP
 

@@ -33,6 +33,8 @@ const (
 	tokenAuditSamples   = 11
 	probePNGBase64      = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAJ0lEQVR42mN44WOLFRm0/MeKGEY10ESD0tE4rOjXGVGsaFQDTTQAAIwskRBmlXeKAAAAAElFTkSuQmCC"
 	probePNGData        = "data:image/png;base64," + probePNGBase64
+
+	errorClassAccountBalanceInsufficient = "account_balance_insufficient"
 )
 
 type Service struct {
@@ -305,7 +307,6 @@ func (s *Service) runCheck(ctx context.Context, in PublicCheckInput, emit Public
 	report.HasVertex = hasVertexFingerprint(report.APIBaseHost, responsesProbe.Headers, streamProbe.Headers)
 	report.IsKiro = hasKiroFingerprint(report.APIBaseHost, responsesProbe.Headers, streamProbe.Headers)
 	emitProgress(report, emit, 7, "evaluate")
-	report.Metrics.ErrorClass, report.Metrics.ErrorMessage = firstProbeError(report.Checks)
 	report.Metrics.LatencyMS = int64(s.currentTime().Sub(startedAt) / time.Millisecond)
 	s.finalizeAndSave(ctx, report, baseURL)
 	emitFinalReport(report, emit)
@@ -497,11 +498,19 @@ func finalizeReport(report *PublicReport) {
 	report.Summary = summaryForVerdict(report.Verdict)
 	finalizeValidations(report)
 	report.Scores = scoreBreakdown(report)
-	if report.Metrics.ErrorClass == "" {
+	if report.Status == RunStatusError && report.Metrics.ErrorClass == "" {
 		report.Metrics.ErrorClass, report.Metrics.ErrorMessage = firstProbeError(report.Checks)
 	}
 	if report.Status == RunStatusError && report.Error == "" {
 		report.Error = firstNonEmptyString(report.Metrics.ErrorMessage, "请求目标 API 失败")
+	}
+	if report.Status == RunStatusError {
+		report.Score = 0
+		report.OfficialScore = 0
+		report.CompatibilityScore = 0
+		report.Verdict = VerdictInvalidOrUnavailable
+		report.Summary = summaryForReportError(report)
+		report.Scores = scoreBreakdown(report)
 	}
 	syncReportCompat(report)
 }
@@ -636,6 +645,13 @@ func summaryForVerdict(verdict string) string {
 	}
 }
 
+func summaryForReportError(report *PublicReport) string {
+	if report != nil && report.Metrics.ErrorClass == errorClassAccountBalanceInsufficient {
+		return "账号余额不足，无法完成纯度检测；请充值或切换有余额的账号后重试。"
+	}
+	return summaryForVerdict(VerdictInvalidOrUnavailable)
+}
+
 func markReportProbeError(report *PublicReport, probe httpProbe, fallback string) {
 	if report == nil {
 		return
@@ -656,6 +672,9 @@ func targetAPIErrorMessage(probe httpProbe, fallback string) string {
 	}
 	if message == "" {
 		message = "请求目标 API 失败"
+	}
+	if probe.ErrorClass == errorClassAccountBalanceInsufficient {
+		message = "账号余额不足，无法完成纯度检测；请充值或切换有余额的账号后重试。"
 	}
 	if probe.StatusCode > 0 {
 		return fmt.Sprintf("请求目标 API 失败: %d %s", probe.StatusCode, message)
@@ -862,8 +881,9 @@ func (s *Service) doJSONWithHeaders(ctx context.Context, client *http.Client, me
 		return result
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		result.ErrorClass = errorClassForStatus(resp.StatusCode)
-		result.ErrorMessage = sanitizeMessage(upstreamErrorMessage(bodyBytes), secret)
+		errorMessage := upstreamErrorMessage(bodyBytes)
+		result.ErrorClass = errorClassForStatusAndMessage(resp.StatusCode, errorMessage)
+		result.ErrorMessage = sanitizeMessage(errorMessage, secret)
 	}
 	return result
 }
@@ -896,7 +916,7 @@ func openAIModelPricingFor(model string) openAIModelPricing {
 		InputPerToken:     2.5e-6,
 		OutputPerToken:    15e-6,
 		CacheReadPerToken: 0.25e-6,
-		Source:            "Official OpenAI API pricing, Standard tier direct API, default gpt-5.4 baseline, verified 2026-06-27",
+		Source:            "Official OpenAI API pricing, Standard tier direct API, default gpt-5.5 baseline, verified 2026-06-27",
 	}
 }
 
@@ -1260,8 +1280,9 @@ func (s *Service) probeResponsesStream(ctx context.Context, client *http.Client,
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxProbeBodyBytes))
 		result.TotalLatencyMS = int64(s.currentTime().Sub(started) / time.Millisecond)
-		result.ErrorClass = errorClassForStatus(resp.StatusCode)
-		result.ErrorMessage = sanitizeMessage(upstreamErrorMessage(bodyBytes), apiKey)
+		errorMessage := upstreamErrorMessage(bodyBytes)
+		result.ErrorClass = errorClassForStatusAndMessage(resp.StatusCode, errorMessage)
+		result.ErrorMessage = sanitizeMessage(errorMessage, apiKey)
 		return result
 	}
 	readResponsesStream(resp.Body, started, s.currentTime, &result, apiKey)
@@ -1481,6 +1502,9 @@ func buildModelsCheck(probe httpProbe, model string) CheckResult {
 	if probe.StatusCode == 0 {
 		return failCheck("models_schema", "模型列表结构", 15, "无法连接模型列表端点。", details)
 	}
+	if probe.ErrorClass == errorClassAccountBalanceInsufficient {
+		return failCheck("models_schema", "模型列表结构", 15, "账号余额不足，模型列表探测无法执行。", details)
+	}
 	if probe.StatusCode == http.StatusUnauthorized || probe.StatusCode == http.StatusForbidden {
 		return failCheck("models_schema", "模型列表结构", 15, "API Key 鉴权失败。", details)
 	}
@@ -1512,6 +1536,9 @@ func buildResponsesSchemaCheck(probe httpProbe, apiKey string) CheckResult {
 	details := probeDetails(probe)
 	if probe.StatusCode == 0 {
 		return failCheck("responses_schema", "Responses 非流式结构", 20, "无法连接 Responses 端点。", details)
+	}
+	if probe.ErrorClass == errorClassAccountBalanceInsufficient {
+		return failCheck("responses_schema", "Responses 非流式结构", 20, "账号余额不足，Responses 探测无法执行。", details)
 	}
 	if probe.StatusCode == http.StatusUnauthorized || probe.StatusCode == http.StatusForbidden {
 		return failCheck("responses_schema", "Responses 非流式结构", 20, "Responses 端点鉴权失败。", details)
@@ -1578,6 +1605,9 @@ func buildStreamingCheck(probe streamProbe, apiKey string) CheckResult {
 	if probe.StatusCode == 0 {
 		return failCheck("streaming", "Responses 流式事件", 15, "无法连接 Responses 流式端点。", details)
 	}
+	if probe.ErrorClass == errorClassAccountBalanceInsufficient {
+		return failCheck("streaming", "Responses 流式事件", 15, "账号余额不足，Responses 流式探测无法执行。", details)
+	}
 	if probe.StatusCode < 200 || probe.StatusCode >= 300 {
 		return failCheck("streaming", "Responses 流式事件", 15, "Responses 流式端点未返回可用响应。", details)
 	}
@@ -1597,6 +1627,9 @@ func buildMultimodalCheck(probe httpProbe, apiKey string) CheckResult {
 	}
 	if probe.StatusCode == 0 {
 		return failCheck("multimodal", "多模态输入", 10, "无法连接 Responses 多模态探测端点。", details)
+	}
+	if probe.ErrorClass == errorClassAccountBalanceInsufficient {
+		return failCheck("multimodal", "多模态输入", 10, "账号余额不足，多模态探测无法执行。", details)
 	}
 	if probe.StatusCode >= 200 && probe.StatusCode < 300 && gjson.GetBytes(probe.Body, "object").String() == "response" {
 		return passCheck("multimodal", "多模态输入", 10, "Responses 接受 input_image 多模态输入结构。", details)
@@ -2242,6 +2275,29 @@ func errorClassForStatus(status int) string {
 	default:
 		return ""
 	}
+}
+
+func errorClassForStatusAndMessage(status int, message string) string {
+	if isAccountBalanceInsufficientMessage(message) {
+		return errorClassAccountBalanceInsufficient
+	}
+	return errorClassForStatus(status)
+}
+
+func isAccountBalanceInsufficientMessage(message string) bool {
+	value := strings.ToLower(strings.TrimSpace(message))
+	if value == "" {
+		return false
+	}
+	hasInsufficient := strings.Contains(value, "insufficient") || strings.Contains(value, "exceeded")
+	if !hasInsufficient {
+		return false
+	}
+	return strings.Contains(value, "balance") ||
+		strings.Contains(value, "quota") ||
+		strings.Contains(value, "credit") ||
+		strings.Contains(value, "billing") ||
+		strings.Contains(value, "fund")
 }
 
 func upstreamErrorMessage(body []byte) string {

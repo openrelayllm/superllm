@@ -58,6 +58,18 @@ func (s *TurnstileService) VerifyToken(ctx context.Context, token string, remote
 		return ErrTurnstileNotConfigured
 	}
 
+	return s.VerifyTokenWithSecret(ctx, secretKey, token, remoteIP)
+}
+
+func (s *TurnstileService) VerifyTokenWithSecret(ctx context.Context, secretKey, token string, remoteIP string) error {
+	if s == nil || s.verifier == nil {
+		return ErrTurnstileNotConfigured
+	}
+	if secretKey == "" {
+		logger.LegacyPrintf("service.turnstile", "%s", "[Turnstile] Secret key not configured")
+		return ErrTurnstileNotConfigured
+	}
+
 	// 如果 token 为空，返回错误
 	if token == "" {
 		logger.LegacyPrintf("service.turnstile", "%s", "[Turnstile] Token is empty")

@@ -73,7 +73,7 @@ func TestPurityHandlerAccountCheckStreamUsesStoredAccountCredential(t *testing.T
 			},
 		},
 	})
-	handler := NewPurityHandler(service, nil)
+	handler := NewPurityHandler(service, nil, nil)
 	router := gin.New()
 	router.POST("/accounts/:accountID/purity/checks/stream", handler.AccountCheckStream)
 
