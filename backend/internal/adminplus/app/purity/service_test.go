@@ -15,6 +15,7 @@ import (
 )
 
 func TestServiceRunPublicCheck_OpenAICompatible(t *testing.T) {
+	auditResponseIndex := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "Bearer sk-test", r.Header.Get("Authorization"))
 		switch r.URL.Path {
@@ -35,6 +36,10 @@ func TestServiceRunPublicCheck_OpenAICompatible(t *testing.T) {
 				_, _ = fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed"}}`)
 				_, _ = fmt.Fprintln(w)
 				_, _ = fmt.Fprintln(w, "data: [DONE]")
+				return
+			}
+			if _, ok := body["prompt_cache_key"].(string); ok {
+				writeOpenAITokenAuditTestResponse(t, w, body, &auditResponseIndex)
 				return
 			}
 			writeJSON(t, w, map[string]any{
@@ -87,7 +92,12 @@ func TestServiceRunPublicCheck_OpenAICompatible(t *testing.T) {
 	require.Len(t, report.TokenAudit.Rows, tokenAuditSamples)
 	require.Equal(t, report.TokenAudit.ActualCostUSD, report.TokenAudit.TotalCostUSD)
 	require.Equal(t, float64(1), report.TokenAudit.Multiplier)
-	require.Zero(t, report.TokenAudit.Samples[0].CacheCreationTokens)
+	require.True(t, report.TokenAudit.PreviousChainOK)
+	require.Equal(t, tokenAuditSamples-1, report.TokenAudit.StatefulRounds)
+	require.NotZero(t, report.TokenAudit.CachedTokens)
+	require.True(t, strings.HasPrefix(report.TokenAudit.PromptCacheKey, "proxyai_best_"))
+	require.Empty(t, report.TokenAudit.Samples[0].PreviousResponseID)
+	require.Equal(t, "resp_audit_1", report.TokenAudit.Samples[1].PreviousResponseID)
 }
 
 func TestTokenAuditPayloadsUseCumulativeCacheShape(t *testing.T) {
@@ -100,6 +110,31 @@ func TestTokenAuditPayloadsUseCumulativeCacheShape(t *testing.T) {
 	require.NotContains(t, roundOnePrompt, "round-cache-02")
 	require.Contains(t, roundElevenPrompt, "round-cache-11")
 	require.Greater(t, len(roundElevenPrompt), len(roundOnePrompt))
+
+	promptCacheKey := openAITokenAuditPromptCacheKey("gpt-5.4", auditNonce)
+	var openAIPayload map[string]any
+	require.NoError(t, json.Unmarshal(responsesAuditProbePayload("gpt-5.4", 2, auditNonce, "resp_audit_1", promptCacheKey), &openAIPayload))
+	require.Equal(t, "gpt-5.4", openAIPayload["model"])
+	require.Equal(t, true, openAIPayload["store"])
+	require.Equal(t, "resp_audit_1", openAIPayload["previous_response_id"])
+	require.Equal(t, promptCacheKey, openAIPayload["prompt_cache_key"])
+	require.Equal(t, "auto", openAIPayload["tool_choice"])
+	require.Equal(t, true, openAIPayload["parallel_tool_calls"])
+	require.Contains(t, openAIPayload["instructions"], "stable-cache-prefix")
+	require.NotContains(t, openAIPayload["instructions"], "round-cache-02")
+	tools, ok := openAIPayload["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	input, ok := openAIPayload["input"].([]any)
+	require.True(t, ok)
+	require.Len(t, input, 1)
+	inputMessage, ok := input[0].(map[string]any)
+	require.True(t, ok)
+	content, ok := inputMessage["content"].([]any)
+	require.True(t, ok)
+	inputBlock, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, inputBlock["text"], "round-cache-02")
 
 	probeCtx := newClaudeProbeContext()
 	history := []claudeAuditTurn{
@@ -146,7 +181,7 @@ func TestTokenAuditPayloadsUseCumulativeCacheShape(t *testing.T) {
 	require.Equal(t, 1, messageLevelCacheControlled)
 	message, ok := messages[0].(map[string]any)
 	require.True(t, ok)
-	content, ok := message["content"].([]any)
+	content, ok = message["content"].([]any)
 	require.True(t, ok)
 	require.Len(t, content, 1)
 	instructionBlock, ok := content[0].(map[string]any)
@@ -350,6 +385,7 @@ func TestPublicReportCCTestCompatFields(t *testing.T) {
 }
 
 func TestServiceRunPublicCheckStream_EmitsProgressEvents(t *testing.T) {
+	auditResponseIndex := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "Bearer sk-test", r.Header.Get("Authorization"))
 		switch r.URL.Path {
@@ -370,6 +406,10 @@ func TestServiceRunPublicCheckStream_EmitsProgressEvents(t *testing.T) {
 				_, _ = fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed"}}`)
 				_, _ = fmt.Fprintln(w)
 				_, _ = fmt.Fprintln(w, "data: [DONE]")
+				return
+			}
+			if _, ok := body["prompt_cache_key"].(string); ok {
+				writeOpenAITokenAuditTestResponse(t, w, body, &auditResponseIndex)
 				return
 			}
 			writeJSON(t, w, map[string]any{
@@ -513,6 +553,7 @@ func TestServiceRunAccountCheckStream_InfersClaudeProvider(t *testing.T) {
 }
 
 func TestServiceRunAccountCheckStream_LoadsAccountCredentialAndEmitsProgress(t *testing.T) {
+	auditResponseIndex := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "Bearer sk-account", r.Header.Get("Authorization"))
 		switch r.URL.Path {
@@ -533,6 +574,10 @@ func TestServiceRunAccountCheckStream_LoadsAccountCredentialAndEmitsProgress(t *
 				_, _ = fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed"}}`)
 				_, _ = fmt.Fprintln(w)
 				_, _ = fmt.Fprintln(w, "data: [DONE]")
+				return
+			}
+			if _, ok := body["prompt_cache_key"].(string); ok {
+				writeOpenAITokenAuditTestResponse(t, w, body, &auditResponseIndex)
 				return
 			}
 			writeJSON(t, w, map[string]any{
@@ -585,6 +630,7 @@ func TestServiceRunAccountCheckStream_LoadsAccountCredentialAndEmitsProgress(t *
 }
 
 func TestServiceRunPublicCheck_FailsUnexpectedToolCall(t *testing.T) {
+	auditResponseIndex := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "Bearer sk-test", r.Header.Get("Authorization"))
 		switch r.URL.Path {
@@ -605,6 +651,10 @@ func TestServiceRunPublicCheck_FailsUnexpectedToolCall(t *testing.T) {
 				_, _ = fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed"}}`)
 				_, _ = fmt.Fprintln(w)
 				_, _ = fmt.Fprintln(w, "data: [DONE]")
+				return
+			}
+			if _, ok := body["prompt_cache_key"].(string); ok {
+				writeOpenAITokenAuditTestResponse(t, w, body, &auditResponseIndex)
 				return
 			}
 			writeJSON(t, w, map[string]any{
@@ -875,6 +925,46 @@ func claudeBodyContainsImage(body map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func writeOpenAITokenAuditTestResponse(t *testing.T, w http.ResponseWriter, body map[string]any, responseIndex *int) {
+	t.Helper()
+	require.NotNil(t, responseIndex)
+	*responseIndex++
+	index := *responseIndex
+	require.Equal(t, true, body["store"])
+	require.Equal(t, "auto", body["tool_choice"])
+	require.NotEmpty(t, body["prompt_cache_key"])
+	tools, ok := body["tools"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, tools)
+	if index == 1 {
+		require.NotContains(t, body, "previous_response_id")
+	} else {
+		require.Equal(t, fmt.Sprintf("resp_audit_%d", index-1), body["previous_response_id"])
+	}
+
+	cachedTokens := 0
+	if index > 1 {
+		cachedTokens = 640
+	}
+	inputTokens := 1600 + index*13
+	outputTokens := 24 + index
+	writeJSON(t, w, map[string]any{
+		"id":     fmt.Sprintf("resp_audit_%d", index),
+		"object": "response",
+		"output": []map[string]any{
+			{"type": "message", "role": "assistant", "content": []map[string]any{{"type": "output_text", "text": "ok"}}},
+		},
+		"usage": map[string]any{
+			"input_tokens":  inputTokens,
+			"output_tokens": outputTokens,
+			"total_tokens":  inputTokens + outputTokens,
+			"input_tokens_details": map[string]any{
+				"cached_tokens": cachedTokens,
+			},
+		},
+	})
 }
 
 type accountResolverStub struct {

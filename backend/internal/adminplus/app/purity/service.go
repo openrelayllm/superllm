@@ -669,24 +669,29 @@ func (s *Service) probeResponsesMultimodal(ctx context.Context, client *http.Cli
 func (s *Service) runTokenAudit(ctx context.Context, client *http.Client, baseURL string, apiKey string, model string, emitSample func(TokenAuditSample)) *TokenAuditReport {
 	pricing := openAIModelPricingFor(model)
 	auditNonce := newAuditNonce(model, s.currentTime())
+	promptCacheKey := openAITokenAuditPromptCacheKey(model, auditNonce)
 	report := &TokenAuditReport{
-		Status:      CheckStatusWarn,
-		Summary:     "Token 用量审计样本不足。",
-		PriceSource: pricing.Source,
-		Samples:     make([]TokenAuditSample, 0, tokenAuditSamples),
+		Status:         CheckStatusWarn,
+		Summary:        "Token 用量审计样本不足。",
+		PriceSource:    pricing.Source,
+		PromptCacheKey: promptCacheKey,
+		StoreEnabled:   true,
+		Samples:        make([]TokenAuditSample, 0, tokenAuditSamples),
 	}
 	var totalOfficial float64
 	var totalActual float64
+	var totalUncached float64
+	previousResponseID := ""
 	for i := 1; i <= tokenAuditSamples; i++ {
 		select {
 		case <-ctx.Done():
 			report.Summary = "Token 用量审计超时，已保留完成样本。"
-			finalizeTokenAudit(report)
+			finalizeOpenAITokenAudit(report)
 			return report
 		default:
 		}
-		probe := s.probeResponsesAudit(ctx, client, baseURL, apiKey, model, i, auditNonce)
-		sample := tokenAuditSampleFromProbe(i, probe, pricing)
+		probe := s.probeResponsesAudit(ctx, client, baseURL, apiKey, model, i, auditNonce, previousResponseID, promptCacheKey)
+		sample := tokenAuditSampleFromProbe(i, probe, pricing, previousResponseID, promptCacheKey, true)
 		report.Samples = append(report.Samples, sample)
 		if emitSample != nil {
 			emitSample(sample)
@@ -700,28 +705,56 @@ func (s *Service) runTokenAudit(ctx context.Context, client *http.Client, baseUR
 		report.CachedTokens += sample.CachedTokens
 		totalOfficial += sample.OfficialBaselineUSD
 		totalActual += sample.ActualCostUSD
+		totalUncached += sample.UncachedBaselineUSD
+		if sample.StateLinked {
+			report.StatefulRounds++
+		}
+		if sample.ResponseID != "" {
+			previousResponseID = sample.ResponseID
+		}
 	}
 	report.OfficialBaselineUSD = roundMoney(totalOfficial)
 	report.ActualCostUSD = roundMoney(totalActual)
-	finalizeTokenAudit(report)
+	report.UncachedBaselineUSD = roundMoney(totalUncached)
+	finalizeOpenAITokenAudit(report)
 	return report
 }
 
-func (s *Service) probeResponsesAudit(ctx context.Context, client *http.Client, baseURL string, apiKey string, model string, round int, auditNonce string) httpProbe {
-	body, _ := json.Marshal(map[string]any{
-		"model": model,
+func (s *Service) probeResponsesAudit(ctx context.Context, client *http.Client, baseURL string, apiKey string, model string, round int, auditNonce string, previousResponseID string, promptCacheKey string) httpProbe {
+	body := responsesAuditProbePayload(model, round, auditNonce, previousResponseID, promptCacheKey)
+	return s.doJSON(ctx, client, http.MethodPost, buildOpenAIEndpointURL(baseURL, "/v1/responses"), apiKey, body, "application/json")
+}
+
+func responsesAuditProbePayload(model string, round int, auditNonce string, previousResponseID string, promptCacheKey string) []byte {
+	if strings.TrimSpace(model) == "" {
+		model = openai.DefaultTestModel
+	}
+	bodyMap := map[string]any{
+		"model":        model,
+		"instructions": openAITokenAuditInstructions(auditNonce),
 		"input": []map[string]any{
 			{
 				"role": "user",
 				"content": []map[string]any{
-					{"type": "input_text", "text": openAITokenAuditPrompt(round, auditNonce)},
+					{"type": "input_text", "text": openAITokenAuditRoundInput(round, auditNonce)},
 				},
 			},
 		},
-		"max_output_tokens": tokenAuditOutputBudget(round),
-		"stream":            false,
-	})
-	return s.doJSON(ctx, client, http.MethodPost, buildOpenAIEndpointURL(baseURL, "/v1/responses"), apiKey, body, "application/json")
+		"tools": []map[string]any{
+			openAITokenAuditToolDefinition(),
+		},
+		"tool_choice":         "auto",
+		"parallel_tool_calls": true,
+		"prompt_cache_key":    promptCacheKey,
+		"store":               true,
+		"max_output_tokens":   tokenAuditOutputBudget(round),
+		"stream":              false,
+	}
+	if strings.TrimSpace(previousResponseID) != "" {
+		bodyMap["previous_response_id"] = strings.TrimSpace(previousResponseID)
+	}
+	body, _ := json.Marshal(bodyMap)
+	return body
 }
 
 func (s *Service) doJSON(ctx context.Context, client *http.Client, method string, endpoint string, apiKey string, body []byte, accept string) httpProbe {
@@ -958,11 +991,15 @@ func openAIModelPricingTable() map[string]openAIModelPricing {
 	}
 }
 
-func tokenAuditSampleFromProbe(index int, probe httpProbe, pricing openAIModelPricing) TokenAuditSample {
+func tokenAuditSampleFromProbe(index int, probe httpProbe, pricing openAIModelPricing, previousResponseID string, promptCacheKey string, store bool) TokenAuditSample {
 	sample := TokenAuditSample{
-		Index:     index,
-		LatencyMS: probe.LatencyMS,
-		Status:    CheckStatusFail,
+		Index:              index,
+		Round:              index,
+		LatencyMS:          probe.LatencyMS,
+		Status:             CheckStatusFail,
+		PreviousResponseID: strings.TrimSpace(previousResponseID),
+		PromptCacheKey:     strings.TrimSpace(promptCacheKey),
+		Store:              store,
 	}
 	if probe.StatusCode < 200 || probe.StatusCode >= 300 {
 		return sample
@@ -980,15 +1017,20 @@ func tokenAuditSampleFromProbe(index int, probe httpProbe, pricing openAIModelPr
 	sample.UncachedInputTokens = maxInt64(0, usage.InputTokens-usage.CachedTokens)
 	sample.ReasoningTokens = usage.ReasoningTokens
 	sample.TotalTokens = usage.TotalTokens
-	sample.OfficialBaselineUSD = roundMoney(tokenCost(usage, pricing, false))
+	sample.ResponseID = strings.TrimSpace(gjson.GetBytes(probe.Body, "id").String())
+	sample.StateLinked = sample.PreviousResponseID != "" && sample.ResponseID != ""
+	sample.UncachedBaselineUSD = roundMoney(tokenCost(usage, pricing, false))
+	sample.OfficialBaselineUSD = roundMoney(tokenCost(usage, pricing, true))
 	sample.BaselineCostUSD = sample.OfficialBaselineUSD
-	sample.ActualCostUSD = roundMoney(tokenCost(usage, pricing, true))
+	sample.ActualCostUSD = sample.OfficialBaselineUSD
 	sample.CostUSD = sample.ActualCostUSD
+	if sample.UncachedBaselineUSD > sample.ActualCostUSD {
+		sample.CacheDiscountUSD = roundMoney(sample.UncachedBaselineUSD - sample.ActualCostUSD)
+	}
 	if sample.OfficialBaselineUSD > 0 {
 		sample.Multiplier = roundRatio(sample.ActualCostUSD / sample.OfficialBaselineUSD)
 		sample.Ratio = sample.Multiplier
 	}
-	sample.Round = index
 	sample.Status = CheckStatusPass
 	applyTokenAuditSampleDerivedFields(&sample)
 	return sample
@@ -1070,6 +1112,31 @@ func finalizeTokenAudit(report *TokenAuditReport) {
 		report.Status = CheckStatusFail
 		report.Summary = "未获取到可审计 usage"
 		report.Anomalies = append(report.Anomalies, "usage_missing")
+	}
+}
+
+func finalizeOpenAITokenAudit(report *TokenAuditReport) {
+	finalizeTokenAudit(report)
+	if report == nil || report.SampleCount == 0 || report.Status == CheckStatusFail {
+		return
+	}
+	expectedStatefulRounds := maxInt(0, minInt(tokenAuditSamples, report.SampleCount)-1)
+	report.PreviousChainOK = expectedStatefulRounds == 0 || report.StatefulRounds >= expectedStatefulRounds
+	if !report.PreviousChainOK {
+		report.Status = CheckStatusWarn
+		report.Summary = "Responses 状态链路不完整"
+		report.Anomalies = appendUniqueString(report.Anomalies, "previous_response_chain_incomplete")
+	}
+	if report.CachedTokens == 0 {
+		report.Status = CheckStatusWarn
+		if report.PreviousChainOK {
+			report.Summary = "状态链路正常，但未观察到 cached_tokens"
+		}
+		report.Anomalies = appendUniqueString(report.Anomalies, "cached_tokens_missing")
+	}
+	if report.UncachedBaselineUSD > 0 && report.ActualCostUSD > 0 {
+		report.OverallRatio = roundRatio(report.ActualCostUSD / report.UncachedBaselineUSD)
+		report.OverallRatioCompat = report.OverallRatio
 	}
 }
 
@@ -1266,11 +1333,50 @@ func responsesMultimodalProbePayload(model string) []byte {
 
 func openAITokenAuditPrompt(round int, auditNonce string) string {
 	return strings.Join([]string{
-		"proxyai.best OpenAI token audit. The stable prefix below is intentionally repeated across all rounds so official prompt-cache behavior can be measured. audit_nonce=" + auditNonce,
-		auditStableCacheText(auditNonce),
+		openAITokenAuditInstructions(auditNonce),
 		auditCumulativeRoundText(round),
 		tokenAuditRoundInstruction(round),
 	}, "\n\n")
+}
+
+func openAITokenAuditInstructions(auditNonce string) string {
+	return strings.Join([]string{
+		"proxyai.best OpenAI token audit. Keep responses concise and do not call tools unless explicitly requested. audit_nonce=" + auditNonce,
+		auditStableCacheText(auditNonce),
+	}, "\n\n")
+}
+
+func openAITokenAuditRoundInput(round int, auditNonce string) string {
+	return strings.Join([]string{
+		fmt.Sprintf("Responses stateful audit round %02d. Use the prior response context when previous_response_id is present. audit_nonce=%s", clampAuditRound(round), auditNonce),
+		auditRoundCacheText(round),
+		tokenAuditRoundInstruction(round),
+	}, "\n\n")
+}
+
+func openAITokenAuditToolDefinition() map[string]any {
+	return map[string]any{
+		"type":        "function",
+		"name":        "audit_marker",
+		"description": "Stable tool schema for prompt-cache and tool-passthrough audit. Do not call unless requested.",
+		"parameters": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"round": map[string]any{"type": "integer"},
+				"ok":    map[string]any{"type": "boolean"},
+			},
+			"required": []string{"round", "ok"},
+		},
+	}
+}
+
+func openAITokenAuditPromptCacheKey(model string, auditNonce string) string {
+	raw := strings.Join([]string{"proxyai.best", "openai-token-audit", strings.TrimSpace(model), auditNonce}, "\x00")
+	hash := sha256Hex(raw)
+	if len(hash) > 24 {
+		hash = hash[:24]
+	}
+	return "proxyai_best_" + hash
 }
 
 func auditStableCacheText(auditNonce string) string {
@@ -1454,10 +1560,21 @@ func buildTokenAuditCheck(audit *TokenAuditReport) CheckResult {
 	if audit != nil {
 		details["sample_count"] = audit.SampleCount
 		details["multiplier"] = audit.Multiplier
+		details["overall_ratio"] = audit.OverallRatio
 		details["cache_hit_rate"] = audit.CacheHitRate
 		details["official_baseline_usd"] = audit.OfficialBaselineUSD
+		details["uncached_baseline_usd"] = audit.UncachedBaselineUSD
 		details["actual_cost_usd"] = audit.ActualCostUSD
 		details["total_cost"] = audit.TotalCostUSD
+		if audit.PromptCacheKey != "" {
+			details["prompt_cache_key"] = audit.PromptCacheKey
+		}
+		details["store_enabled"] = audit.StoreEnabled
+		details["stateful_rounds"] = audit.StatefulRounds
+		details["previous_response_chain_ok"] = audit.PreviousChainOK
+		if len(audit.Anomalies) > 0 {
+			details["anomalies"] = append([]string(nil), audit.Anomalies...)
+		}
 	}
 	switch {
 	case audit == nil:
@@ -1517,7 +1634,7 @@ func parseResponsesUsage(body []byte) *TokenUsage {
 		OutputTokens:        usage.Get("output_tokens").Int(),
 		TotalTokens:         usage.Get("total_tokens").Int(),
 		CacheCreationTokens: firstUsageInt(usage, "input_tokens_details.cache_creation_tokens", "input_tokens_details.cache_creation_input_tokens", "prompt_tokens_details.cache_creation_tokens"),
-		CachedTokens:        usage.Get("input_tokens_details.cached_tokens").Int(),
+		CachedTokens:        firstUsageInt(usage, "input_tokens_details.cached_tokens", "prompt_tokens_details.cached_tokens"),
 		ReasoningTokens:     usage.Get("output_tokens_details.reasoning_tokens").Int(),
 	}
 }
@@ -2143,6 +2260,18 @@ func minInt(a int, b int) int {
 	return b
 }
 
+func appendUniqueString(values []string, value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
 func maxInt64(a int64, b int64) int64 {
 	if a > b {
 		return a
@@ -2185,10 +2314,16 @@ func buildPublicSummary(report *PublicReport) map[string]any {
 			"summary":               report.TokenAudit.Summary,
 			"sample_count":          report.TokenAudit.SampleCount,
 			"official_baseline_usd": report.TokenAudit.OfficialBaselineUSD,
+			"uncached_baseline_usd": report.TokenAudit.UncachedBaselineUSD,
 			"actual_cost_usd":       report.TokenAudit.ActualCostUSD,
 			"total_cost":            report.TokenAudit.TotalCostUSD,
 			"multiplier":            report.TokenAudit.Multiplier,
+			"overall_ratio":         report.TokenAudit.OverallRatio,
 			"cache_hit_rate":        report.TokenAudit.CacheHitRate,
+			"prompt_cache_key":      report.TokenAudit.PromptCacheKey,
+			"store_enabled":         report.TokenAudit.StoreEnabled,
+			"stateful_rounds":       report.TokenAudit.StatefulRounds,
+			"previous_chain_ok":     report.TokenAudit.PreviousChainOK,
 		}
 	}
 	return out

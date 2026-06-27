@@ -177,6 +177,7 @@ type TokenAuditReport struct {
 	Summary              string             `json:"summary"`
 	PriceSource          string             `json:"price_source"`
 	OfficialBaselineUSD  float64            `json:"official_baseline_usd"`
+	UncachedBaselineUSD  float64            `json:"uncached_baseline_usd,omitempty"`
 	BaselineTotalCostUSD float64            `json:"baseline_total_cost_usd,omitempty"`
 	BaselineTotalCost    float64            `json:"baselineTotalCost,omitempty"`
 	ActualCostUSD        float64            `json:"actual_cost_usd"`
@@ -192,6 +193,10 @@ type TokenAuditReport struct {
 	CacheCreationTokens  int64              `json:"cache_creation_tokens"`
 	CachedTokens         int64              `json:"cached_tokens"`
 	SampleCount          int                `json:"sample_count"`
+	PromptCacheKey       string             `json:"prompt_cache_key,omitempty"`
+	StoreEnabled         bool               `json:"store_enabled,omitempty"`
+	StatefulRounds       int                `json:"stateful_rounds,omitempty"`
+	PreviousChainOK      bool               `json:"previous_response_chain_ok,omitempty"`
 	Anomalies            []string           `json:"anomalies,omitempty"`
 	Samples              []TokenAuditSample `json:"samples"`
 	Rows                 []TokenAuditSample `json:"rows,omitempty"`
@@ -218,6 +223,8 @@ type TokenAuditSample struct {
 	ReasoningTokens          int64   `json:"reasoning_tokens,omitempty"`
 	TotalTokens              int64   `json:"total_tokens"`
 	OfficialBaselineUSD      float64 `json:"official_baseline_usd"`
+	UncachedBaselineUSD      float64 `json:"uncached_baseline_usd,omitempty"`
+	CacheDiscountUSD         float64 `json:"cache_discount_usd,omitempty"`
 	BaselineCostUSD          float64 `json:"baseline_cost,omitempty"`
 	ActualCostUSD            float64 `json:"actual_cost_usd"`
 	CostUSD                  float64 `json:"cost,omitempty"`
@@ -226,6 +233,11 @@ type TokenAuditSample struct {
 	Ratio                    float64 `json:"ratio,omitempty"`
 	LatencyMS                int64   `json:"latency_ms"`
 	Status                   string  `json:"status"`
+	ResponseID               string  `json:"response_id,omitempty"`
+	PreviousResponseID       string  `json:"previous_response_id,omitempty"`
+	PromptCacheKey           string  `json:"prompt_cache_key,omitempty"`
+	Store                    bool    `json:"store,omitempty"`
+	StateLinked              bool    `json:"state_linked,omitempty"`
 }
 
 type PublicReportRecord struct {
