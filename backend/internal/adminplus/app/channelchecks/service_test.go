@@ -104,6 +104,32 @@ func TestServiceCheckUsesRequestedProbeModel(t *testing.T) {
 	require.Equal(t, "gpt-5.5", result.Items[0].ProbeModel)
 }
 
+func TestServiceCheckClampsCandidateLimitToTwenty(t *testing.T) {
+	repo := newFakeChannelCheckRepository()
+	repo.candidates = make([]*Candidate, 0, 25)
+	for i := 0; i < 25; i++ {
+		groupID := int64(100 + i)
+		repo.candidates = append(repo.candidates, fakeCandidate(7, groupID, 0.5+float64(i)/100, 200+int64(i), true))
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	healthRepo := &fakeChannelHealthRepository{baseURL: server.URL}
+	svc := NewService(repo, nil, nil, healthapp.NewService(healthRepo))
+	svc.now = func() time.Time { return time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC) }
+
+	result, err := svc.Check(context.Background(), CheckInput{SupplierID: 7, CandidateLimit: 25})
+
+	require.NoError(t, err)
+	require.Len(t, result.Items, maxCandidateLimit)
+	require.Equal(t, maxCandidateLimit, result.Total)
+	require.Equal(t, int64(100), result.Items[0].SupplierGroupID)
+	require.Equal(t, int64(119), result.Items[len(result.Items)-1].SupplierGroupID)
+}
+
 func TestServiceSetSchedulingEnsuresMissingLocalGroupBinding(t *testing.T) {
 	repo := newFakeChannelCheckRepository()
 	repo.candidates = []*Candidate{fakeCandidate(7, 101, 0.7, 201, false)}

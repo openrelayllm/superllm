@@ -88,6 +88,46 @@ func buildResponsesSchemaCheck(probe httpProbe, apiKey string) CheckResult {
 	return CheckResult{ID: "responses_schema", Name: "Responses 非流式结构", Status: CheckStatusWarn, Score: 8, MaxScore: 20, Message: "Responses 返回 2xx，但响应结构不完整。", Details: details}
 }
 
+func buildResponsesStructuredOutputCheck(probe httpProbe, apiKey string) CheckResult {
+	details := probeDetails(probe)
+	details["response_format_type"] = "json_schema"
+	details["response_format_name"] = "person"
+	details["response_format_strict"] = true
+	if probe.ErrorMessage != "" {
+		details["error_message"] = sanitizeMessage(probe.ErrorMessage, apiKey)
+	}
+	if probe.StatusCode == 0 {
+		return failCheck("responses_structured_output", "结构化输出", 10, "无法连接 Responses structured output 探测端点。", details)
+	}
+	if probe.ErrorClass == errorClassAccountBalanceInsufficient {
+		return failCheck("responses_structured_output", "结构化输出", 10, "账号余额不足，structured output 探测无法执行。", details)
+	}
+	if probe.StatusCode == http.StatusUnauthorized || probe.StatusCode == http.StatusForbidden {
+		return failCheck("responses_structured_output", "结构化输出", 10, "Responses structured output 端点鉴权失败。", details)
+	}
+	if probe.StatusCode < 200 || probe.StatusCode >= 300 {
+		return CheckResult{ID: "responses_structured_output", Name: "结构化输出", Status: CheckStatusWarn, Score: 4, MaxScore: 10, Message: "Responses structured output 端点未返回可用响应。", Details: details}
+	}
+	if gjson.GetBytes(probe.Body, "object").String() != "response" {
+		return CheckResult{ID: "responses_structured_output", Name: "结构化输出", Status: CheckStatusWarn, Score: 5, MaxScore: 10, Message: "structured output 探测返回 2xx，但响应不是标准 Responses 结构。", Details: details}
+	}
+	outputText := strings.TrimSpace(gjson.GetBytes(probe.Body, "output.0.content.0.text").String())
+	if outputText == "" {
+		outputText = strings.TrimSpace(gjson.GetBytes(probe.Body, "output_text").String())
+	}
+	details["output_text"] = outputText
+	if outputText == "" {
+		return CheckResult{ID: "responses_structured_output", Name: "结构化输出", Status: CheckStatusWarn, Score: 6, MaxScore: 10, Message: "structured output 响应缺少文本内容。", Details: details}
+	}
+	if gjson.Valid(outputText) && gjson.Get(outputText, "name").String() != "" && gjson.Get(outputText, "age").Exists() {
+		return passCheck("responses_structured_output", "结构化输出", 10, "Responses 接受 json_schema structured output，并返回符合预期的结构化内容。", details)
+	}
+	if strings.Contains(strings.ToLower(outputText), "jane") || strings.Contains(strings.ToLower(outputText), "54") {
+		return CheckResult{ID: "responses_structured_output", Name: "结构化输出", Status: CheckStatusWarn, Score: 6, MaxScore: 10, Message: "structured output 端点可用，但返回内容未严格落在 JSON schema 上。", Details: details}
+	}
+	return failCheck("responses_structured_output", "结构化输出", 10, "structured output 未返回符合 json_schema 的内容。", details)
+}
+
 func buildToolCallCheck(probe httpProbe) CheckResult {
 	details := probeDetails(probe)
 	if probe.StatusCode < 200 || probe.StatusCode >= 300 {
@@ -143,6 +183,26 @@ func buildResponsesStoreIncludeCheck(probe httpProbe, apiKey string) CheckResult
 		return CheckResult{ID: "responses_store_include", Name: "Responses store/include 探针", Status: CheckStatusWarn, Score: 0, MaxScore: 0, Message: "store/include 探测被 4xx 拒绝，但错误形态不能确认是否为协议不支持。", Details: details}
 	}
 	return CheckResult{ID: "responses_store_include", Name: "Responses store/include 探针", Status: CheckStatusFail, Score: 0, MaxScore: 0, Message: "store/include 探测未返回标准 Responses 响应。", Details: details}
+}
+
+func buildChatCompletionsChoiceCountCheck(probe httpProbe, apiKey string, expectedChoices int) CheckResult {
+	details := probeDetails(probe)
+	details["requested_n"] = expectedChoices
+	if probe.ErrorMessage != "" {
+		details["error_message"] = sanitizeMessage(probe.ErrorMessage, apiKey)
+	}
+	if probe.StatusCode == 0 {
+		return failCheck("chat_completions_n", "Chat Completions 多候选", 0, "无法连接 Chat Completions n=2 探测端点。", details)
+	}
+	if probe.StatusCode < 200 || probe.StatusCode >= 300 {
+		return CheckResult{ID: "chat_completions_n", Name: "Chat Completions 多候选", Status: CheckStatusWarn, Score: 0, MaxScore: 0, Message: "Chat Completions n=2 探测未返回可用响应。", Details: details}
+	}
+	choices := gjson.GetBytes(probe.Body, "choices").Array()
+	details["choice_count"] = len(choices)
+	if len(choices) >= expectedChoices {
+		return passCheck("chat_completions_n", "Chat Completions 多候选", 0, "Chat Completions 的 n=2 请求返回了多候选。", details)
+	}
+	return CheckResult{ID: "chat_completions_n", Name: "Chat Completions 多候选", Status: CheckStatusWarn, Score: 0, MaxScore: 0, Message: "Chat Completions 的 n=2 请求仅返回单候选。", Details: details}
 }
 
 func buildStreamingCheck(probe streamProbe, apiKey string) CheckResult {
@@ -253,6 +313,8 @@ func buildChatFallbackCheck(probe httpProbe, apiKey string) CheckResult {
 		details["error_message"] = sanitizeMessage(probe.ErrorMessage, apiKey)
 	}
 	if probe.StatusCode >= 200 && probe.StatusCode < 300 && gjson.GetBytes(probe.Body, "choices").IsArray() {
+		details["choice_count"] = len(gjson.GetBytes(probe.Body, "choices").Array())
+		details["requested_n"] = 2
 		return CheckResult{ID: "chat_completions", Name: "Chat Completions 兼容回退", Status: CheckStatusPass, Score: 0, MaxScore: 0, Message: "Chat Completions 回退端点可用。", Details: details}
 	}
 	return CheckResult{ID: "chat_completions", Name: "Chat Completions 兼容回退", Status: CheckStatusFail, Score: 0, MaxScore: 0, Message: "Chat Completions 回退端点不可用。", Details: details}

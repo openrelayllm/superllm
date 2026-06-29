@@ -90,6 +90,7 @@ func TestServiceRunPublicCheckStream_EmitsProgressEvents(t *testing.T) {
 		"models_schema",
 		"responses_schema",
 		"tool_call",
+		"responses_structured_output",
 		"usage",
 		"streaming",
 		"responses_store_include",

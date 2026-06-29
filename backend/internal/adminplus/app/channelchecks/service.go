@@ -19,6 +19,7 @@ import (
 const (
 	DefaultProbeModel       = "gpt-5.4-mini"
 	defaultCandidateLimit   = 3
+	maxCandidateLimit       = 20
 	defaultFirstTokenSlowMS = int64(3000)
 	defaultTotalSlowMS      = int64(30000)
 )
@@ -124,8 +125,8 @@ func (s *Service) Check(ctx context.Context, in CheckInput) (*CheckResult, error
 	if in.SupplierGroupID > 0 {
 		candidateLimit = 1
 	}
-	if candidateLimit > 10 {
-		candidateLimit = 10
+	if candidateLimit > maxCandidateLimit {
+		candidateLimit = maxCandidateLimit
 	}
 	probeModel := strings.TrimSpace(in.ProbeModel)
 	if probeModel == "" {

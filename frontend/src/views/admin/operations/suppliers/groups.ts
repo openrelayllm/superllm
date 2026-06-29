@@ -5,6 +5,7 @@ import type { Supplier, SupplierChannelCheckResult, SupplierChannelCheckSnapshot
 import type { QuickProvisionBestChannelOptions } from './types'
 import { ctxFn, ctxValue } from './ctxProxy'
 export function attachSupplierGroups(ctx: any) {
+  const channelCheckCandidateLimit = 20
   const appStore = ctxValue(ctx, 'appStore')
   const channelScheduleDialogOpen = ctxValue(ctx, 'channelScheduleDialogOpen')
   const channelProbeDialogOpen = ctxValue(ctx, 'channelProbeDialogOpen')
@@ -123,7 +124,7 @@ export function attachSupplierGroups(ctx: any) {
     provisionJobError.value = ''
     try {
       const job = await syncSupplierChannelChecks(groupsSupplier.value.id, {
-        candidate_limit: 3,
+        candidate_limit: channelCheckCandidateLimit,
         auto_pause_on_failure: true
       })
       appStore.showSuccess(`渠道检测任务已提交 #${job.job_id}`)
@@ -141,7 +142,7 @@ export function attachSupplierGroups(ctx: any) {
     rowChannelCheckSupplierID.value = supplier.id
     try {
       const job = await syncSupplierChannelChecks(supplier.id, {
-        candidate_limit: 3,
+        candidate_limit: channelCheckCandidateLimit,
         auto_pause_on_failure: true
       })
       appStore.showSuccess(`渠道检测任务已提交 #${job.job_id}`)
@@ -172,7 +173,7 @@ export function attachSupplierGroups(ctx: any) {
       for (const supplier of targets) {
         try {
           const job = await syncSupplierChannelChecks(supplier.id, {
-            candidate_limit: 3,
+            candidate_limit: channelCheckCandidateLimit,
             auto_pause_on_failure: true
           })
           submitted++

@@ -44,6 +44,10 @@ func TestServiceRunPublicCheck_OpenAIPureBehindCustomBaseURL(t *testing.T) {
 				writeOpenAITextResponse(t, w, "resp_store_include", "gpt-5.4", "ok")
 				return
 			}
+			if openAIStructuredOutputProbeRequest(body) {
+				writeOpenAITextResponse(t, w, "resp_structured_output", "gpt-5.4", `{"name":"Jane","age":54}`)
+				return
+			}
 			writeJSON(t, w, map[string]any{
 				"id":     "resp_1",
 				"object": "response",
@@ -85,6 +89,7 @@ func TestServiceRunPublicCheck_OpenAIPureBehindCustomBaseURL(t *testing.T) {
 	require.Equal(t, 100, report.Score)
 	require.Equal(t, 100, report.CompatibilityScore)
 	require.Equal(t, CheckStatusPass, findCheck(t, report, "tool_call").Status)
+	require.Equal(t, CheckStatusPass, findCheck(t, report, "responses_structured_output").Status)
 	require.Equal(t, CheckStatusPass, findCheck(t, report, "streaming").Status)
 	require.Equal(t, CheckStatusPass, findCheck(t, report, "multimodal").Status)
 	require.Equal(t, CheckStatusPass, findCheck(t, report, "token_audit").Status)

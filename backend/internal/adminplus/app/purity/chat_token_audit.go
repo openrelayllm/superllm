@@ -19,7 +19,7 @@ func (s *Service) runChatCompletionsTokenAudit(ctx context.Context, client *http
 	}
 	for i := 1; i <= chatTokenAuditSamples; i++ {
 		prompt := fmt.Sprintf("proxyai.best usage audit fallback round %02d. Return exactly: ok", i)
-		probe := s.probeChatCompletionsWithPrompt(ctx, client, baseURL, apiKey, model, prompt)
+		probe := s.probeChatCompletionsWithPrompt(ctx, client, baseURL, apiKey, model, prompt, 1)
 		sample := chatCompletionsTokenAuditSampleFromProbe(i, probe, pricing)
 		report.Samples = append(report.Samples, sample)
 		if emitSample != nil {

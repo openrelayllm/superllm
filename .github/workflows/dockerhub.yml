@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Docker image tag, for example 0.26.0'
+        description: 'Docker image tag, for example 0.27.0'
         required: true
-        default: '0.26.0'
+        default: '0.27.0'
         type: string
       ref:
-        description: 'Git ref to build from, for example main or v0.26.0'
+        description: 'Git ref to build from, for example main or v0.27.0'
         required: true
         default: 'main'
         type: string

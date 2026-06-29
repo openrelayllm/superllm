@@ -104,9 +104,11 @@ func (s *Service) runOpenAICheck(ctx context.Context, in PublicCheckInput, emit 
 	report.NonStreamChannel = channelFromProbe(ProviderOpenAI, host, officialHost, responsesProbe)
 	responsesCheck := buildResponsesSchemaCheck(responsesProbe, apiKey)
 	toolCheck := buildToolCallCheck(responsesProbe)
+	structuredOutputProbe := s.probeResponsesStructuredOutput(checkCtx, client, baseURL, apiKey, model)
+	structuredOutputCheck := buildResponsesStructuredOutputCheck(structuredOutputProbe, apiKey)
 	usageCheck := buildUsageCheck(report.Metrics.Usage, responsesProbe)
-	appendAndEmitChecks(report, emit, responsesCheck, toolCheck, usageCheck)
-	upsertAndEmitValidation(report, emit, validationFromExecutedChecks("schema_integrity", "结构完整性", []CheckResult{responsesCheck}))
+	appendAndEmitChecks(report, emit, responsesCheck, toolCheck, structuredOutputCheck, usageCheck)
+	upsertAndEmitValidation(report, emit, validationFromExecutedChecks("schema_integrity", "结构完整性", []CheckResult{responsesCheck, structuredOutputCheck}))
 	emitMetrics(report, emit)
 
 	emitProgress(report, emit, 3, "behavior")
@@ -143,6 +145,9 @@ func (s *Service) runOpenAICheck(ctx context.Context, in PublicCheckInput, emit 
 		chatFallbackCheck := buildChatFallbackCheck(chatProbe, apiKey)
 		chatFallbackUsable = chatFallbackCheck.Status == CheckStatusPass
 		appendAndEmitChecks(report, emit, chatFallbackCheck)
+		if chatFallbackUsable {
+			appendAndEmitChecks(report, emit, buildChatCompletionsChoiceCountCheck(chatProbe, apiKey, 2))
+		}
 		emitMetrics(report, emit)
 	}
 

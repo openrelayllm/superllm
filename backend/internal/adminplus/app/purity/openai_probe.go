@@ -21,25 +21,33 @@ func (s *Service) probeResponsesNonStream(ctx context.Context, client *http.Clie
 	return s.doJSON(ctx, client, http.MethodPost, buildOpenAIEndpointURL(baseURL, "/v1/responses"), apiKey, responsesToolProbePayload(model, false), "application/json")
 }
 
+func (s *Service) probeResponsesStructuredOutput(ctx context.Context, client *http.Client, baseURL string, apiKey string, model string) httpProbe {
+	return s.doJSON(ctx, client, http.MethodPost, buildOpenAIEndpointURL(baseURL, "/v1/responses"), apiKey, responsesStructuredOutputPayload(model), "application/json")
+}
+
 func (s *Service) probeResponsesStoreInclude(ctx context.Context, client *http.Client, baseURL string, apiKey string, model string) httpProbe {
 	return s.doJSON(ctx, client, http.MethodPost, buildOpenAIEndpointURL(baseURL, "/v1/responses"), apiKey, responsesStoreIncludePayload(model), "application/json")
 }
 
 func (s *Service) probeChatCompletions(ctx context.Context, client *http.Client, baseURL string, apiKey string, model string) httpProbe {
-	return s.probeChatCompletionsWithPrompt(ctx, client, baseURL, apiKey, model, "Return exactly: ok")
+	return s.probeChatCompletionsWithPrompt(ctx, client, baseURL, apiKey, model, "Return exactly: ok", 2)
 }
 
-func (s *Service) probeChatCompletionsWithPrompt(ctx context.Context, client *http.Client, baseURL string, apiKey string, model string, prompt string) httpProbe {
+func (s *Service) probeChatCompletionsWithPrompt(ctx context.Context, client *http.Client, baseURL string, apiKey string, model string, prompt string, choiceCount int) httpProbe {
 	if strings.TrimSpace(prompt) == "" {
 		prompt = "Return exactly: ok"
 	}
-	body, _ := json.Marshal(map[string]any{
+	bodyMap := map[string]any{
 		"model": model,
 		"messages": []map[string]string{
 			{"role": "user", "content": prompt},
 		},
 		"stream": false,
-	})
+	}
+	if choiceCount > 0 {
+		bodyMap["n"] = choiceCount
+	}
+	body, _ := json.Marshal(bodyMap)
 	return s.doJSON(ctx, client, http.MethodPost, buildOpenAIEndpointURL(baseURL, "/v1/chat/completions"), apiKey, body, "application/json")
 }
 
@@ -192,6 +200,35 @@ func responsesStoreIncludePayload(model string) []byte {
 		},
 		"store":             false,
 		"max_output_tokens": 16,
+		"stream":            false,
+	})
+	return body
+}
+
+func responsesStructuredOutputPayload(model string) []byte {
+	if strings.TrimSpace(model) == "" {
+		model = openai.DefaultTestModel
+	}
+	body, _ := json.Marshal(map[string]any{
+		"model": model,
+		"input": "Jane, 54 years old",
+		"text": map[string]any{
+			"format": map[string]any{
+				"type":   "json_schema",
+				"name":   "person",
+				"strict": true,
+				"schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name": map[string]any{"type": "string"},
+						"age":  map[string]any{"type": "number"},
+					},
+					"required":             []string{"name", "age"},
+					"additionalProperties": false,
+				},
+			},
+		},
+		"max_output_tokens": 64,
 		"stream":            false,
 	})
 	return body

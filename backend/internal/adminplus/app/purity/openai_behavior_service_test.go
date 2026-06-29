@@ -40,6 +40,10 @@ func TestServiceRunPublicCheck_FailsUnexpectedToolCall(t *testing.T) {
 				writeOpenAITokenAuditTestResponse(t, w, body, &auditResponseIndex)
 				return
 			}
+			if openAIStructuredOutputProbeRequest(body) {
+				writeOpenAITextResponse(t, w, "resp_structured_output", "gpt-5.4", `{"name":"Jane","age":54}`)
+				return
+			}
 			writeJSON(t, w, map[string]any{
 				"id":     "resp_1",
 				"object": "response",
@@ -72,6 +76,7 @@ func TestServiceRunPublicCheck_FailsUnexpectedToolCall(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, CheckStatusFail, findCheck(t, report, "tool_call").Status)
+	require.Equal(t, CheckStatusPass, findCheck(t, report, "responses_structured_output").Status)
 	require.Equal(t, CheckStatusFail, findValidation(t, report, "behavior").Status)
 }
 
@@ -104,6 +109,10 @@ func TestServiceRunPublicCheck_NonFatalProbeErrorStaysInCheckDetails(t *testing.
 			}
 			if openAIStoreIncludeProbeRequest(body) {
 				writeOpenAITextResponse(t, w, "resp_store_include", "gpt-5.4", "ok")
+				return
+			}
+			if openAIStructuredOutputProbeRequest(body) {
+				writeOpenAITextResponse(t, w, "resp_structured_output", "gpt-5.4", `{"name":"Jane","age":54}`)
 				return
 			}
 			if payloadHasInputImage(body) {

@@ -54,7 +54,7 @@ func TestServiceRunPublicCheck_OpenAIResponsesStoreIncludeRejected(t *testing.T)
 	require.Equal(t, CheckStatusFail, findValidation(t, report, "signature").Status)
 	require.Equal(t, VerdictOpenAICompatible, report.Verdict)
 	require.Equal(t, 70, report.OfficialScore)
-	require.Equal(t, 86, report.CompatibilityScore)
+	require.Equal(t, 87, report.CompatibilityScore)
 }
 
 func TestServiceRunPublicCheck_OpenAIResponsesStoreIncludeBalanceWarn(t *testing.T) {
