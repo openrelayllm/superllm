@@ -51,17 +51,22 @@ func NewTokenRefreshService(
 	cfg *config.Config,
 	tempUnschedCache TempUnschedCache,
 ) *TokenRefreshService {
+	tokenRefreshCfg := config.TokenRefreshConfig{}
+	runMode := ""
+	if cfg != nil {
+		tokenRefreshCfg = cfg.TokenRefresh
+		runMode = cfg.RunMode
+	}
+
 	s := &TokenRefreshService{
 		accountRepo:      accountRepo,
 		refreshPolicy:    DefaultBackgroundRefreshPolicy(),
-		cfg:              &cfg.TokenRefresh,
+		cfg:              &tokenRefreshCfg,
 		cacheInvalidator: cacheInvalidator,
 		schedulerCache:   schedulerCache,
 		tempUnschedCache: tempUnschedCache,
+		runMode:          runMode,
 		stopCh:           make(chan struct{}),
-	}
-	if cfg != nil {
-		s.runMode = cfg.RunMode
 	}
 
 	openAIRefresher := NewOpenAITokenRefresher(openaiOAuthService, accountRepo)
