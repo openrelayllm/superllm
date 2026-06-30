@@ -145,6 +145,14 @@ func TestTokenRefreshService_RefreshWithRetry_InvalidatesCache(t *testing.T) {
 	require.Equal(t, "new-token", account.GetCredential("access_token"))
 }
 
+func TestTokenRefreshServiceIsSimpleRunMode(t *testing.T) {
+	service := NewTokenRefreshService(nil, nil, nil, nil, nil, nil, nil, &config.Config{
+		RunMode: config.RunModeSimple,
+	}, nil)
+
+	require.True(t, service.isSimpleRunMode())
+}
+
 func TestTokenRefreshService_RefreshWithRetry_InvalidatorErrorIgnored(t *testing.T) {
 	repo := &tokenRefreshAccountRepo{}
 	invalidator := &tokenCacheInvalidatorStub{err: errors.New("invalidate failed")}

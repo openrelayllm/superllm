@@ -116,6 +116,25 @@ func TestOpenAISelectAccountWithLoadAwareness_HydratesSelectedAccountFromSchedul
 	}
 }
 
+func TestSchedulerSnapshotServiceSimpleRunModeIntervalFloors(t *testing.T) {
+	svc := NewSchedulerSnapshotService(nil, nil, nil, nil, &config.Config{
+		RunMode: config.RunModeSimple,
+		Gateway: config.GatewayConfig{
+			Scheduling: config.GatewaySchedulingConfig{
+				OutboxPollIntervalSeconds:  1,
+				FullRebuildIntervalSeconds: 60,
+			},
+		},
+	})
+
+	if got := svc.outboxPollInterval(); got != 5*time.Second {
+		t.Fatalf("outboxPollInterval = %v, want 5s", got)
+	}
+	if got := svc.fullRebuildInterval(); got != 30*time.Minute {
+		t.Fatalf("fullRebuildInterval = %v, want 30m", got)
+	}
+}
+
 func TestOpenAINewAcquiredSelectionResult_ReleasesSlotWhenHydrationFails(t *testing.T) {
 	cache := &snapshotHydrationCache{
 		accounts: map[int64]*Account{},

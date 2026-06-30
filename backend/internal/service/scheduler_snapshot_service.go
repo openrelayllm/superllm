@@ -801,6 +801,9 @@ func (s *SchedulerSnapshotService) outboxPollInterval() time.Duration {
 	if sec <= 0 {
 		return time.Second
 	}
+	if s.isRunModeSimple() && sec < 5 {
+		sec = 5
+	}
 	return time.Duration(sec) * time.Second
 }
 
@@ -811,6 +814,9 @@ func (s *SchedulerSnapshotService) fullRebuildInterval() time.Duration {
 	sec := s.cfg.Gateway.Scheduling.FullRebuildIntervalSeconds
 	if sec <= 0 {
 		return 0
+	}
+	if s.isRunModeSimple() && sec < 1800 {
+		sec = 1800
 	}
 	return time.Duration(sec) * time.Second
 }

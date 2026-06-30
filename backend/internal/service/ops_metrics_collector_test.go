@@ -8,9 +8,54 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type opsMetricsIntervalSettingRepoStub struct {
+	value string
+}
+
+func (s *opsMetricsIntervalSettingRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
+	return nil, ErrSettingNotFound
+}
+
+func (s *opsMetricsIntervalSettingRepoStub) GetValue(ctx context.Context, key string) (string, error) {
+	if s.value == "" {
+		return "", ErrSettingNotFound
+	}
+	return s.value, nil
+}
+
+func (s *opsMetricsIntervalSettingRepoStub) Set(ctx context.Context, key, value string) error {
+	return nil
+}
+
+func (s *opsMetricsIntervalSettingRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
+func (s *opsMetricsIntervalSettingRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
+	return nil
+}
+
+func (s *opsMetricsIntervalSettingRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
+func (s *opsMetricsIntervalSettingRepoStub) Delete(ctx context.Context, key string) error {
+	return nil
+}
+
+func TestOpsMetricsCollectorGetIntervalSimpleRunModeRaisesStoredFloor(t *testing.T) {
+	collector := &OpsMetricsCollector{
+		cfg:         &config.Config{RunMode: config.RunModeSimple},
+		settingRepo: &opsMetricsIntervalSettingRepoStub{value: "60"},
+	}
+
+	require.Equal(t, 5*time.Minute, collector.getInterval())
+}
 
 func TestWriteOpenAIFastPolicyBlockedResponseMarksBusinessLimited(t *testing.T) {
 	gin.SetMode(gin.TestMode)

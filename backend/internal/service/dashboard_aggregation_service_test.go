@@ -166,3 +166,8 @@ func TestDashboardAggregationService_TriggerBackfill_TooLarge(t *testing.T) {
 	require.ErrorIs(t, err, ErrDashboardBackfillTooLarge)
 	require.Equal(t, 0, repo.aggregateCalls)
 }
+
+func TestDashboardAggregationServiceSimpleRunMode(t *testing.T) {
+	svc := NewDashboardAggregationService(nil, nil, &config.Config{RunMode: config.RunModeSimple})
+	require.True(t, svc.isSimpleRunMode())
+}

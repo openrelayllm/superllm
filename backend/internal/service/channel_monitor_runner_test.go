@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
 // stubMonitorSvc 实现 monitorRunnerSvc，用于隔离 runner 与真实 service/repo。
@@ -73,6 +75,25 @@ func runnerTaskPtr(r *ChannelMonitorRunner, id int64) *scheduledMonitor {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.tasks[id]
+}
+
+func TestSchedule_SimpleRunModeRaisesIntervalFloor(t *testing.T) {
+	svc := &stubMonitorSvc{runCalled: make(chan int64, 4)}
+	r := newRunnerForTest(svc)
+	r.runMode = config.RunModeSimple
+	r.Start()
+
+	r.Schedule(&ChannelMonitor{ID: 1, Name: "m1", Enabled: true, IntervalSeconds: 60})
+
+	task := runnerTaskPtr(r, 1)
+	if task == nil {
+		t.Fatal("expected scheduled task")
+	}
+	if task.interval != monitorSimpleMinInterval {
+		t.Fatalf("expected simple interval floor %v, got %v", monitorSimpleMinInterval, task.interval)
+	}
+
+	r.Stop()
 }
 
 // TestSchedule_AddsTaskAndFiresOnce 验证 Schedule 后立即触发一次首检测，并把任务记入 tasks 表。

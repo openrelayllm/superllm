@@ -28,6 +28,7 @@ type TokenRefreshService struct {
 	tempUnschedCache TempUnschedCache // 用于清除 Redis 中的临时不可调度缓存
 	refreshAPI       *OAuthRefreshAPI // 统一刷新 API
 	runtimeBlocker   AccountRuntimeBlocker
+	runMode          string
 
 	// OpenAI privacy: 刷新成功后检查并设置 training opt-out
 	privacyClientFactory PrivacyClientFactory
@@ -58,6 +59,9 @@ func NewTokenRefreshService(
 		schedulerCache:   schedulerCache,
 		tempUnschedCache: tempUnschedCache,
 		stopCh:           make(chan struct{}),
+	}
+	if cfg != nil {
+		s.runMode = cfg.RunMode
 	}
 
 	openAIRefresher := NewOpenAITokenRefresher(openaiOAuthService, accountRepo)
@@ -153,6 +157,9 @@ func (s *TokenRefreshService) refreshLoop() {
 	if checkInterval < time.Minute {
 		checkInterval = 5 * time.Minute
 	}
+	if s.isSimpleRunMode() && checkInterval < 15*time.Minute {
+		checkInterval = 15 * time.Minute
+	}
 
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
@@ -168,6 +175,10 @@ func (s *TokenRefreshService) refreshLoop() {
 			return
 		}
 	}
+}
+
+func (s *TokenRefreshService) isSimpleRunMode() bool {
+	return s != nil && s.runMode == config.RunModeSimple
 }
 
 // processRefresh 执行一次刷新检查

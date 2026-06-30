@@ -33,6 +33,8 @@ const (
 	// monitorMinIntervalSeconds / monitorMaxIntervalSeconds 用户配置的检测间隔上下限。
 	monitorMinIntervalSeconds = 15
 	monitorMaxIntervalSeconds = 3600
+	// monitorSimpleMinInterval simple run mode 下的运行时最小间隔，避免旧配置仍以 15/60s 高频跑。
+	monitorSimpleMinInterval = 300 * time.Second
 	// monitorMessageMaxBytes message 字段最大字节数（与 schema/migration 一致）。
 	monitorMessageMaxBytes = 500
 	// monitorResponseMaxBytes 单次模型响应最大读取字节，防止 OOM。

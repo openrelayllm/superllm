@@ -53,6 +53,7 @@ type DashboardAggregationService struct {
 	repo                 DashboardAggregationRepository
 	timingWheel          *TimingWheelService
 	cfg                  config.DashboardAggregationConfig
+	runMode              string
 	running              int32
 	lastRetentionCleanup atomic.Value // time.Time
 
@@ -67,10 +68,15 @@ func NewDashboardAggregationService(repo DashboardAggregationRepository, timingW
 	if cfg != nil {
 		aggCfg = cfg.DashboardAgg
 	}
+	runMode := ""
+	if cfg != nil {
+		runMode = cfg.RunMode
+	}
 	return &DashboardAggregationService{
 		repo:        repo,
 		timingWheel: timingWheel,
 		cfg:         aggCfg,
+		runMode:     runMode,
 		instanceID:  uuid.NewString(),
 	}
 }
@@ -99,6 +105,9 @@ func (s *DashboardAggregationService) Start() {
 	interval := time.Duration(s.cfg.IntervalSeconds) * time.Second
 	if interval <= 0 {
 		interval = time.Minute
+	}
+	if s.isSimpleRunMode() && interval < 5*time.Minute {
+		interval = 5 * time.Minute
 	}
 
 	if s.cfg.RecomputeDays > 0 {
@@ -176,6 +185,10 @@ func (s *DashboardAggregationService) TriggerRecomputeRange(start, end time.Time
 		logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 重新计算放弃: 聚合作业持续占用")
 	}()
 	return nil
+}
+
+func (s *DashboardAggregationService) isSimpleRunMode() bool {
+	return s != nil && s.runMode == config.RunModeSimple
 }
 
 func (s *DashboardAggregationService) recomputeRecentDays() {

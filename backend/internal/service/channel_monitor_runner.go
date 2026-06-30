@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/alitto/pond/v2"
 )
 
@@ -47,6 +48,7 @@ type monitorRunnerSvc interface {
 type ChannelMonitorRunner struct {
 	svc            monitorRunnerSvc
 	settingService *SettingService
+	runMode        string
 
 	pool         pond.Pool
 	parentCtx    context.Context
@@ -100,9 +102,14 @@ func NewChannelMonitorRunner(svc *ChannelMonitorService, settingService *Setting
 // newChannelMonitorRunner 内部构造，接受最小化接口，便于单元测试注入 stub。
 func newChannelMonitorRunner(svc monitorRunnerSvc, settingService *SettingService) *ChannelMonitorRunner {
 	ctx, cancel := context.WithCancel(context.Background())
+	runMode := ""
+	if settingService != nil && settingService.cfg != nil {
+		runMode = settingService.cfg.RunMode
+	}
 	return &ChannelMonitorRunner{
 		svc:            svc,
 		settingService: settingService,
+		runMode:        runMode,
 		pool:           pond.NewPool(monitorWorkerConcurrency),
 		parentCtx:      ctx,
 		parentCancel:   cancel,
@@ -158,6 +165,9 @@ func (r *ChannelMonitorRunner) Schedule(m *ChannelMonitor) {
 			"monitor_id", m.ID, "interval_seconds", m.IntervalSeconds)
 		return
 	}
+	if r.isSimpleRunMode() && interval < monitorSimpleMinInterval {
+		interval = monitorSimpleMinInterval
+	}
 	jitter := time.Duration(m.JitterSeconds) * time.Second
 	if jitter < 0 {
 		jitter = 0
@@ -194,6 +204,10 @@ func (r *ChannelMonitorRunner) Schedule(m *ChannelMonitor) {
 	r.mu.Unlock()
 
 	go r.runScheduled(ctx, task)
+}
+
+func (r *ChannelMonitorRunner) isSimpleRunMode() bool {
+	return r != nil && r.runMode == config.RunModeSimple
 }
 
 // Unschedule 取消指定监控的定时任务（若存在）。

@@ -125,6 +125,9 @@ func (c *OpsMetricsCollector) run() {
 
 func (c *OpsMetricsCollector) getInterval() time.Duration {
 	interval := opsMetricsCollectorMinInterval
+	if c != nil && c.cfg != nil && c.cfg.RunMode == config.RunModeSimple {
+		interval = 5 * time.Minute
+	}
 
 	if c.settingRepo == nil {
 		return interval
@@ -146,8 +149,9 @@ func (c *OpsMetricsCollector) getInterval() time.Duration {
 	if err != nil {
 		return interval
 	}
-	if seconds < int(opsMetricsCollectorMinInterval.Seconds()) {
-		seconds = int(opsMetricsCollectorMinInterval.Seconds())
+	minSeconds := int(interval.Seconds())
+	if seconds < minSeconds {
+		seconds = minSeconds
 	}
 	if seconds > int(opsMetricsCollectorMaxInterval.Seconds()) {
 		seconds = int(opsMetricsCollectorMaxInterval.Seconds())
