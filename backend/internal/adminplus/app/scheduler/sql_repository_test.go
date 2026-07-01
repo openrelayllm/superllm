@@ -32,13 +32,13 @@ func TestSQLRepositorySaveRunPersistsRunAndSteps(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO admin_plus_scheduler_runs").
-		WithArgs(run.ID, run.LegacyRunID, run.TriggerType, run.TaskType, run.Status, run.RequestedAt, sqlmock.AnyArg(), sqlmock.AnyArg(), run.SupplierCount, run.TotalSteps, run.SucceededSteps, run.FailedSteps, run.SkippedSteps, run.DurationMS, run.ErrorCode, run.ErrorMessage).
+		WithArgs(run.ID, run.LegacyRunID, run.TriggerType, run.TaskType, run.Status, run.RequestedAt, sqlmock.AnyArg(), sqlmock.AnyArg(), run.SupplierCount, run.TotalSteps, run.SucceededSteps, run.FailedSteps, run.SkippedSteps, run.DurationMS, run.ErrorCode, run.ErrorMessage, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("DELETE FROM admin_plus_scheduler_steps").
 		WithArgs(run.ID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO admin_plus_scheduler_steps").
-		WithArgs(run.ID, int64(7), "relay-a", "fetch_balance", "direct_sync", "succeeded", "scheduler:fetch_balance:supplier:7:202606231200", int64(0), 1, "", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(run.ID, int64(7), "relay-a", "fetch_balance", "direct_sync", "succeeded", "scheduler:fetch_balance:supplier:7:202606231200", int64(0), 1, "", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
@@ -65,8 +65,8 @@ func TestSQLRepositoryListRuns(t *testing.T) {
 	rows := sqlmock.NewRows([]string{
 		"id", "legacy_run_id", "trigger_type", "task_type", "status", "requested_at", "started_at", "finished_at",
 		"supplier_count", "total_steps", "succeeded_steps", "failed_steps", "skipped_steps", "duration_ms",
-		"error_code", "error_message",
-	}).AddRow("manual-1", "manual:1", "manual", "supplier.balance.sync", "succeeded", now, now, now, 1, 1, 1, 0, 0, int64(12), "", "")
+		"error_code", "error_message", "request_snapshot", "result_snapshot",
+	}).AddRow("manual-1", "manual:1", "manual", "supplier.balance.sync", "succeeded", now, now, now, 1, 1, 1, 0, 0, int64(12), "", "", nil, nil)
 	mock.ExpectQuery("SELECT id, legacy_run_id, trigger_type").
 		WithArgs(20).
 		WillReturnRows(rows)
@@ -88,8 +88,8 @@ func TestSQLRepositoryGetRunAndListSteps(t *testing.T) {
 	runRows := sqlmock.NewRows([]string{
 		"id", "legacy_run_id", "trigger_type", "task_type", "status", "requested_at", "started_at", "finished_at",
 		"supplier_count", "total_steps", "succeeded_steps", "failed_steps", "skipped_steps", "duration_ms",
-		"error_code", "error_message",
-	}).AddRow("manual-1", "manual:1", "manual", "supplier.balance.sync", "retryable_failed", now, now, now, 1, 1, 0, 1, 0, int64(12), "SCHEDULER_STEP_FAILED", "upstream_500")
+		"error_code", "error_message", "request_snapshot", "result_snapshot",
+	}).AddRow("manual-1", "manual:1", "manual", "supplier.balance.sync", "retryable_failed", now, now, now, 1, 1, 0, 1, 0, int64(12), "SCHEDULER_STEP_FAILED", "upstream_500", nil, nil)
 	mock.ExpectQuery("FROM admin_plus_scheduler_runs").
 		WithArgs("manual-1").
 		WillReturnRows(runRows)
@@ -104,8 +104,8 @@ func TestSQLRepositoryGetRunAndListSteps(t *testing.T) {
 	stepRows := sqlmock.NewRows([]string{
 		"id", "run_id", "supplier_id", "supplier_name", "task_type", "action", "status", "schedule_key",
 		"extension_task_id", "result_count", "reason", "attempts", "max_attempts", "next_attempt_at",
-		"locked_by", "locked_until", "started_at", "finished_at",
-	}).AddRow(int64(9), "manual-1", int64(7), "relay-a", "fetch_balance", "direct_sync", "retryable_failed", "scheduler:fetch_balance:supplier:7:202606231200", int64(0), 0, "upstream_500", 2, 3, nextAttemptAt, "", nil, now, now)
+		"locked_by", "locked_until", "request_snapshot", "result_snapshot", "started_at", "finished_at",
+	}).AddRow(int64(9), "manual-1", int64(7), "relay-a", "fetch_balance", "direct_sync", "retryable_failed", "scheduler:fetch_balance:supplier:7:202606231200", int64(0), 0, "upstream_500", 2, 3, nextAttemptAt, "", nil, nil, nil, now, now)
 	mock.ExpectQuery("FROM admin_plus_scheduler_steps").
 		WithArgs("manual-1", 200).
 		WillReturnRows(stepRows)
@@ -144,8 +144,8 @@ func TestSQLRepositoryRetryStepRequeuesRetryableStep(t *testing.T) {
 	rows := sqlmock.NewRows([]string{
 		"id", "run_id", "supplier_id", "supplier_name", "task_type", "action", "status", "schedule_key",
 		"extension_task_id", "result_count", "reason", "attempts", "max_attempts", "next_attempt_at",
-		"locked_by", "locked_until", "started_at", "finished_at",
-	}).AddRow(int64(9), "manual-1", int64(7), "relay-a", "fetch_balance", "direct_sync", "queued", "scheduler:fetch_balance:supplier:7:202606231200", int64(0), 0, "", 0, 3, retryAt, "", nil, nil, nil)
+		"locked_by", "locked_until", "request_snapshot", "result_snapshot", "started_at", "finished_at",
+	}).AddRow(int64(9), "manual-1", int64(7), "relay-a", "fetch_balance", "direct_sync", "queued", "scheduler:fetch_balance:supplier:7:202606231200", int64(0), 0, "", 0, 3, retryAt, "", nil, nil, nil, nil, nil)
 	mock.ExpectQuery("UPDATE admin_plus_scheduler_steps").
 		WithArgs(int64(9), retryAt).
 		WillReturnRows(rows)
@@ -166,8 +166,8 @@ func TestSQLRepositoryCancelStep(t *testing.T) {
 	rows := sqlmock.NewRows([]string{
 		"id", "run_id", "supplier_id", "supplier_name", "task_type", "action", "status", "schedule_key",
 		"extension_task_id", "result_count", "reason", "attempts", "max_attempts", "next_attempt_at",
-		"locked_by", "locked_until", "started_at", "finished_at",
-	}).AddRow(int64(9), "manual-1", int64(7), "relay-a", "fetch_balance", "direct_sync", "cancelled", "scheduler:fetch_balance:supplier:7:202606231200", int64(0), 0, "manual_cancelled", 1, 3, nil, "", nil, nil, cancelledAt)
+		"locked_by", "locked_until", "request_snapshot", "result_snapshot", "started_at", "finished_at",
+	}).AddRow(int64(9), "manual-1", int64(7), "relay-a", "fetch_balance", "direct_sync", "cancelled", "scheduler:fetch_balance:supplier:7:202606231200", int64(0), 0, "manual_cancelled", 1, 3, nil, "", nil, nil, nil, nil, cancelledAt)
 	mock.ExpectQuery("UPDATE admin_plus_scheduler_steps").
 		WithArgs(int64(9), cancelledAt).
 		WillReturnRows(rows)
@@ -188,8 +188,8 @@ func TestSQLRepositoryCancelRun(t *testing.T) {
 	rows := sqlmock.NewRows([]string{
 		"id", "legacy_run_id", "trigger_type", "task_type", "status", "requested_at", "started_at", "finished_at",
 		"supplier_count", "total_steps", "succeeded_steps", "failed_steps", "skipped_steps", "duration_ms",
-		"error_code", "error_message",
-	}).AddRow("manual-1", "manual:1", "manual", "supplier.balance.sync", "cancelled", cancelledAt, cancelledAt, cancelledAt, 1, 1, 0, 0, 0, int64(12), "", "manual_cancelled")
+		"error_code", "error_message", "request_snapshot", "result_snapshot",
+	}).AddRow("manual-1", "manual:1", "manual", "supplier.balance.sync", "cancelled", cancelledAt, cancelledAt, cancelledAt, 1, 1, 0, 0, 0, int64(12), "", "manual_cancelled", nil, nil)
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE admin_plus_scheduler_steps").
 		WithArgs("manual-1", cancelledAt).
@@ -244,7 +244,7 @@ func TestSQLRepositoryCompleteStepWritesAttempt(t *testing.T) {
 		WithArgs(int64(9), "succeeded", 1, "", finishedAt, "", "", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	err := repo.CompleteStep(context.Background(), 9, "succeeded", 1, "", finishedAt)
+	err := repo.CompleteStep(context.Background(), 9, "succeeded", 1, "", map[string]any{"result": 1}, finishedAt)
 
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())

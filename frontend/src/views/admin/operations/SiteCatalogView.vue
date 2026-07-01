@@ -86,11 +86,12 @@
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">标签</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">链接</th>
                 <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">更新时间</th>
+                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">操作</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
               <tr v-if="sites.length === 0">
-                <td colspan="6" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无目录站点</td>
+                <td colspan="7" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无目录站点</td>
               </tr>
               <tr v-for="site in sites" :key="site.id">
                 <td class="px-4 py-4">
@@ -134,6 +135,14 @@
                   </div>
                 </td>
                 <td class="px-4 py-4 text-right text-xs text-gray-500 dark:text-dark-400">{{ formatTime(site.updated_at) }}</td>
+                <td class="px-4 py-4 text-right">
+                  <div class="flex items-center justify-end gap-2">
+                    <button type="button" class="btn btn-danger btn-sm" :disabled="loading || deletingSiteID === site.id" @click="deleteSite(site)">
+                      <Icon name="trash" size="sm" />
+                      {{ deletingSiteID === site.id ? '删除中...' : '删除' }}
+                    </button>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -161,6 +170,7 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useAppStore } from '@/stores/app'
 import {
   bulkPublishSiteCatalogSites,
+  deleteSiteCatalogSite,
   listSiteCatalogSites,
   type SiteCatalogKind,
   type SiteCatalogLink,
@@ -180,6 +190,7 @@ type PaginationState = {
 const appStore = useAppStore()
 const loading = ref(false)
 const publishing = ref(false)
+const deletingSiteID = ref<number | null>(null)
 const sites = ref<SiteCatalogSite[]>([])
 const filters = reactive({
   q: '',
@@ -261,6 +272,22 @@ async function publishAllMatchingSites() {
     appStore.showError(errorMessage(error))
   } finally {
     publishing.value = false
+  }
+}
+
+async function deleteSite(site: SiteCatalogSite) {
+  if (deletingSiteID.value === site.id) return
+  const confirmed = window.confirm(`确认永久删除站点「${site.name}」？关联链接、分类、标签和采集关联会一并清理。`)
+  if (!confirmed) return
+  deletingSiteID.value = site.id
+  try {
+    await deleteSiteCatalogSite(site.id)
+    appStore.showSuccess('站点已删除')
+    await loadSites()
+  } catch (error) {
+    appStore.showError(errorMessage(error))
+  } finally {
+    deletingSiteID.value = null
   }
 }
 

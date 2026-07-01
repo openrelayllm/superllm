@@ -34,14 +34,22 @@ func (r *SQLRepository) SaveRun(ctx context.Context, run adminplusdomain.Schedul
 			_ = tx.Rollback()
 		}
 	}()
+	runRequestPayload, err := json.Marshal(cloneMap(run.RequestSnapshot))
+	if err != nil {
+		return err
+	}
+	runResultPayload, err := json.Marshal(cloneMap(run.ResultSnapshot))
+	if err != nil {
+		return err
+	}
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO admin_plus_scheduler_runs (
 			id, legacy_run_id, trigger_type, task_type, status, requested_at, started_at, finished_at,
 			supplier_count, total_steps, succeeded_steps, failed_steps, skipped_steps, duration_ms,
-			error_code, error_message, updated_at
+			error_code, error_message, request_snapshot, result_snapshot, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb, NOW())
 		ON CONFLICT (id) DO UPDATE SET
 			legacy_run_id = EXCLUDED.legacy_run_id,
 			trigger_type = EXCLUDED.trigger_type,
@@ -58,9 +66,11 @@ func (r *SQLRepository) SaveRun(ctx context.Context, run adminplusdomain.Schedul
 			duration_ms = EXCLUDED.duration_ms,
 			error_code = EXCLUDED.error_code,
 			error_message = EXCLUDED.error_message,
+			request_snapshot = EXCLUDED.request_snapshot,
+			result_snapshot = EXCLUDED.result_snapshot,
 			updated_at = NOW()
 	`, run.ID, run.LegacyRunID, run.TriggerType, run.TaskType, run.Status, run.RequestedAt, nullableTime(run.StartedAt), nullableTime(run.FinishedAt),
-		run.SupplierCount, run.TotalSteps, run.SucceededSteps, run.FailedSteps, run.SkippedSteps, run.DurationMS, run.ErrorCode, run.ErrorMessage)
+		run.SupplierCount, run.TotalSteps, run.SucceededSteps, run.FailedSteps, run.SkippedSteps, run.DurationMS, run.ErrorCode, run.ErrorMessage, string(runRequestPayload), string(runResultPayload))
 	if err != nil {
 		return err
 	}
@@ -70,13 +80,21 @@ func (r *SQLRepository) SaveRun(ctx context.Context, run adminplusdomain.Schedul
 		return err
 	}
 	for _, step := range steps {
+		requestPayload, err := json.Marshal(cloneMap(step.Request))
+		if err != nil {
+			return err
+		}
+		resultPayload, err := json.Marshal(cloneMap(step.Result))
+		if err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO admin_plus_scheduler_steps (
 				run_id, supplier_id, supplier_name, task_type, action, status, schedule_key,
-				extension_task_id, result_count, reason, started_at, finished_at
+				extension_task_id, result_count, reason, request_snapshot, result_snapshot, started_at, finished_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		`, run.ID, step.SupplierID, step.SupplierName, string(step.TaskType), step.Action, schedulerStepStatus(run.Status, step), step.ScheduleKey, step.TaskID, step.Total, step.Reason, nullableTime(run.StartedAt), nullableTime(run.FinishedAt))
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14)
+		`, run.ID, step.SupplierID, step.SupplierName, string(step.TaskType), step.Action, schedulerStepStatus(run.Status, step), step.ScheduleKey, step.TaskID, step.Total, step.Reason, string(requestPayload), string(resultPayload), nullableTime(run.StartedAt), nullableTime(run.FinishedAt))
 		if err != nil {
 			return err
 		}
@@ -95,7 +113,7 @@ func (r *SQLRepository) ListRuns(ctx context.Context, limit int) ([]adminplusdom
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, legacy_run_id, trigger_type, task_type, status, requested_at, started_at, finished_at,
 			supplier_count, total_steps, succeeded_steps, failed_steps, skipped_steps, duration_ms,
-			error_code, error_message
+			error_code, error_message, request_snapshot, result_snapshot
 		FROM admin_plus_scheduler_runs
 		ORDER BY requested_at DESC, id DESC
 		LIMIT $1
@@ -123,7 +141,7 @@ func (r *SQLRepository) GetRun(ctx context.Context, runID string) (*adminplusdom
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, legacy_run_id, trigger_type, task_type, status, requested_at, started_at, finished_at,
 			supplier_count, total_steps, succeeded_steps, failed_steps, skipped_steps, duration_ms,
-			error_code, error_message
+			error_code, error_message, request_snapshot, result_snapshot
 		FROM admin_plus_scheduler_runs
 		WHERE id = $1
 	`, runID)
@@ -140,7 +158,7 @@ func (r *SQLRepository) ListSteps(ctx context.Context, runID string, limit int) 
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, run_id, supplier_id, supplier_name, task_type, action, status, schedule_key,
 			extension_task_id, result_count, reason, attempts, max_attempts, next_attempt_at,
-			locked_by, locked_until, started_at, finished_at
+			locked_by, locked_until, request_snapshot, result_snapshot, started_at, finished_at
 		FROM admin_plus_scheduler_steps
 		WHERE ($1 = '' OR run_id = $1)
 		ORDER BY id ASC
@@ -428,11 +446,12 @@ func (r *SQLRepository) ClaimStep(ctx context.Context, workerID string, lease ti
 			RETURNING step.id, step.run_id, step.supplier_id, step.supplier_name, step.task_type, step.action,
 				step.status, step.schedule_key, step.extension_task_id, step.result_count, step.reason,
 				step.attempts, step.max_attempts, step.next_attempt_at, step.locked_by, step.locked_until,
+				step.request_snapshot, step.result_snapshot,
 				step.started_at, step.finished_at
 		)
 		SELECT id, run_id, supplier_id, supplier_name, task_type, action, status, schedule_key,
 			extension_task_id, result_count, reason, attempts, max_attempts, next_attempt_at,
-			locked_by, locked_until, started_at, finished_at
+			locked_by, locked_until, request_snapshot, result_snapshot, started_at, finished_at
 		FROM updated
 	`, workerID, int64(lease.Seconds()))
 	step, err := scanStepRecord(row)
@@ -446,18 +465,18 @@ func (r *SQLRepository) ClaimStep(ctx context.Context, workerID string, lease ti
 	return step, nil
 }
 
-func (r *SQLRepository) CompleteStep(ctx context.Context, stepID int64, status string, resultCount int, reason string, finishedAt time.Time) error {
+func (r *SQLRepository) CompleteStep(ctx context.Context, stepID int64, status string, resultCount int, reason string, result map[string]any, finishedAt time.Time) error {
 	if r == nil || r.db == nil {
 		return infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_SCHEDULER_DB_NOT_CONFIGURED", "admin plus scheduler database is not configured")
 	}
-	errorCode, errorMessage, responseSnapshot := schedulerAttemptDiagnostics(status, resultCount, reason)
+	errorCode, errorMessage, responseSnapshot := schedulerAttemptDiagnostics(status, resultCount, reason, result)
 	responsePayload, err := json.Marshal(responseSnapshot)
 	if err != nil {
 		return err
 	}
 	_, err = r.db.ExecContext(ctx, `
 		WITH current_step AS (
-			SELECT id, run_id, supplier_id, task_type, locked_by, attempts, started_at
+			SELECT id, run_id, supplier_id, task_type, locked_by, attempts, started_at, request_snapshot
 			FROM admin_plus_scheduler_steps
 			WHERE id = $1
 		),
@@ -466,6 +485,7 @@ func (r *SQLRepository) CompleteStep(ctx context.Context, stepID int64, status s
 			SET status = $2,
 				result_count = $3,
 				reason = $4,
+				result_snapshot = $8::jsonb,
 				finished_at = $5,
 				locked_by = '',
 				locked_until = NULL,
@@ -477,7 +497,7 @@ func (r *SQLRepository) CompleteStep(ctx context.Context, stepID int64, status s
 		)
 		INSERT INTO admin_plus_scheduler_attempts (
 			step_id, run_id, supplier_id, task_type, status, worker_id, attempt_no, started_at, finished_at,
-			duration_ms, error_code, error_message, response_snapshot
+			duration_ms, error_code, error_message, request_snapshot, response_snapshot
 		)
 		SELECT current_step.id,
 			current_step.run_id,
@@ -491,15 +511,19 @@ func (r *SQLRepository) CompleteStep(ctx context.Context, stepID int64, status s
 			CASE WHEN current_step.started_at IS NULL THEN 0 ELSE EXTRACT(EPOCH FROM ($5 - current_step.started_at))::bigint * 1000 END,
 			$6,
 			$7,
+			current_step.request_snapshot,
 			$8::jsonb
 		FROM current_step
 	`, stepID, status, resultCount, reason, finishedAt, errorCode, errorMessage, string(responsePayload))
 	return err
 }
 
-func schedulerAttemptDiagnostics(status string, resultCount int, reason string) (string, string, map[string]any) {
+func schedulerAttemptDiagnostics(status string, resultCount int, reason string, result map[string]any) (string, string, map[string]any) {
 	snapshot := map[string]any{
 		"result_count": resultCount,
+	}
+	for key, value := range result {
+		snapshot[key] = value
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -541,7 +565,7 @@ func (r *SQLRepository) RetryStep(ctx context.Context, stepID int64, retryAt tim
 		  AND status IN ('retryable_failed', 'manual_required', 'dead', 'skipped', 'cancelled')
 		RETURNING id, run_id, supplier_id, supplier_name, task_type, action, status, schedule_key,
 			extension_task_id, result_count, reason, attempts, max_attempts, next_attempt_at,
-			locked_by, locked_until, started_at, finished_at
+			locked_by, locked_until, request_snapshot, result_snapshot, started_at, finished_at
 	`, stepID, retryAt)
 	return scanStepRecord(row)
 }
@@ -562,7 +586,7 @@ func (r *SQLRepository) CancelStep(ctx context.Context, stepID int64, cancelledA
 		  AND status IN ('queued', 'running', 'retryable_failed', 'manual_required')
 		RETURNING id, run_id, supplier_id, supplier_name, task_type, action, status, schedule_key,
 			extension_task_id, result_count, reason, attempts, max_attempts, next_attempt_at,
-			locked_by, locked_until, started_at, finished_at
+			locked_by, locked_until, request_snapshot, result_snapshot, started_at, finished_at
 	`, stepID, cancelledAt)
 	return scanStepRecord(row)
 }
@@ -605,7 +629,7 @@ func (r *SQLRepository) CancelRun(ctx context.Context, runID string, cancelledAt
 		  AND status IN ('queued', 'running', 'retryable_failed', 'partial_succeeded', 'manual_required')
 		RETURNING id, legacy_run_id, trigger_type, task_type, status, requested_at, started_at, finished_at,
 			supplier_count, total_steps, succeeded_steps, failed_steps, skipped_steps, duration_ms,
-			error_code, error_message
+			error_code, error_message, request_snapshot, result_snapshot
 	`, runID, cancelledAt)
 	run, err := scanRunSummary(row)
 	if err != nil {
@@ -812,6 +836,7 @@ type scanner interface {
 func scanRunSummary(row scanner) (*adminplusdomain.SchedulerRunSummary, error) {
 	var run adminplusdomain.SchedulerRunSummary
 	var startedAt, finishedAt sql.NullTime
+	var requestSnapshot, resultSnapshot []byte
 	if err := row.Scan(
 		&run.ID,
 		&run.LegacyRunID,
@@ -829,11 +854,27 @@ func scanRunSummary(row scanner) (*adminplusdomain.SchedulerRunSummary, error) {
 		&run.DurationMS,
 		&run.ErrorCode,
 		&run.ErrorMessage,
+		&requestSnapshot,
+		&resultSnapshot,
 	); err != nil {
 		return nil, err
 	}
 	run.StartedAt = timePtr(startedAt)
 	run.FinishedAt = timePtr(finishedAt)
+	if len(requestSnapshot) > 0 {
+		var payload map[string]any
+		if err := json.Unmarshal(requestSnapshot, &payload); err != nil {
+			return nil, err
+		}
+		run.RequestSnapshot = payload
+	}
+	if len(resultSnapshot) > 0 {
+		var payload map[string]any
+		if err := json.Unmarshal(resultSnapshot, &payload); err != nil {
+			return nil, err
+		}
+		run.ResultSnapshot = payload
+	}
 	return &run, nil
 }
 
@@ -841,6 +882,7 @@ func scanStepRecord(row scanner) (*adminplusdomain.SchedulerStepRecord, error) {
 	var step adminplusdomain.SchedulerStepRecord
 	var taskType string
 	var nextAttemptAt, lockedUntil, startedAt, finishedAt sql.NullTime
+	var requestSnapshot, resultSnapshot []byte
 	if err := row.Scan(
 		&step.ID,
 		&step.RunID,
@@ -858,6 +900,8 @@ func scanStepRecord(row scanner) (*adminplusdomain.SchedulerStepRecord, error) {
 		&nextAttemptAt,
 		&step.LockedBy,
 		&lockedUntil,
+		&requestSnapshot,
+		&resultSnapshot,
 		&startedAt,
 		&finishedAt,
 	); err != nil {
@@ -866,6 +910,20 @@ func scanStepRecord(row scanner) (*adminplusdomain.SchedulerStepRecord, error) {
 	step.TaskType = adminplusdomain.ExtensionTaskType(taskType)
 	step.NextAttemptAt = timePtr(nextAttemptAt)
 	step.LockedUntil = timePtr(lockedUntil)
+	if len(requestSnapshot) > 0 {
+		var payload map[string]any
+		if err := json.Unmarshal(requestSnapshot, &payload); err != nil {
+			return nil, err
+		}
+		step.RequestSnapshot = payload
+	}
+	if len(resultSnapshot) > 0 {
+		var payload map[string]any
+		if err := json.Unmarshal(resultSnapshot, &payload); err != nil {
+			return nil, err
+		}
+		step.ResultSnapshot = payload
+	}
 	step.StartedAt = timePtr(startedAt)
 	step.FinishedAt = timePtr(finishedAt)
 	return &step, nil

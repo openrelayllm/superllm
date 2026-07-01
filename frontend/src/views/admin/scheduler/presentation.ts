@@ -31,6 +31,7 @@ export function planTaskTypes(taskType: string): ExtensionTaskType[] {
     'supplier.groups.sync': ['fetch_groups'],
     'supplier.rates.sync': ['fetch_rates'],
     'supplier.usage_costs.sync': ['fetch_usage_costs'],
+    'supplier.costs.reconcile': ['reconcile_supplier_costs'],
     'supplier.session.probe': ['fetch_health'],
     'supplier.channels.check': ['check_supplier_channels']
   }[taskType] as ExtensionTaskType[] || []
@@ -54,6 +55,7 @@ export function taskLabel(value: string): string {
     fetch_groups: '分组同步',
     fetch_rates: '倍率同步',
     fetch_usage_costs: '用量消耗',
+    reconcile_supplier_costs: '成本对账',
     fetch_health: '会话探测',
     check_supplier_channels: '渠道检测',
     capture_supplier_session: '会话直登',

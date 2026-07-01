@@ -79,6 +79,7 @@ func RegisterAdminPlusRoutes(
 			siteCatalog.POST("/sites", h.AdminPlus.SiteCatalog.CreateSite)
 			siteCatalog.POST("/sites/bulk-publish", h.AdminPlus.SiteCatalog.BulkPublishSites)
 			siteCatalog.GET("/sites/:id", h.AdminPlus.SiteCatalog.GetSite)
+			siteCatalog.DELETE("/sites/:id", h.AdminPlus.SiteCatalog.DeleteSite)
 			siteCatalog.GET("/categories", h.AdminPlus.SiteCatalog.ListCategories)
 			siteCatalog.GET("/tags", h.AdminPlus.SiteCatalog.ListTags)
 			siteCatalog.POST("/candidates/bulk-add/stream", h.AdminPlus.SiteCatalog.BulkAddDiscoveryCandidatesStream)
@@ -214,6 +215,7 @@ func RegisterAdminPlusRoutes(
 
 		costs := adminPlus.Group("/costs")
 		{
+			costs.POST("/backfill-history", h.AdminPlus.Cost.BackfillSupplierCosts)
 			costs.GET("/ledger-overview", h.AdminPlus.Cost.GetLedgerOverview)
 			costs.GET("/suppliers", h.AdminPlus.Cost.ListSupplierSummaries)
 		}

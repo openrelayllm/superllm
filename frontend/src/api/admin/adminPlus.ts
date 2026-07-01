@@ -1483,7 +1483,7 @@ export interface LocalAccountUsageSummary {
 export interface ExtensionTask {
   id: number
   supplier_id: number
-  type: 'fetch_rates' | 'fetch_groups' | 'fetch_balance' | 'fetch_usage_costs' | 'fetch_health' | 'check_supplier_channels' | 'capture_supplier_session' | 'register_supplier_account'
+  type: 'fetch_rates' | 'fetch_groups' | 'fetch_balance' | 'fetch_usage_costs' | 'reconcile_supplier_costs' | 'fetch_health' | 'check_supplier_channels' | 'capture_supplier_session' | 'register_supplier_account'
   schedule_key?: string
   status: 'pending' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled'
   priority: number
@@ -1907,6 +1907,8 @@ export interface SchedulerRunSummary {
   duration_ms: number
   error_code?: string
   error_message?: string
+  request_snapshot?: Record<string, unknown>
+  result_snapshot?: Record<string, unknown>
 }
 
 export interface SchedulerStepRecord {
@@ -1926,6 +1928,8 @@ export interface SchedulerStepRecord {
   next_attempt_at?: string | null
   locked_by?: string
   locked_until?: string | null
+  request_snapshot?: Record<string, unknown>
+  result_snapshot?: Record<string, unknown>
   started_at?: string | null
   finished_at?: string | null
   operation_logs?: SchedulerAttemptRecord[]
@@ -2566,6 +2570,11 @@ export async function syncSupplierCosts(supplierId: number, payload: SyncSupplie
   return data
 }
 
+export async function backfillSupplierCosts(payload: SyncSupplierCostsPayload & { supplier_id?: number }): Promise<SchedulerRunSummary> {
+  const { data } = await apiClient.post<SchedulerRunSummary>('/admin-plus/costs/backfill-history', payload)
+  return data
+}
+
 export async function listSupplierCostSnapshots(params?: { supplier_id?: number } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<SupplierCostSnapshot>>('/admin-plus/costs/suppliers', { params })
   return data
@@ -2952,6 +2961,11 @@ export async function listSiteCatalogSites(params?: {
 
 export async function getSiteCatalogSite(id: number): Promise<SiteCatalogSite> {
   const { data } = await apiClient.get<SiteCatalogSite>(`/admin-plus/site-catalog/sites/${id}`)
+  return data
+}
+
+export async function deleteSiteCatalogSite(id: number): Promise<{ deleted: boolean }> {
+  const { data } = await apiClient.delete<{ deleted: boolean }>(`/admin-plus/site-catalog/sites/${id}`)
   return data
 }
 
@@ -3457,6 +3471,7 @@ export const adminPlusAPI = {
   listSiteDiscoveryRecommendations,
   listSiteCatalogSites,
   getSiteCatalogSite,
+  deleteSiteCatalogSite,
   createSiteCatalogSite,
   bulkPublishSiteCatalogSites,
   listSiteCatalogCategories,

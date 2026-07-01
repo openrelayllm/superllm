@@ -16,6 +16,7 @@ type Repository interface {
 	ListSites(ctx context.Context, filter SiteFilter) ([]*adminplusdomain.SiteCatalogSite, error)
 	GetSite(ctx context.Context, id int64) (*adminplusdomain.SiteCatalogSite, error)
 	CreateSite(ctx context.Context, site *adminplusdomain.SiteCatalogSite) (*adminplusdomain.SiteCatalogSite, error)
+	DeleteSite(ctx context.Context, id int64) error
 	BulkPublishSites(ctx context.Context, input BulkPublishSitesInput, publishedAt time.Time) (int64, error)
 	AddDiscoveryCandidate(ctx context.Context, candidate *adminplusdomain.SiteDiscoveryItem, input AddDiscoveryCandidateInput) (*adminplusdomain.SiteCatalogSite, error)
 	ListCategories(ctx context.Context) ([]*adminplusdomain.SiteCatalogCategory, error)
@@ -172,6 +173,16 @@ func (s *Service) CreateSite(ctx context.Context, in CreateSiteInput) (*adminplu
 		return nil, err
 	}
 	return s.repo.CreateSite(ctx, site)
+}
+
+func (s *Service) DeleteSite(ctx context.Context, id int64) error {
+	if s == nil || s.repo == nil {
+		return internalError("site catalog service is not configured")
+	}
+	if id <= 0 {
+		return badRequest("SITE_CATALOG_SITE_ID_INVALID", "invalid site id")
+	}
+	return s.repo.DeleteSite(ctx, id)
 }
 
 func (s *Service) BulkPublishSites(ctx context.Context, in BulkPublishSitesInput) (*BulkPublishSitesResult, error) {

@@ -1,47 +1,60 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <section class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">渠道索引采集</h1>
-          <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-            daheiai 渠道索引、自动注册流程、已注册账号和低倍率充值推荐。
-          </p>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <button type="button" class="btn btn-secondary" :disabled="loading || registrationBulkBusy" @click="loadPage">
-            <Icon name="refresh" size="sm" />
-            刷新
-          </button>
-          <button type="button" class="btn btn-secondary" :disabled="discoveryActionBusy" @click="classifyAllItemsNow">
-            <Icon name="search" size="sm" />
-            {{ classifying ? '识别中...' : '一键识别全部' }}
-          </button>
-          <button type="button" class="btn btn-secondary" :disabled="discoveryActionBusy" @click="bulkAddCatalogNow">
-            <Icon name="database" size="sm" />
-            {{ bulkAddingCatalog ? '加入中...' : '批量加入目录' }}
-          </button>
-          <button type="button" class="btn btn-primary" :disabled="discoveryActionBusy" @click="runDiscoveryNow">
-            <Icon name="play" size="sm" />
-            {{ running ? '采集中...' : '运行采集' }}
-          </button>
+      <section class="overflow-hidden rounded-2xl border border-gray-200 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 shadow-sm dark:border-dark-700 dark:from-dark-900 dark:via-dark-900 dark:to-dark-950">
+        <div class="px-5 py-5 sm:px-6 sm:py-6">
+          <div class="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+            <div class="min-w-0">
+              <p class="text-xs font-semibold uppercase tracking-[0.18em] text-primary-600 dark:text-primary-400">数据采集 / 渠道索引</p>
+              <h1 class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">渠道索引采集</h1>
+              <p class="mt-2 max-w-3xl text-sm leading-6 text-gray-500 dark:text-dark-400">
+                daheiai 渠道索引、自动注册流程、已注册账号和低倍率充值推荐。
+              </p>
+              <div class="mt-4 flex flex-wrap gap-2 text-xs">
+                <span class="badge badge-gray">采集源 {{ sourceURL || '-' }}</span>
+                <span class="badge badge-gray">代理 {{ proxyPolicySummary }}</span>
+                <span class="badge" :class="settings.registration_enabled ? 'badge-success' : 'badge-warning'">
+                  {{ settings.registration_enabled ? '自动注册已启用' : '自动注册未启用' }}
+                </span>
+                <span class="badge badge-gray">推荐 {{ recommendations.length }}</span>
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2 xl:justify-end">
+              <button type="button" class="btn btn-secondary" :disabled="loading || registrationBulkBusy" @click="loadPage">
+                <Icon name="refresh" size="sm" />
+                刷新
+              </button>
+              <button type="button" class="btn btn-secondary" :disabled="discoveryActionBusy" @click="classifyAllItemsNow">
+                <Icon name="search" size="sm" />
+                {{ classifying ? '识别中...' : '一键识别全部' }}
+              </button>
+              <button type="button" class="btn btn-secondary" :disabled="discoveryActionBusy" @click="bulkAddCatalogNow">
+                <Icon name="database" size="sm" />
+                {{ bulkAddingCatalog ? '加入中...' : '批量加入目录' }}
+              </button>
+              <button type="button" class="btn btn-primary" :disabled="discoveryActionBusy" @click="runDiscoveryNow">
+                <Icon name="play" size="sm" />
+                {{ running ? '采集中...' : '运行采集' }}
+              </button>
+            </div>
+          </div>
+
+          <nav class="mt-6 flex gap-2 overflow-x-auto border-b border-gray-200/80 pb-1 dark:border-dark-700">
+            <button
+              v-for="tab in tabs"
+              :key="tab.value"
+              type="button"
+              class="whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium"
+              :class="activeTab === tab.value ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-dark-400 dark:hover:text-white'"
+              @click="activeTab = tab.value"
+            >
+              {{ tab.label }}
+            </button>
+          </nav>
         </div>
       </section>
 
-      <nav class="flex gap-2 overflow-x-auto border-b border-gray-200 dark:border-dark-700">
-        <button
-          v-for="tab in tabs"
-          :key="tab.value"
-          type="button"
-          class="whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium"
-          :class="activeTab === tab.value ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-dark-400 dark:hover:text-white'"
-          @click="activeTab = tab.value"
-        >
-          {{ tab.label }}
-        </button>
-      </nav>
-
-      <section v-if="activeTab === 'dashboard'" class="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,0.8fr)]">
+      <section v-if="activeTab === 'dashboard'" class="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(360px,0.82fr)]">
         <div class="space-y-6">
           <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
             <div class="card p-4">
@@ -67,7 +80,7 @@
           </div>
 
           <div class="card p-5">
-            <div class="flex items-center justify-between gap-3">
+            <div class="flex items-start justify-between gap-3">
               <div>
                 <h2 class="text-lg font-semibold text-gray-900 dark:text-white">采集工作台</h2>
                 <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">当前默认采集第三方中转分区。</p>
@@ -80,12 +93,12 @@
                   {{ bulkAddingCatalog ? '加入中...' : '批量加入目录' }}
                 </button>
                 <button type="button" class="btn btn-primary btn-sm" :disabled="discoveryActionBusy" @click="runDiscoveryNow">
-                {{ running ? '采集中...' : '开始采集' }}
+                  {{ running ? '采集中...' : '开始采集' }}
                 </button>
               </div>
             </div>
-            <div class="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_160px_120px_140px_120px] lg:items-end">
-              <label class="block">
+            <div class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_180px_120px_180px_180px] xl:items-end">
+              <label class="block min-w-0">
                 <span class="input-label">采集源</span>
                 <input v-model.trim="sourceURL" class="input font-mono text-sm" />
                 <div class="mt-2 flex flex-wrap gap-2">
@@ -186,7 +199,7 @@
           </div>
         </div>
 
-        <aside class="space-y-6">
+        <aside class="space-y-6 xl:sticky xl:top-6">
           <div class="card p-5">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">注册配置</h2>
             <dl class="mt-4 space-y-3 text-sm">

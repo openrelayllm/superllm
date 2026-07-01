@@ -74,22 +74,24 @@ type SchedulerPlanStats struct {
 }
 
 type SchedulerRunSummary struct {
-	ID             string     `json:"id"`
-	LegacyRunID    string     `json:"legacy_run_id,omitempty"`
-	TriggerType    string     `json:"trigger_type"`
-	TaskType       string     `json:"task_type"`
-	Status         string     `json:"status"`
-	RequestedAt    time.Time  `json:"requested_at"`
-	StartedAt      *time.Time `json:"started_at,omitempty"`
-	FinishedAt     *time.Time `json:"finished_at,omitempty"`
-	SupplierCount  int        `json:"supplier_count"`
-	TotalSteps     int        `json:"total_steps"`
-	SucceededSteps int        `json:"succeeded_steps"`
-	FailedSteps    int        `json:"failed_steps"`
-	SkippedSteps   int        `json:"skipped_steps"`
-	DurationMS     int64      `json:"duration_ms"`
-	ErrorCode      string     `json:"error_code,omitempty"`
-	ErrorMessage   string     `json:"error_message,omitempty"`
+	ID              string         `json:"id"`
+	LegacyRunID     string         `json:"legacy_run_id,omitempty"`
+	TriggerType     string         `json:"trigger_type"`
+	TaskType        string         `json:"task_type"`
+	Status          string         `json:"status"`
+	RequestedAt     time.Time      `json:"requested_at"`
+	StartedAt       *time.Time     `json:"started_at,omitempty"`
+	FinishedAt      *time.Time     `json:"finished_at,omitempty"`
+	SupplierCount   int            `json:"supplier_count"`
+	TotalSteps      int            `json:"total_steps"`
+	SucceededSteps  int            `json:"succeeded_steps"`
+	FailedSteps     int            `json:"failed_steps"`
+	SkippedSteps    int            `json:"skipped_steps"`
+	DurationMS      int64          `json:"duration_ms"`
+	ErrorCode       string         `json:"error_code,omitempty"`
+	ErrorMessage    string         `json:"error_message,omitempty"`
+	RequestSnapshot map[string]any `json:"request_snapshot,omitempty"`
+	ResultSnapshot  map[string]any `json:"result_snapshot,omitempty"`
 }
 
 type SchedulerRunDetail struct {
@@ -132,6 +134,8 @@ type SchedulerStepRecord struct {
 	NextAttemptAt   *time.Time               `json:"next_attempt_at,omitempty"`
 	LockedBy        string                   `json:"locked_by,omitempty"`
 	LockedUntil     *time.Time               `json:"locked_until,omitempty"`
+	RequestSnapshot map[string]any           `json:"request_snapshot,omitempty"`
+	ResultSnapshot  map[string]any           `json:"result_snapshot,omitempty"`
 	StartedAt       *time.Time               `json:"started_at,omitempty"`
 	FinishedAt      *time.Time               `json:"finished_at,omitempty"`
 	OperationLogs   []SchedulerAttemptRecord `json:"operation_logs,omitempty"`
@@ -209,6 +213,8 @@ type ScheduledTask struct {
 	Action       string            `json:"action"`
 	TaskID       int64             `json:"task_id,omitempty"`
 	ScheduleKey  string            `json:"schedule_key"`
+	Request      map[string]any    `json:"request_snapshot,omitempty"`
+	Result       map[string]any    `json:"result_snapshot,omitempty"`
 	Created      bool              `json:"created"`
 	Synced       bool              `json:"synced,omitempty"`
 	Total        int               `json:"total,omitempty"`

@@ -14,6 +14,7 @@ import (
 
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
 	channelchecksapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/channelchecks"
+	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
@@ -45,6 +46,19 @@ type RunInput struct {
 	Now           time.Time
 }
 
+type CostBackfillInput struct {
+	Mode                           string
+	SupplierID                     int64
+	StartedAt                      *time.Time
+	EndedAt                        *time.Time
+	IncludeFundingTransactions     bool
+	IncludeEntitlementTransactions bool
+	IncludeUsageCostLines          bool
+	IncludeBalanceSnapshot         bool
+	LowBalanceThresholdCents       int64
+	Now                            time.Time
+}
+
 type Service struct {
 	repo             Repository
 	supplierService  *suppliersapp.Service
@@ -54,6 +68,7 @@ type Service struct {
 	balanceSyncer    BalanceSyncer
 	healthSyncer     HealthSyncer
 	usageCostSyncer  UsageCostSyncer
+	costSyncer       CostSyncer
 	channelChecker   ChannelChecker
 	sessionRefresher SessionRefresher
 	now              func() time.Time
@@ -85,7 +100,7 @@ type Repository interface {
 	UpdateActionStatus(ctx context.Context, actionID, status string, resolvedAt *time.Time) (*adminplusdomain.SchedulerAction, error)
 	StepStats(ctx context.Context) (running int, queued int, failed int, err error)
 	ClaimStep(ctx context.Context, workerID string, lease time.Duration) (*adminplusdomain.SchedulerStepRecord, error)
-	CompleteStep(ctx context.Context, stepID int64, status string, resultCount int, reason string, finishedAt time.Time) error
+	CompleteStep(ctx context.Context, stepID int64, status string, resultCount int, reason string, result map[string]any, finishedAt time.Time) error
 	RefreshRunStatus(ctx context.Context, runID string, finishedAt time.Time) error
 }
 
@@ -107,6 +122,10 @@ type HealthSyncer interface {
 
 type UsageCostSyncer interface {
 	SyncFromSession(ctx context.Context, in usagecostsapp.SyncFromSessionInput) (*usagecostsapp.SyncFromSessionResult, error)
+}
+
+type CostSyncer interface {
+	Sync(ctx context.Context, in costsapp.SyncInput) (*costsapp.SyncResult, error)
 }
 
 type ChannelChecker interface {
@@ -189,6 +208,13 @@ func (s *Service) WithSessionRefresher(refresher SessionRefresher) *Service {
 	return s
 }
 
+func (s *Service) WithCostSyncer(syncer CostSyncer) *Service {
+	if s != nil {
+		s.costSyncer = syncer
+	}
+	return s
+}
+
 func NewServiceWithDependenciesAndRepository(
 	repo Repository,
 	supplierService *suppliersapp.Service,
@@ -203,6 +229,89 @@ func NewServiceWithDependenciesAndRepository(
 	service := NewServiceWithDependencies(supplierService, extensionService, groupSyncer, rateSyncer, balanceSyncer, healthSyncer, usageCostSyncer, channelChecker)
 	service.repo = repo
 	return service
+}
+
+func (s *Service) EnqueueCostHistoryBackfill(ctx context.Context, in CostBackfillInput) (*adminplusdomain.SchedulerRunSummary, error) {
+	if s == nil || s.repo == nil {
+		return nil, infraerrors.New(http.StatusConflict, "ADMIN_PLUS_SCHEDULER_REPOSITORY_REQUIRED", "cost history backfill requires persistent scheduler repository")
+	}
+	if s.costSyncer == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_COST_SYNCER_NOT_CONFIGURED", "supplier cost syncer is not configured")
+	}
+	if in.LowBalanceThresholdCents < 0 {
+		return nil, infraerrors.New(http.StatusBadRequest, "ADMIN_PLUS_COST_BACKFILL_THRESHOLD_INVALID", "low balance threshold must be non-negative")
+	}
+	if !in.IncludeFundingTransactions && !in.IncludeEntitlementTransactions && !in.IncludeUsageCostLines && !in.IncludeBalanceSnapshot {
+		in.IncludeFundingTransactions = true
+		in.IncludeEntitlementTransactions = true
+		in.IncludeUsageCostLines = true
+		in.IncludeBalanceSnapshot = true
+	}
+	if in.Now.IsZero() {
+		in.Now = s.now().UTC()
+	} else {
+		in.Now = in.Now.UTC()
+	}
+	mode := strings.TrimSpace(in.Mode)
+	if mode == "" {
+		mode = "manual:cost-history-backfill"
+	}
+	suppliers, err := s.supplierService.List(ctx, suppliersapp.SupplierFilter{})
+	if err != nil {
+		return nil, err
+	}
+	runID := strings.ReplaceAll(fmt.Sprintf("%s-%d", mode, in.Now.UnixNano()), ":", "-")
+	request := costBackfillRequestSnapshot(in)
+	items := make([]adminplusdomain.ScheduledTask, 0, len(suppliers))
+	skipped := 0
+	for _, supplier := range suppliers {
+		if supplier == nil {
+			continue
+		}
+		if in.SupplierID > 0 && supplier.ID != in.SupplierID {
+			continue
+		}
+		item := adminplusdomain.ScheduledTask{
+			SupplierID:   supplier.ID,
+			SupplierName: supplier.Name,
+			TaskType:     adminplusdomain.ExtensionTaskTypeReconcileCosts,
+			Action:       actionDirectSync,
+			ScheduleKey:  fmt.Sprintf("scheduler:%s:supplier:%d:%s", adminplusdomain.ExtensionTaskTypeReconcileCosts, supplier.ID, in.Now.Format(windowBucketLayout)),
+			Request:      cloneMap(request),
+		}
+		if reason := ineligibleReason(supplier, item.TaskType); reason != "" {
+			item.Reason = reason
+			skipped++
+		}
+		items = append(items, item)
+	}
+	requestedAt := in.Now.UTC()
+	summary := adminplusdomain.SchedulerRunSummary{
+		ID:              runID,
+		LegacyRunID:     fmt.Sprintf("%s:%d", mode, in.Now.UnixNano()),
+		TriggerType:     mode,
+		TaskType:        schedulerTaskTypeLabel(adminplusdomain.ExtensionTaskTypeReconcileCosts),
+		Status:          "queued",
+		RequestedAt:     requestedAt,
+		SupplierCount:   schedulerRunSupplierCount(items),
+		TotalSteps:      len(items),
+		SkippedSteps:    skipped,
+		RequestSnapshot: cloneMap(request),
+	}
+	if len(items) == 0 {
+		summary.Status = "skipped"
+		summary.FinishedAt = &requestedAt
+	}
+	if err := s.repo.SaveRun(ctx, summary, items); err != nil {
+		return nil, err
+	}
+	s.recentRunsMu.Lock()
+	s.recentRuns = append(s.recentRuns, summary)
+	if len(s.recentRuns) > 100 {
+		s.recentRuns = append([]adminplusdomain.SchedulerRunSummary{}, s.recentRuns[len(s.recentRuns)-100:]...)
+	}
+	s.recentRunsMu.Unlock()
+	return &summary, nil
 }
 
 func (s *Service) Run(ctx context.Context, in RunInput) (*adminplusdomain.SchedulerRun, error) {
@@ -826,6 +935,151 @@ func normalizeSettings(settings, defaults adminplusdomain.SchedulerSettings) adm
 	return settings
 }
 
+func costBackfillRequestSnapshot(in CostBackfillInput) map[string]any {
+	return map[string]any{
+		"started_at":                       timePtrRFC3339(in.StartedAt),
+		"ended_at":                         timePtrRFC3339(in.EndedAt),
+		"include_funding_transactions":     in.IncludeFundingTransactions,
+		"include_entitlement_transactions": in.IncludeEntitlementTransactions,
+		"include_usage_cost_lines":         in.IncludeUsageCostLines,
+		"include_balance_snapshot":         in.IncludeBalanceSnapshot,
+		"low_balance_threshold_cents":      in.LowBalanceThresholdCents,
+		"resource_mode":                    "scheduler_serial",
+	}
+}
+
+func costSyncInputFromSnapshot(supplierID int64, snapshot map[string]any) costsapp.SyncInput {
+	return costsapp.SyncInput{
+		SupplierID:                     supplierID,
+		StartedAt:                      timePtrFromSnapshot(snapshot, "started_at"),
+		EndedAt:                        timePtrFromSnapshot(snapshot, "ended_at"),
+		IncludeFundingTransactions:     boolValue(snapshot, "include_funding_transactions", true),
+		IncludeEntitlementTransactions: boolValue(snapshot, "include_entitlement_transactions", true),
+		IncludeUsageCostLines:          boolValue(snapshot, "include_usage_cost_lines", true),
+		IncludeBalanceSnapshot:         boolValue(snapshot, "include_balance_snapshot", true),
+		LowBalanceThresholdCents:       int64Value(snapshot, "low_balance_threshold_cents"),
+	}
+}
+
+func costSyncResultSnapshot(result *costsapp.SyncResult) map[string]any {
+	if result == nil {
+		return map[string]any{}
+	}
+	out := map[string]any{
+		"supplier_id":              result.SupplierID,
+		"provider_type":            result.ProviderType,
+		"system_type":              result.SystemType,
+		"origin":                   result.Origin,
+		"api_base_url":             result.APIBaseURL,
+		"synced_at":                result.SyncedAt.UTC().Format(time.RFC3339),
+		"funding_transactions":     result.FundingTransactions,
+		"entitlement_transactions": result.EntitlementTransactions,
+		"usage_cost_lines":         result.UsageCostLines,
+		"ledger_entries":           result.LedgerEntries,
+		"capabilities":             result.Capabilities,
+		"diagnostics":              result.Diagnostics,
+	}
+	if result.Snapshot != nil {
+		out["snapshot_id"] = result.Snapshot.ID
+		out["currency"] = result.Snapshot.Currency
+		out["captured_at"] = result.Snapshot.CapturedAt.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
+func costSyncResultCount(result *costsapp.SyncResult) int {
+	if result == nil {
+		return 0
+	}
+	count := result.FundingTransactions + result.EntitlementTransactions + result.UsageCostLines + result.LedgerEntries
+	if result.Snapshot != nil {
+		count++
+	}
+	return count
+}
+
+func timePtrRFC3339(value *time.Time) string {
+	if value == nil || value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func timePtrFromSnapshot(snapshot map[string]any, key string) *time.Time {
+	raw := strings.TrimSpace(stringValueAny(snapshot[key]))
+	if raw == "" {
+		return nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil
+	}
+	utc := parsed.UTC()
+	return &utc
+}
+
+func boolValue(snapshot map[string]any, key string, fallback bool) bool {
+	value, ok := snapshot[key]
+	if !ok || value == nil {
+		return fallback
+	}
+	switch v := value.(type) {
+	case bool:
+		return v
+	case string:
+		parsed, err := strconv.ParseBool(strings.TrimSpace(v))
+		if err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func int64Value(snapshot map[string]any, key string) int64 {
+	value := snapshot[key]
+	switch v := value.(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	case json.Number:
+		parsed, _ := v.Int64()
+		return parsed
+	case string:
+		parsed, _ := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func stringValueAny(value any) string {
+	if value == nil {
+		return ""
+	}
+	switch v := value.(type) {
+	case string:
+		return v
+	case fmt.Stringer:
+		return v.String()
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
+func cloneMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
 func (s *Service) ProcessNext(ctx context.Context, workerID string) (bool, error) {
 	if s.repo == nil {
 		return false, nil
@@ -838,8 +1092,8 @@ func (s *Service) ProcessNext(ctx context.Context, workerID string) (bool, error
 		return false, err
 	}
 	finishedAt := s.now().UTC()
-	status, total, reason := s.executeClaimedStep(ctx, step, finishedAt)
-	if err := s.repo.CompleteStep(ctx, step.ID, status, total, reason, finishedAt); err != nil {
+	status, total, reason, result := s.executeClaimedStep(ctx, step, finishedAt)
+	if err := s.repo.CompleteStep(ctx, step.ID, status, total, reason, result, finishedAt); err != nil {
 		return true, err
 	}
 	if err := s.repo.RefreshRunStatus(ctx, step.RunID, finishedAt); err != nil {
@@ -872,13 +1126,13 @@ func (s *Service) EnqueueDuePlan(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (s *Service) executeClaimedStep(ctx context.Context, step *adminplusdomain.SchedulerStepRecord, now time.Time) (string, int, string) {
+func (s *Service) executeClaimedStep(ctx context.Context, step *adminplusdomain.SchedulerStepRecord, now time.Time) (string, int, string, map[string]any) {
 	if step == nil {
-		return "dead", 0, "step_missing"
+		return "dead", 0, "step_missing", nil
 	}
 	supplier, err := s.supplierService.Get(ctx, step.SupplierID)
 	if err != nil {
-		return "retryable_failed", 0, err.Error()
+		return "retryable_failed", 0, err.Error(), nil
 	}
 	item := adminplusdomain.ScheduledTask{
 		SupplierID:   step.SupplierID,
@@ -887,9 +1141,10 @@ func (s *Service) executeClaimedStep(ctx context.Context, step *adminplusdomain.
 		Action:       step.Action,
 		ScheduleKey:  step.ScheduleKey,
 		TaskID:       step.ExtensionTaskID,
+		Request:      cloneMap(step.RequestSnapshot),
 	}
 	if reason := ineligibleReason(supplier, step.TaskType); reason != "" {
-		return "skipped", 0, reason
+		return "skipped", 0, reason, nil
 	}
 	if item.Action == actionDirectSync {
 		s.syncSupplierTaskWithSessionRefresh(ctx, supplier, step.TaskType, now, &item)
@@ -924,11 +1179,11 @@ func (s *Service) executeClaimedStep(ctx context.Context, step *adminplusdomain.
 	}
 	if item.Reason != "" {
 		if item.Reason == "duplicate" {
-			return "skipped", item.Total, item.Reason
+			return "skipped", item.Total, item.Reason, item.Result
 		}
-		return stepFailureStatus(item.Reason), item.Total, item.Reason
+		return stepFailureStatus(item.Reason), item.Total, item.Reason, item.Result
 	}
-	return "succeeded", item.Total, ""
+	return "succeeded", item.Total, "", item.Result
 }
 
 func (s *Service) scheduleSupplierTask(ctx context.Context, supplier *adminplusdomain.Supplier, taskType adminplusdomain.ExtensionTaskType, mode string, windowMinutes int, now time.Time, dryRun bool) adminplusdomain.ScheduledTask {
@@ -1158,6 +1413,18 @@ func (s *Service) syncSupplierTask(ctx context.Context, supplier *adminplusdomai
 		if result != nil {
 			item.Total = result.Total
 		}
+	case adminplusdomain.ExtensionTaskTypeReconcileCosts:
+		if s.costSyncer == nil {
+			item.Reason = "cost_syncer_missing"
+			return
+		}
+		result, err := s.costSyncer.Sync(ctx, costSyncInputFromSnapshot(supplier.ID, item.Request))
+		if err != nil {
+			item.Reason = encodeSyncFailure(stepFailureInput{TaskType: taskType, Stage: "supplier_costs_reconcile", Action: "sync_costs", Err: err})
+			return
+		}
+		item.Result = costSyncResultSnapshot(result)
+		item.Total = costSyncResultCount(result)
 	case adminplusdomain.ExtensionTaskTypeCheckChannels:
 		if s.channelChecker == nil {
 			item.Reason = "channel_checker_missing"
@@ -1227,7 +1494,7 @@ func (s *Service) defaultPlans() []adminplusdomain.SchedulerPlan {
 		plan("supplier.balance.sync", "余额同步", "supplier.balance.sync", []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeFetchBalance}, "enabled", "全部启用供应商", 10*time.Minute, 10, "fire_once", "forbid", false, "读取供应商用户侧余额并刷新余额快照", now),
 		plan("supplier.groups.sync", "分组同步", "supplier.groups.sync", []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeFetchGroups}, "enabled", "全部启用供应商", time.Hour, 10, "fire_once", "forbid", false, "同步供应商分组、渠道和协议投影", now),
 		plan("supplier.rates.sync", "倍率同步", "supplier.rates.sync", []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeFetchRates}, "enabled", "全部启用供应商", time.Hour, 10, "fire_once", "forbid", false, "同步使用倍率、充值倍率和有效倍率", now),
-		plan("supplier.costs.reconcile", "成本对账", "supplier.costs.reconcile", []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeFetchBalance, adminplusdomain.ExtensionTaskTypeFetchUsageCosts}, "enabled", "全部启用供应商", time.Hour, 60, "backfill", "forbid", false, "采集 usage 和余额并刷新成本台账", now),
+		plan("supplier.costs.reconcile", "成本对账", "supplier.costs.reconcile", []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeReconcileCosts}, "enabled", "全部启用供应商", time.Hour, 60, "backfill", "forbid", false, "分批采集充值、兑换、usage 和余额并刷新成本台账", now),
 		plan("supplier.session.probe", "会话探测", "supplier.session.probe", []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeFetchHealth}, "enabled", "全部启用供应商", 30*time.Minute, 30, "fire_once", "forbid", false, "探测供应商会话和只读 capability", now),
 		plan("supplier.channels.check", "渠道健康检测", "supplier.channels.check", []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeCheckChannels}, "paused", "按供应商启用", 0, 10, "skip", "forbid", true, "使用真实模型请求检测渠道可用性、首 token 和总耗时", now),
 		plan("local.sub2api.schedule.ensure", "加入本地调度", "local.sub2api.schedule.ensure", nil, "paused", "智能动作触发", 0, 10, "skip", "forbid", true, "将低倍率且可用的供应商渠道加入本地 Lime/Sub2API 调度", now),
@@ -1556,6 +1823,7 @@ func taskNeedsSession(taskType adminplusdomain.ExtensionTaskType) bool {
 		adminplusdomain.ExtensionTaskTypeFetchBalance,
 		adminplusdomain.ExtensionTaskTypeFetchHealth,
 		adminplusdomain.ExtensionTaskTypeFetchUsageCosts,
+		adminplusdomain.ExtensionTaskTypeReconcileCosts,
 		adminplusdomain.ExtensionTaskTypeCheckChannels:
 		return true
 	default:
@@ -1646,6 +1914,8 @@ func syncFailureDefaultMessage(taskType adminplusdomain.ExtensionTaskType) strin
 		return "supplier rates sync failed"
 	case adminplusdomain.ExtensionTaskTypeFetchUsageCosts:
 		return "supplier usage costs sync failed"
+	case adminplusdomain.ExtensionTaskTypeReconcileCosts:
+		return "supplier costs reconcile failed"
 	case adminplusdomain.ExtensionTaskTypeFetchHealth:
 		return "supplier health sync failed"
 	case adminplusdomain.ExtensionTaskTypeCheckChannels:
@@ -1848,6 +2118,8 @@ func schedulerTaskTypeLabel(taskType adminplusdomain.ExtensionTaskType) string {
 		return "supplier.session.probe"
 	case adminplusdomain.ExtensionTaskTypeFetchUsageCosts:
 		return "supplier.usage_costs.sync"
+	case adminplusdomain.ExtensionTaskTypeReconcileCosts:
+		return "supplier.costs.reconcile"
 	case adminplusdomain.ExtensionTaskTypeCheckChannels:
 		return "supplier.channels.check"
 	case adminplusdomain.ExtensionTaskTypeCaptureSession:
@@ -1972,6 +2244,7 @@ func actionForTaskType(taskType adminplusdomain.ExtensionTaskType) string {
 		adminplusdomain.ExtensionTaskTypeFetchBalance,
 		adminplusdomain.ExtensionTaskTypeFetchHealth,
 		adminplusdomain.ExtensionTaskTypeFetchUsageCosts,
+		adminplusdomain.ExtensionTaskTypeReconcileCosts,
 		adminplusdomain.ExtensionTaskTypeCheckChannels:
 		return actionDirectSync
 	case adminplusdomain.ExtensionTaskTypeCaptureSession:
@@ -1987,7 +2260,7 @@ func usageCostWindow(now time.Time) (time.Time, time.Time) {
 }
 
 func scheduleBucket(taskType adminplusdomain.ExtensionTaskType, now time.Time, windowMinutes int) string {
-	if taskType == adminplusdomain.ExtensionTaskTypeFetchUsageCosts {
+	if taskType == adminplusdomain.ExtensionTaskTypeFetchUsageCosts || taskType == adminplusdomain.ExtensionTaskTypeReconcileCosts {
 		return now.Format(dailyBucketLayout)
 	}
 	window := time.Duration(windowMinutes) * time.Minute
@@ -2010,6 +2283,8 @@ func taskPriority(taskType adminplusdomain.ExtensionTaskType) int {
 		return 55
 	case adminplusdomain.ExtensionTaskTypeFetchUsageCosts:
 		return 40
+	case adminplusdomain.ExtensionTaskTypeReconcileCosts:
+		return 35
 	default:
 		return 10
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
+	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
@@ -425,6 +426,58 @@ func TestServiceEnqueueRunDefersExecutionUntilWorkerClaimsStep(t *testing.T) {
 	require.Equal(t, "succeeded", repo.runs[0].Status)
 }
 
+func TestServiceEnqueueCostHistoryBackfillUsesStepSnapshot(t *testing.T) {
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	repo := newFakeSchedulerRepository()
+	costSyncer := &stubCostSyncer{}
+	service := NewServiceWithDependenciesAndRepository(repo, supplierService, extensionService, nil, nil, nil, nil, nil, nil).
+		WithCostSyncer(costSyncer)
+	now := time.Date(2026, 6, 20, 10, 4, 0, 0, time.UTC)
+	service.now = func() time.Time {
+		return now
+	}
+	startedAt := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	endedAt := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+
+	createSchedulerSupplier(t, supplierService, suppliersapp.CreateSupplierInput{
+		Name:          "relay-a",
+		Kind:          adminplusdomain.SupplierKindRelay,
+		Type:          adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus: adminplusdomain.SupplierRuntimeStatusActive,
+		HealthStatus:  adminplusdomain.SupplierHealthStatusNormal,
+		DashboardURL:  "https://relay-a.example.com",
+		BalanceCents:  500_00,
+	})
+
+	summary, err := service.EnqueueCostHistoryBackfill(context.Background(), CostBackfillInput{
+		StartedAt:                      &startedAt,
+		EndedAt:                        &endedAt,
+		IncludeFundingTransactions:     true,
+		IncludeEntitlementTransactions: true,
+		IncludeUsageCostLines:          true,
+		IncludeBalanceSnapshot:         true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "queued", summary.Status)
+	require.Equal(t, "supplier.costs.reconcile", summary.TaskType)
+	require.Len(t, repo.steps, 1)
+	require.Equal(t, adminplusdomain.ExtensionTaskTypeReconcileCosts, repo.steps[0].TaskType)
+	require.Equal(t, "2025-01-01T00:00:00Z", repo.steps[0].RequestSnapshot["started_at"])
+
+	processed, err := service.ProcessNext(context.Background(), "worker-test")
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Equal(t, 1, costSyncer.calls)
+	require.Equal(t, startedAt, *costSyncer.input.StartedAt)
+	require.Equal(t, endedAt, *costSyncer.input.EndedAt)
+	require.True(t, costSyncer.input.IncludeFundingTransactions)
+	require.Equal(t, "succeeded", repo.steps[0].Status)
+	require.Equal(t, 14, repo.steps[0].ResultCount)
+	require.Equal(t, 2, repo.steps[0].ResultSnapshot["funding_transactions"])
+}
+
 func TestServiceProcessNextRefreshesMissingSessionBeforeBalanceSync(t *testing.T) {
 	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
@@ -599,7 +652,7 @@ func TestServiceRetryStepRequeuesFailedStep(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, repo.steps, 1)
-	require.NoError(t, repo.CompleteStep(context.Background(), repo.steps[0].ID, "retryable_failed", 0, "upstream_500", service.now()))
+	require.NoError(t, repo.CompleteStep(context.Background(), repo.steps[0].ID, "retryable_failed", 0, "upstream_500", nil, service.now()))
 	require.NoError(t, repo.RefreshRunStatus(context.Background(), summary.ID, service.now()))
 	require.Equal(t, "retryable_failed", repo.runs[0].Status)
 
@@ -842,6 +895,26 @@ func (s *stubUsageCostSyncer) SyncFromSession(_ context.Context, in usagecostsap
 	return &usagecostsapp.SyncFromSessionResult{SupplierID: in.SupplierID, Total: s.total}, nil
 }
 
+type stubCostSyncer struct {
+	calls int
+	input costsapp.SyncInput
+}
+
+func (s *stubCostSyncer) Sync(_ context.Context, in costsapp.SyncInput) (*costsapp.SyncResult, error) {
+	s.calls++
+	s.input = in
+	return &costsapp.SyncResult{
+		SupplierID:              in.SupplierID,
+		ProviderType:            "sub2api",
+		SyncedAt:                time.Date(2026, 6, 20, 10, 4, 0, 0, time.UTC),
+		FundingTransactions:     2,
+		EntitlementTransactions: 3,
+		UsageCostLines:          4,
+		LedgerEntries:           5,
+		Capabilities:            map[string]bool{"funding_transactions": in.IncludeFundingTransactions},
+	}, nil
+}
+
 func createSchedulerSupplier(t *testing.T, service *suppliersapp.Service, in suppliersapp.CreateSupplierInput) *adminplusdomain.Supplier {
 	t.Helper()
 	supplier, err := service.Create(context.Background(), in)
@@ -901,18 +974,31 @@ func (r *fakeSchedulerRepository) SaveRun(_ context.Context, run adminplusdomain
 			status = "skipped"
 		}
 		r.steps = append(r.steps, adminplusdomain.SchedulerStepRecord{
-			ID:           int64(len(r.steps) + 1),
-			RunID:        run.ID,
-			SupplierID:   step.SupplierID,
-			SupplierName: step.SupplierName,
-			TaskType:     step.TaskType,
-			Action:       step.Action,
-			Status:       status,
-			ScheduleKey:  step.ScheduleKey,
-			Reason:       step.Reason,
+			ID:              int64(len(r.steps) + 1),
+			RunID:           run.ID,
+			SupplierID:      step.SupplierID,
+			SupplierName:    step.SupplierName,
+			TaskType:        step.TaskType,
+			Action:          step.Action,
+			Status:          status,
+			ScheduleKey:     step.ScheduleKey,
+			Reason:          step.Reason,
+			RequestSnapshot: cloneTestMap(step.Request),
+			ResultSnapshot:  cloneTestMap(step.Result),
 		})
 	}
 	return nil
+}
+
+func cloneTestMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 func (r *fakeSchedulerRepository) ListRuns(_ context.Context, limit int) ([]adminplusdomain.SchedulerRunSummary, error) {
@@ -1268,7 +1354,7 @@ func (r *fakeSchedulerRepository) ClaimStep(_ context.Context, _ string, _ time.
 	return nil, nil
 }
 
-func (r *fakeSchedulerRepository) CompleteStep(_ context.Context, stepID int64, status string, resultCount int, reason string, finishedAt time.Time) error {
+func (r *fakeSchedulerRepository) CompleteStep(_ context.Context, stepID int64, status string, resultCount int, reason string, result map[string]any, finishedAt time.Time) error {
 	for idx := range r.steps {
 		if r.steps[idx].ID != stepID {
 			continue
@@ -1276,6 +1362,7 @@ func (r *fakeSchedulerRepository) CompleteStep(_ context.Context, stepID int64, 
 		r.steps[idx].Status = status
 		r.steps[idx].ResultCount = resultCount
 		r.steps[idx].Reason = reason
+		r.steps[idx].ResultSnapshot = cloneTestMap(result)
 		r.steps[idx].FinishedAt = &finishedAt
 	}
 	return nil

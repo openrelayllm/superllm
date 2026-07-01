@@ -9,22 +9,35 @@
           </p>
         </div>
         <div class="flex flex-wrap gap-2">
-          <button type="button" class="btn btn-secondary" :disabled="loading" @click="loadPage">
+          <button type="button" class="btn btn-secondary" :disabled="loading" @click="loadCurrentTab">
             <Icon name="refresh" size="sm" />
             刷新
           </button>
-          <button type="button" class="btn btn-primary" :disabled="syncing || !selectedSupplierId" @click="syncCosts">
-            <Icon name="sync" size="sm" />
-            {{ syncing ? '任务执行中...' : '同步成本' }}
+          <button type="button" class="btn btn-primary" :disabled="backfilling" @click="startHistoryBackfill">
+            <Icon name="play" size="sm" />
+            {{ backfilling ? '回补中...' : '一键回补全部供应商' }}
           </button>
         </div>
       </section>
+
+      <nav class="flex gap-2 overflow-x-auto border-b border-gray-200 dark:border-dark-700">
+        <button
+          v-for="tab in topTabs"
+          :key="tab.value"
+          type="button"
+          class="whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium"
+          :class="activeTopTab === tab.value ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-dark-400 dark:hover:text-white'"
+          @click="setTopTab(tab.value)"
+        >
+          {{ tab.label }}
+        </button>
+      </nav>
 
       <section class="grid gap-4 lg:grid-cols-[1.2fr_1fr_1fr_auto] lg:items-end">
         <label class="block">
           <span class="input-label">供应商</span>
           <select v-model.number="selectedSupplierId" class="input" @change="handleSupplierChange">
-            <option :value="0">请选择供应商</option>
+            <option :value="0">全部供应商</option>
             <option v-for="supplier in suppliers" :key="supplier.id" :value="supplier.id">{{ supplier.name }}</option>
           </select>
         </label>
@@ -36,13 +49,13 @@
           <span class="input-label">结束时间</span>
           <input v-model="syncForm.ended_at" type="datetime-local" class="input" />
         </label>
-        <button type="button" class="btn btn-primary" :disabled="syncing || !selectedSupplierId" @click="syncCosts">
+        <button type="button" class="btn btn-secondary" :disabled="syncing || !selectedSupplierId" @click="syncCosts">
           <Icon name="sync" size="sm" />
-          {{ syncing ? '同步中' : '同步' }}
+          {{ syncing ? '同步中' : '同步当前供应商' }}
         </button>
       </section>
 
-      <section class="card overflow-hidden">
+      <section v-if="activeTopTab === 'overview'" class="card overflow-hidden">
         <div class="flex flex-col gap-2 border-b border-gray-100 px-5 py-4 dark:border-dark-700 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 class="text-base font-semibold text-gray-900 dark:text-white">总账统计</h2>
@@ -96,59 +109,15 @@
         </div>
       </section>
 
-      <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
-        <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">充值总额</p>
-          <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(supplierRechargeTotalCents(currentSnapshot), currentCurrency) }}</p>
-        </div>
-        <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">实际支付</p>
-          <p class="mt-2 text-2xl font-semibold text-emerald-700 dark:text-emerald-300">{{ formatMoney(currentSnapshot?.recharge_actual_payment_cents || 0, currentCurrency) }}</p>
-        </div>
-        <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">充值订单</p>
-          <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(currentSnapshot?.completed_funding_amount_cents || 0, currentCurrency) }}</p>
-        </div>
-        <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">兑换充值</p>
-          <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(currentSnapshot?.entitlement_amount_cents || 0, currentCurrency) }}</p>
-        </div>
-        <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">用量消耗</p>
-          <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(supplierDisplayUsageCents(currentSnapshot), currentCurrency) }}</p>
-        </div>
-        <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">实际余额</p>
-          <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">
-            {{ currentSnapshot?.actual_balance_cents === undefined || currentSnapshot?.actual_balance_cents === null ? '-' : formatMoney(currentSnapshot.actual_balance_cents, currentCurrency) }}
-          </p>
-        </div>
-        <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">余额差异</p>
-          <p class="mt-2 text-2xl font-semibold" :class="balanceDeltaClass">
-            {{ currentBalanceDelta === null ? '-' : formatMoney(currentBalanceDelta, currentCurrency) }}
-          </p>
-        </div>
-      </section>
-
-      <section class="card overflow-hidden">
-        <div class="flex flex-col gap-4 border-b border-gray-100 px-5 py-4 dark:border-dark-700 lg:flex-row lg:items-center lg:justify-between">
-          <div class="inline-flex w-fit rounded-lg border border-gray-200 bg-gray-50 p-1 dark:border-dark-700 dark:bg-dark-800">
-            <button
-              v-for="tab in tabs"
-              :key="tab.value"
-              type="button"
-              class="rounded-md px-3 py-1.5 text-sm font-medium transition"
-              :class="activeTab === tab.value ? 'bg-white text-primary-600 shadow-sm dark:bg-dark-700 dark:text-primary-300' : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'"
-              @click="activeTab = tab.value"
-            >
-              {{ tab.label }}
-            </button>
+      <section v-else-if="activeTopTab === 'suppliers'" class="card overflow-hidden">
+        <div class="flex flex-col gap-2 border-b border-gray-100 px-5 py-4 dark:border-dark-700 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 class="text-base font-semibold text-gray-900 dark:text-white">供应商成本快照</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">点击供应商进入单供应商明细，避免首屏拉取所有明细。</p>
           </div>
-          <div class="text-sm text-gray-500 dark:text-dark-400">{{ syncStatusLabel }}</div>
+          <div class="text-sm text-gray-500 dark:text-dark-400">{{ snapshots.length }} 条快照</div>
         </div>
-
-        <div v-if="activeTab === 'summary'" class="overflow-x-auto">
+        <div class="overflow-x-auto">
           <table class="w-full min-w-[1260px] divide-y divide-gray-200 dark:divide-dark-700">
             <thead class="bg-gray-50 dark:bg-dark-800">
               <tr>
@@ -190,104 +159,260 @@
             </tbody>
           </table>
         </div>
+      </section>
 
-        <div v-else-if="activeTab === 'funding'" class="overflow-x-auto">
-          <table class="w-full min-w-[1180px] divide-y divide-gray-200 dark:divide-dark-700">
-            <thead class="bg-gray-50 dark:bg-dark-800">
-              <tr>
-                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">订单</th>
-                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">支付方式</th>
-                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">状态</th>
-                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">额度</th>
-                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">原始实付</th>
-                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">充值倍率</th>
-                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">实际支付</th>
-                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">完成时间</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
-              <tr v-if="funding.length === 0">
-                <td colspan="8" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无充值订单</td>
-              </tr>
-              <tr v-for="item in funding" :key="item.id">
-                <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">
-                  <div class="font-mono text-xs">{{ item.external_id }}</div>
-                  <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ item.out_trade_no || '-' }}</div>
-                </td>
-                <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{{ item.payment_type || '-' }}</td>
-                <td class="px-4 py-4"><span class="badge badge-gray">{{ item.status }}</span></td>
-                <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMoney(item.amount_cents, item.currency) }}</td>
-                <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMoney(item.cash_amount_cents, item.currency) }}</td>
-                <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMultiplier(item.recharge_multiplier) }}</td>
-                <td class="px-4 py-4 text-right text-sm font-semibold text-emerald-700 dark:text-emerald-300">{{ formatMoney(item.actual_payment_cents, item.currency) }}</td>
-                <td class="px-4 py-4 text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(item.completed_at || item.paid_at || item.created_at_external) }}</td>
-              </tr>
-            </tbody>
-          </table>
+      <section v-else-if="activeTopTab === 'detail'" class="space-y-6">
+        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
+          <div class="card p-4">
+            <p class="text-xs font-medium text-gray-500 dark:text-dark-400">充值总额</p>
+            <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(supplierRechargeTotalCents(currentSnapshot), currentCurrency) }}</p>
+          </div>
+          <div class="card p-4">
+            <p class="text-xs font-medium text-gray-500 dark:text-dark-400">实际支付</p>
+            <p class="mt-2 text-2xl font-semibold text-emerald-700 dark:text-emerald-300">{{ formatMoney(currentSnapshot?.recharge_actual_payment_cents || 0, currentCurrency) }}</p>
+          </div>
+          <div class="card p-4">
+            <p class="text-xs font-medium text-gray-500 dark:text-dark-400">充值订单</p>
+            <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(currentSnapshot?.completed_funding_amount_cents || 0, currentCurrency) }}</p>
+          </div>
+          <div class="card p-4">
+            <p class="text-xs font-medium text-gray-500 dark:text-dark-400">兑换充值</p>
+            <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(currentSnapshot?.entitlement_amount_cents || 0, currentCurrency) }}</p>
+          </div>
+          <div class="card p-4">
+            <p class="text-xs font-medium text-gray-500 dark:text-dark-400">用量消耗</p>
+            <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatMoney(supplierDisplayUsageCents(currentSnapshot), currentCurrency) }}</p>
+          </div>
+          <div class="card p-4">
+            <p class="text-xs font-medium text-gray-500 dark:text-dark-400">实际余额</p>
+            <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">
+              {{ currentSnapshot?.actual_balance_cents === undefined || currentSnapshot?.actual_balance_cents === null ? '-' : formatMoney(currentSnapshot.actual_balance_cents, currentCurrency) }}
+            </p>
+          </div>
+          <div class="card p-4">
+            <p class="text-xs font-medium text-gray-500 dark:text-dark-400">余额差异</p>
+            <p class="mt-2 text-2xl font-semibold" :class="balanceDeltaClass">
+              {{ currentBalanceDelta === null ? '-' : formatMoney(currentBalanceDelta, currentCurrency) }}
+            </p>
+          </div>
         </div>
 
-        <div v-else-if="activeTab === 'entitlements'" class="overflow-x-auto">
-          <table class="w-full min-w-[980px] divide-y divide-gray-200 dark:divide-dark-700">
-            <thead class="bg-gray-50 dark:bg-dark-800">
-              <tr>
-                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">记录</th>
-                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">来源</th>
-                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">状态</th>
-                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">权益内容</th>
-                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">使用时间</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
-              <tr v-if="entitlements.length === 0">
-                <td colspan="5" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无兑换记录</td>
-              </tr>
-              <tr v-for="item in entitlements" :key="item.id">
-                <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">
-                  <div class="font-mono text-xs">{{ item.external_id }}</div>
-                  <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">尾号 {{ item.code_last4 || '-' }}</div>
-                </td>
-                <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">
-                  <div>{{ sourceFamilyLabel(item.source_family) }}</div>
-                  <div class="mt-2">
-                    <span class="badge" :class="entitlementBadgeClass(item.type)">{{ entitlementTypeLabel(item.type) }}</span>
-                  </div>
-                </td>
-                <td class="px-4 py-4"><span class="badge badge-gray">{{ item.status }}</span></td>
-                <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ entitlementValueLabel(item) }}</td>
-                <td class="px-4 py-4 text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(item.used_at || item.created_at_external) }}</td>
-              </tr>
-            </tbody>
-          </table>
+        <section class="card overflow-hidden">
+          <div class="flex flex-col gap-4 border-b border-gray-100 px-5 py-4 dark:border-dark-700 lg:flex-row lg:items-center lg:justify-between">
+            <div class="inline-flex w-fit rounded-lg border border-gray-200 bg-gray-50 p-1 dark:border-dark-700 dark:bg-dark-800">
+              <button
+                v-for="tab in detailTabs"
+                :key="tab.value"
+                type="button"
+                class="rounded-md px-3 py-1.5 text-sm font-medium transition"
+                :class="activeDetailTab === tab.value ? 'bg-white text-primary-600 shadow-sm dark:bg-dark-700 dark:text-primary-300' : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'"
+                @click="setDetailTab(tab.value)"
+              >
+                {{ tab.label }}
+              </button>
+            </div>
+            <div class="text-sm text-gray-500 dark:text-dark-400">{{ syncStatusLabel }}</div>
+          </div>
+
+          <div v-if="!selectedSupplierId" class="px-5 py-10 text-center text-sm text-gray-500 dark:text-dark-400">
+            请选择供应商查看明细。
+          </div>
+          <div v-else-if="activeDetailTab === 'summary'" class="px-5 py-8 text-sm text-gray-500 dark:text-dark-400">
+            当前供应商：{{ supplierName(selectedSupplierId) }}，{{ currentSnapshot ? `最近采集 ${formatDateTime(currentSnapshot.captured_at)}` : '暂无快照' }}。
+          </div>
+          <div v-else-if="activeDetailTab === 'funding'" class="overflow-x-auto">
+            <table class="w-full min-w-[1180px] divide-y divide-gray-200 dark:divide-dark-700">
+              <thead class="bg-gray-50 dark:bg-dark-800">
+                <tr>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">订单</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">支付方式</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">状态</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">额度</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">原始实付</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">充值倍率</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">实际支付</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">完成时间</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
+                <tr v-if="funding.length === 0">
+                  <td colspan="8" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无充值订单</td>
+                </tr>
+                <tr v-for="item in funding" :key="item.id">
+                  <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">
+                    <div class="font-mono text-xs">{{ item.external_id }}</div>
+                    <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ item.out_trade_no || '-' }}</div>
+                  </td>
+                  <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{{ item.payment_type || '-' }}</td>
+                  <td class="px-4 py-4"><span class="badge badge-gray">{{ item.status }}</span></td>
+                  <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMoney(item.amount_cents, item.currency) }}</td>
+                  <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMoney(item.cash_amount_cents, item.currency) }}</td>
+                  <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMultiplier(item.recharge_multiplier) }}</td>
+                  <td class="px-4 py-4 text-right text-sm font-semibold text-emerald-700 dark:text-emerald-300">{{ formatMoney(item.actual_payment_cents, item.currency) }}</td>
+                  <td class="px-4 py-4 text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(item.completed_at || item.paid_at || item.created_at_external) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div v-else-if="activeDetailTab === 'entitlements'" class="overflow-x-auto">
+            <table class="w-full min-w-[980px] divide-y divide-gray-200 dark:divide-dark-700">
+              <thead class="bg-gray-50 dark:bg-dark-800">
+                <tr>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">记录</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">来源</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">状态</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">权益内容</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">使用时间</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
+                <tr v-if="entitlements.length === 0">
+                  <td colspan="5" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无兑换记录</td>
+                </tr>
+                <tr v-for="item in entitlements" :key="item.id">
+                  <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">
+                    <div class="font-mono text-xs">{{ item.external_id }}</div>
+                    <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">尾号 {{ item.code_last4 || '-' }}</div>
+                  </td>
+                  <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">
+                    <div>{{ sourceFamilyLabel(item.source_family) }}</div>
+                    <div class="mt-2">
+                      <span class="badge" :class="entitlementBadgeClass(item.type)">{{ entitlementTypeLabel(item.type) }}</span>
+                    </div>
+                  </td>
+                  <td class="px-4 py-4"><span class="badge badge-gray">{{ item.status }}</span></td>
+                  <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ entitlementValueLabel(item) }}</td>
+                  <td class="px-4 py-4 text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(item.used_at || item.created_at_external) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div v-else class="overflow-x-auto">
+            <table class="w-full min-w-[980px] divide-y divide-gray-200 dark:divide-dark-700">
+              <thead class="bg-gray-50 dark:bg-dark-800">
+                <tr>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">类型</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">来源</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">金额</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">实际支付</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">发生时间</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
+                <tr v-if="ledger.length === 0">
+                  <td colspan="5" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无成本台账</td>
+                </tr>
+                <tr v-for="entry in ledger" :key="entry.id">
+                  <td class="px-4 py-4"><span class="badge" :class="ledgerBadgeClass(entry.entry_type)">{{ ledgerTypeLabel(entry.entry_type) }}</span></td>
+                  <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">
+                    <div>{{ entry.source_type }}</div>
+                    <div class="mt-1 font-mono text-xs text-gray-500 dark:text-dark-400">{{ entry.source_external_id || `#${entry.source_id}` }}</div>
+                  </td>
+                  <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMoney(entry.amount_cents, entry.currency) }}</td>
+                  <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ entry.actual_payment_cents ? formatMoney(entry.actual_payment_cents, entry.currency) : '-' }}</td>
+                  <td class="px-4 py-4 text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(entry.occurred_at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section v-else class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div class="card overflow-hidden">
+          <div class="border-b border-gray-100 px-5 py-4 dark:border-dark-700">
+            <h2 class="text-base font-semibold text-gray-900 dark:text-white">历史回补运行</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">一键提交后由后台按供应商拆分 step 执行，页面只轮询 run 状态。</p>
+          </div>
+          <div v-if="!activeBackfillRun" class="px-5 py-10 text-center text-sm text-gray-500 dark:text-dark-400">
+            暂无本页提交的历史回补任务。
+          </div>
+          <div v-else class="space-y-5 p-5">
+            <div class="grid gap-3 md:grid-cols-5">
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
+                <p class="text-xs text-gray-500 dark:text-dark-400">状态</p>
+                <span class="badge mt-2" :class="runStatusClass(activeBackfillRun.run.status)">{{ runStatusLabel(activeBackfillRun.run.status) }}</span>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
+                <p class="text-xs text-gray-500 dark:text-dark-400">供应商</p>
+                <p class="mt-2 text-sm font-medium text-gray-900 dark:text-white">{{ activeBackfillRun.run.supplier_count }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
+                <p class="text-xs text-gray-500 dark:text-dark-400">成功</p>
+                <p class="mt-2 text-sm font-medium text-emerald-600 dark:text-emerald-400">{{ activeBackfillRun.run.succeeded_steps }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
+                <p class="text-xs text-gray-500 dark:text-dark-400">失败</p>
+                <p class="mt-2 text-sm font-medium text-rose-600 dark:text-rose-400">{{ activeBackfillRun.run.failed_steps }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
+                <p class="text-xs text-gray-500 dark:text-dark-400">总 Step</p>
+                <p class="mt-2 text-sm font-medium text-gray-900 dark:text-white">{{ activeBackfillRun.run.total_steps }}</p>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-dark-700">
+              <table class="w-full min-w-[960px] divide-y divide-gray-200 dark:divide-dark-700">
+                <thead class="bg-gray-50 dark:bg-dark-800">
+                  <tr>
+                    <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">Step</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">供应商</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">状态</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">结果</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">时间</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">错误/原因</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 bg-white dark:divide-dark-700 dark:bg-dark-900">
+                  <tr v-if="activeBackfillRun.steps.length === 0">
+                    <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-dark-400">暂无 step 明细</td>
+                  </tr>
+                  <tr v-for="step in activeBackfillRun.steps" :key="step.id">
+                    <td class="px-4 py-3 font-mono text-xs text-gray-500 dark:text-dark-400">{{ step.id }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{{ step.supplier_name || supplierName(step.supplier_id) }}</td>
+                    <td class="px-4 py-3"><span class="badge" :class="runStatusClass(step.status)">{{ runStatusLabel(step.status) }}</span></td>
+                    <td class="px-4 py-3 text-sm text-gray-500 dark:text-dark-400">{{ stepResultLabel(step.result_snapshot, step.result_count) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-500 dark:text-dark-400">
+                      <div>{{ formatDateTime(step.started_at) }}</div>
+                      <div v-if="step.finished_at" class="mt-1 text-xs text-gray-400 dark:text-dark-500">完成 {{ formatDateTime(step.finished_at) }}</div>
+                    </td>
+                    <td class="max-w-[260px] px-4 py-3 text-sm text-gray-500 dark:text-dark-400">
+                      <span class="block truncate" :title="step.reason || ''">{{ step.reason || '-' }}</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
 
-        <div v-else class="overflow-x-auto">
-          <table class="w-full min-w-[980px] divide-y divide-gray-200 dark:divide-dark-700">
-            <thead class="bg-gray-50 dark:bg-dark-800">
-              <tr>
-                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">类型</th>
-                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">来源</th>
-                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">金额</th>
-                <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">实际支付</th>
-                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">发生时间</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
-              <tr v-if="ledger.length === 0">
-                <td colspan="5" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无成本台账</td>
-              </tr>
-              <tr v-for="entry in ledger" :key="entry.id">
-                <td class="px-4 py-4"><span class="badge" :class="ledgerBadgeClass(entry.entry_type)">{{ ledgerTypeLabel(entry.entry_type) }}</span></td>
-                <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">
-                  <div>{{ entry.source_type }}</div>
-                  <div class="mt-1 font-mono text-xs text-gray-500 dark:text-dark-400">{{ entry.source_external_id || `#${entry.source_id}` }}</div>
-                </td>
-                <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMoney(entry.amount_cents, entry.currency) }}</td>
-                <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ entry.actual_payment_cents ? formatMoney(entry.actual_payment_cents, entry.currency) : '-' }}</td>
-                <td class="px-4 py-4 text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(entry.occurred_at) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <aside class="card p-5">
+          <h2 class="text-base font-semibold text-gray-900 dark:text-white">回补范围</h2>
+          <dl class="mt-4 space-y-3 text-sm">
+            <div class="flex items-center justify-between gap-3">
+              <dt class="text-gray-500 dark:text-dark-400">目标</dt>
+              <dd class="font-medium text-gray-900 dark:text-white">全部供应商</dd>
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <dt class="text-gray-500 dark:text-dark-400">开始</dt>
+              <dd class="font-medium text-gray-900 dark:text-white">{{ formatDateTime(toRFC3339(syncForm.started_at)) }}</dd>
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <dt class="text-gray-500 dark:text-dark-400">结束</dt>
+              <dd class="font-medium text-gray-900 dark:text-white">{{ formatDateTime(toRFC3339(syncForm.ended_at)) }}</dd>
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <dt class="text-gray-500 dark:text-dark-400">模式</dt>
+              <dd class="font-medium text-gray-900 dark:text-white">后台分批</dd>
+            </div>
+          </dl>
+          <button type="button" class="btn btn-primary mt-5 w-full" :disabled="backfilling" @click="startHistoryBackfill">
+            <Icon name="play" size="sm" />
+            {{ backfilling ? '已提交后台任务' : '提交历史回补' }}
+          </button>
+        </aside>
       </section>
     </div>
   </AppLayout>
@@ -299,6 +424,8 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import {
+  backfillSupplierCosts,
+  getSchedulerRunDetail,
   getSupplierCostLedgerOverview,
   getSupplierCostSummary,
   getSupplierProvisionJob,
@@ -308,14 +435,15 @@ import {
   listSupplierFundingTransactions,
   listSuppliers,
   syncSupplierCosts,
+  type SchedulerRunDetail,
   type Supplier,
-  type SupplierCostLedgerOverview,
   type SupplierCostLedgerEntry,
+  type SupplierCostLedgerOverview,
   type SupplierCostLedgerOverviewItem,
   type SupplierCostSnapshot,
+  type SupplierCostSyncResultSnapshot,
   type SupplierEntitlementTransaction,
   type SupplierFundingTransaction,
-  type SupplierCostSyncResultSnapshot,
   type SupplierProvisionJob,
   type SupplierProvisionStatus
 } from '@/api/admin/adminPlus'
@@ -324,12 +452,19 @@ import {
   supplierDisplayUsageCents,
   supplierRechargeTotalCents
 } from './supplierCostPresentation'
+import { runStatusClass, runStatusLabel } from '../scheduler/presentation'
 
-type CostTab = 'summary' | 'funding' | 'entitlements' | 'ledger'
+type TopTab = 'overview' | 'suppliers' | 'detail' | 'backfill'
+type DetailTab = 'summary' | 'funding' | 'entitlements' | 'ledger'
 
 const appStore = useAppStore()
 const loading = ref(false)
 const syncing = ref(false)
+const backfilling = ref(false)
+const suppliersLoaded = ref(false)
+const overviewLoaded = ref(false)
+const snapshotsLoaded = ref(false)
+const detailLoadedSupplierId = ref(0)
 const suppliers = ref<Supplier[]>([])
 const ledgerOverview = ref<SupplierCostLedgerOverview | null>(null)
 const snapshots = ref<SupplierCostSnapshot[]>([])
@@ -337,25 +472,35 @@ const funding = ref<SupplierFundingTransaction[]>([])
 const entitlements = ref<SupplierEntitlementTransaction[]>([])
 const ledger = ref<SupplierCostLedgerEntry[]>([])
 const selectedSupplierId = ref(0)
-const activeTab = ref<CostTab>('summary')
+const activeTopTab = ref<TopTab>('overview')
+const activeDetailTab = ref<DetailTab>('summary')
 const activeSyncJob = ref<SupplierProvisionJob | null>(null)
 const lastSync = ref<SupplierCostSyncResultSnapshot | null>(null)
+const activeBackfillRun = ref<SchedulerRunDetail | null>(null)
 let syncJobTimer: number | undefined
+let backfillRunTimer: number | undefined
 
 const syncForm = reactive({
-  started_at: toDateTimeLocal(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)),
+  started_at: toDateTimeLocal(new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)),
   ended_at: toDateTimeLocal(new Date())
 })
 
-const tabs: Array<{ value: CostTab; label: string }> = [
-  { value: 'summary', label: '成本总览' },
+const topTabs: Array<{ value: TopTab; label: string }> = [
+  { value: 'overview', label: '总账统计' },
+  { value: 'suppliers', label: '供应商快照' },
+  { value: 'detail', label: '供应商明细' },
+  { value: 'backfill', label: '历史回补' }
+]
+
+const detailTabs: Array<{ value: DetailTab; label: string }> = [
+  { value: 'summary', label: '成本摘要' },
   { value: 'funding', label: '充值订单' },
   { value: 'entitlements', label: '兑换记录' },
   { value: 'ledger', label: '成本台账' }
 ]
 
 const currentSnapshot = computed(() => {
-  return snapshots.value.find((item) => item.supplier_id === selectedSupplierId.value) || snapshots.value[0] || null
+  return snapshots.value.find((item) => item.supplier_id === selectedSupplierId.value) || null
 })
 const currentCurrency = computed(() => currentSnapshot.value?.currency || 'USD')
 const currentBalanceDelta = computed(() => supplierBalanceDeltaCents(currentSnapshot.value))
@@ -400,7 +545,9 @@ function toDateTimeLocal(value: Date): string {
 }
 
 function toRFC3339(value: string): string {
-  return new Date(value).toISOString()
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString()
 }
 
 function supplierName(id: number): string {
@@ -485,20 +632,47 @@ function isTerminalSyncJobStatus(status: SupplierProvisionStatus): boolean {
   return ['succeeded', 'partial_succeeded', 'manual_required', 'dead', 'cancelled'].includes(status)
 }
 
-async function loadPage() {
+function isTerminalRunStatus(status: string): boolean {
+  return ['succeeded', 'partial_succeeded', 'retryable_failed', 'manual_required', 'dead', 'cancelled', 'skipped'].includes(status)
+}
+
+function stepResultLabel(snapshot?: Record<string, unknown>, fallback = 0): string {
+  if (!snapshot) return String(fallback || 0)
+  const fundingCount = numberFromSnapshot(snapshot, 'funding_transactions')
+  const entitlementCount = numberFromSnapshot(snapshot, 'entitlement_transactions')
+  const usageCount = numberFromSnapshot(snapshot, 'usage_cost_lines')
+  const ledgerCount = numberFromSnapshot(snapshot, 'ledger_entries')
+  return `充值 ${fundingCount}，兑换 ${entitlementCount}，用量 ${usageCount}，台账 ${ledgerCount}`
+}
+
+function numberFromSnapshot(snapshot: Record<string, unknown>, key: string): number {
+  const value = snapshot[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+async function setTopTab(tab: TopTab) {
+  activeTopTab.value = tab
+  await loadCurrentTab()
+}
+
+async function setDetailTab(tab: DetailTab) {
+  activeDetailTab.value = tab
+  await loadDetailIfNeeded()
+}
+
+async function loadCurrentTab() {
   loading.value = true
   try {
-    const [supplierResult, snapshotResult, overviewResult] = await Promise.all([
-      listSuppliers({ limit: 200 }),
-      listSupplierCostSnapshots({ page: 1, page_size: 200 }),
-      getSupplierCostLedgerOverview()
-    ])
-    suppliers.value = supplierResult.items
-    snapshots.value = snapshotResult.items
-    ledgerOverview.value = overviewResult
-    if (!selectedSupplierId.value && (snapshots.value[0] || suppliers.value[0])) {
-      selectedSupplierId.value = snapshots.value[0]?.supplier_id || suppliers.value[0].id
-      await loadSupplierDetails()
+    await loadSuppliersIfNeeded()
+    if (activeTopTab.value === 'overview') {
+      await loadLedgerOverview()
+    } else if (activeTopTab.value === 'suppliers') {
+      await loadSnapshots()
+    } else if (activeTopTab.value === 'detail') {
+      await ensureSelectedSupplier()
+      await loadDetailIfNeeded(true)
+    } else if (activeTopTab.value === 'backfill' && activeBackfillRun.value) {
+      await refreshBackfillRun(activeBackfillRun.value.run.id)
     }
   } catch (error) {
     appStore.showError((error as { message?: string }).message || '加载成本对账失败')
@@ -507,12 +681,32 @@ async function loadPage() {
   }
 }
 
-async function loadLedgerOverview() {
-  ledgerOverview.value = await getSupplierCostLedgerOverview()
+async function loadSuppliersIfNeeded() {
+  if (suppliersLoaded.value) return
+  const supplierResult = await listSuppliers({ limit: 200 })
+  suppliers.value = supplierResult.items
+  suppliersLoaded.value = true
 }
 
-async function loadSupplierDetails() {
+async function loadLedgerOverview() {
+  ledgerOverview.value = await getSupplierCostLedgerOverview()
+  overviewLoaded.value = true
+}
+
+async function loadSnapshots() {
+  const snapshotResult = await listSupplierCostSnapshots({ page: 1, page_size: 200 })
+  snapshots.value = snapshotResult.items
+  snapshotsLoaded.value = true
+}
+
+async function ensureSelectedSupplier() {
+  if (selectedSupplierId.value) return
+  selectedSupplierId.value = snapshots.value[0]?.supplier_id || suppliers.value[0]?.id || 0
+}
+
+async function loadDetailIfNeeded(force = false) {
   if (!selectedSupplierId.value) return
+  if (!force && detailLoadedSupplierId.value === selectedSupplierId.value) return
   const [summaryResult, fundingResult, entitlementResult, ledgerResult] = await Promise.all([
     getSupplierCostSummary(selectedSupplierId.value),
     listSupplierFundingTransactions(selectedSupplierId.value, { page: 1, page_size: 100 }),
@@ -524,20 +718,25 @@ async function loadSupplierDetails() {
   funding.value = fundingResult.items
   entitlements.value = entitlementResult.items
   ledger.value = ledgerResult.items
+  snapshotsLoaded.value = true
+  detailLoadedSupplierId.value = selectedSupplierId.value
 }
 
 function handleSupplierChange() {
   stopSyncJobPolling()
   activeSyncJob.value = null
   lastSync.value = null
-  void loadSupplierDetails().catch((error) => {
-    appStore.showError((error as { message?: string }).message || '加载供应商成本失败')
-  })
+  detailLoadedSupplierId.value = 0
+  if (activeTopTab.value === 'detail' && selectedSupplierId.value) {
+    void loadCurrentTab()
+  }
 }
 
 function selectSnapshot(supplierID: number) {
   selectedSupplierId.value = supplierID
-  void loadSupplierDetails()
+  detailLoadedSupplierId.value = 0
+  activeTopTab.value = 'detail'
+  void loadCurrentTab()
 }
 
 async function syncCosts() {
@@ -548,19 +747,39 @@ async function syncCosts() {
   stopSyncJobPolling()
   syncing.value = true
   try {
-    const job = await syncSupplierCosts(selectedSupplierId.value, {
-      started_at: toRFC3339(syncForm.started_at),
-      ended_at: toRFC3339(syncForm.ended_at),
-      include_funding_transactions: true,
-      include_entitlement_transactions: true,
-      include_usage_cost_lines: true,
-      include_balance_snapshot: true
-    })
+    const job = await syncSupplierCosts(selectedSupplierId.value, syncPayload())
     appStore.showSuccess(`成本同步任务已提交 #${job.job_id}`)
     await watchSyncJob(job.job_id)
   } catch (error) {
     appStore.showError((error as { message?: string }).message || '同步成本失败')
     syncing.value = false
+  }
+}
+
+async function startHistoryBackfill() {
+  stopBackfillPolling()
+  backfilling.value = true
+  activeTopTab.value = 'backfill'
+  try {
+    const run = await backfillSupplierCosts({
+      ...syncPayload()
+    })
+    appStore.showSuccess(`历史回补已提交 #${run.id}`)
+    await watchBackfillRun(run.id)
+  } catch (error) {
+    backfilling.value = false
+    appStore.showError((error as { message?: string }).message || '提交历史回补失败')
+  }
+}
+
+function syncPayload() {
+  return {
+    started_at: toRFC3339(syncForm.started_at),
+    ended_at: toRFC3339(syncForm.ended_at),
+    include_funding_transactions: true,
+    include_entitlement_transactions: true,
+    include_usage_cost_lines: true,
+    include_balance_snapshot: true
   }
 }
 
@@ -578,7 +797,8 @@ async function refreshSyncJob(jobID: number) {
       if (job.result_snapshot) {
         lastSync.value = job.result_snapshot as unknown as SupplierCostSyncResultSnapshot
       }
-      await Promise.all([loadSupplierDetails(), loadLedgerOverview()])
+      await Promise.all([loadDetailIfNeeded(true), overviewLoaded.value ? loadLedgerOverview() : Promise.resolve()])
+      if (snapshotsLoaded.value) await loadSnapshots()
       if (job.status === 'succeeded' || job.status === 'partial_succeeded') {
         appStore.showSuccess('成本同步完成')
       } else if (job.error_message) {
@@ -595,15 +815,50 @@ async function refreshSyncJob(jobID: number) {
   }
 }
 
-function stopSyncJobPolling() {
-  if (syncJobTimer) {
-    window.clearTimeout(syncJobTimer)
-    syncJobTimer = undefined
+async function watchBackfillRun(runID: string) {
+  stopBackfillPolling()
+  await refreshBackfillRun(runID)
+}
+
+async function refreshBackfillRun(runID: string) {
+  try {
+    const detail = await getSchedulerRunDetail(runID)
+    activeBackfillRun.value = detail
+    if (isTerminalRunStatus(detail.run.status)) {
+      backfilling.value = false
+      if (snapshotsLoaded.value) await loadSnapshots()
+      if (overviewLoaded.value) await loadLedgerOverview()
+      if (detail.run.status === 'succeeded' || detail.run.status === 'partial_succeeded') {
+        appStore.showSuccess('历史回补完成')
+      } else if (detail.run.error_message) {
+        appStore.showError(detail.run.error_message)
+      }
+      return
+    }
+    backfillRunTimer = window.setTimeout(() => {
+      void refreshBackfillRun(runID)
+    }, 2500)
+  } catch (error) {
+    backfilling.value = false
+    appStore.showError((error as { message?: string }).message || '读取历史回补状态失败')
   }
 }
 
-onMounted(loadPage)
+function stopSyncJobPolling() {
+  if (!syncJobTimer) return
+  window.clearTimeout(syncJobTimer)
+  syncJobTimer = undefined
+}
+
+function stopBackfillPolling() {
+  if (!backfillRunTimer) return
+  window.clearTimeout(backfillRunTimer)
+  backfillRunTimer = undefined
+}
+
+onMounted(loadCurrentTab)
 onBeforeUnmount(() => {
   stopSyncJobPolling()
+  stopBackfillPolling()
 })
 </script>

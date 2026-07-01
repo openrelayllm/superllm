@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       image:
-        description: 'Container image to deploy, for example wutongci/sub2api-admin-plus:0.30.0'
+        description: 'Container image to deploy, for example wutongci/sub2api-admin-plus:0.31.0'
         required: true
-        default: 'wutongci/sub2api-admin-plus:0.30.0'
+        default: 'wutongci/sub2api-admin-plus:0.31.0'
         type: string
       service_id:
         description: 'Railway service ID; falls back to vars.RAILWAY_SERVICE_ID'

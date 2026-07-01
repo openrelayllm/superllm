@@ -2,6 +2,7 @@ package adminplus
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -105,7 +106,7 @@ func (h *SiteCatalogHandler) ListSites(c *gin.Context) {
 		Status:   adminplusdomain.SiteCatalogStatus(strings.TrimSpace(c.Query("status"))),
 		SiteKind: adminplusdomain.SiteCatalogKind(strings.TrimSpace(c.Query("site_kind"))),
 		Provider: normalizeDiscoveryProviderType(c.Query("provider_type")),
-		Limit:    fetchLimitForPagination(page),
+		Limit:    math.MaxInt,
 	})
 	if response.ErrorFrom(c, err) {
 		return
@@ -124,6 +125,17 @@ func (h *SiteCatalogHandler) GetSite(c *gin.Context) {
 		return
 	}
 	response.Success(c, item)
+}
+
+func (h *SiteCatalogHandler) DeleteSite(c *gin.Context) {
+	id, ok := parseSiteCatalogID(c)
+	if !ok {
+		return
+	}
+	if response.ErrorFrom(c, h.service.DeleteSite(c.Request.Context(), id)) {
+		return
+	}
+	response.Success(c, gin.H{"deleted": true})
 }
 
 func (h *SiteCatalogHandler) CreateSite(c *gin.Context) {

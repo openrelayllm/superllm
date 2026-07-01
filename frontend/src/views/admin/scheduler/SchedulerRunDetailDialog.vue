@@ -275,6 +275,7 @@ function stageLabel(value?: string): string {
     supplier_rates_sync: '倍率同步',
     supplier_balance_sync: '余额同步',
     supplier_usage_costs_sync: '用量对账',
+    supplier_costs_reconcile: '成本对账',
     supplier_health_sync: '健康检测',
     supplier_channel_check: '渠道检测'
   }[value || ''] || value || '-'
@@ -287,6 +288,7 @@ function actionLabel(value?: string): string {
     sync_rates: '同步倍率',
     sync_balance: '同步余额',
     sync_usage_costs: '同步用量',
+    sync_costs: '同步成本',
     sync_health: '健康检测',
     check_channels: '检测渠道',
     sync: '同步'

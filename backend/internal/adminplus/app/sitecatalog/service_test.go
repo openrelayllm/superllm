@@ -80,6 +80,30 @@ func TestListSitesUsesDefaultLimitWhenUnset(t *testing.T) {
 	}
 }
 
+func TestDeleteSiteDelegatesToRepository(t *testing.T) {
+	repo := &deleteSiteCaptureRepo{}
+	service := NewService(repo)
+
+	if err := service.DeleteSite(context.Background(), 42); err != nil {
+		t.Fatalf("DeleteSite returned error: %v", err)
+	}
+	if repo.deletedID != 42 {
+		t.Fatalf("expected deleted id 42, got %d", repo.deletedID)
+	}
+}
+
+func TestDeleteSiteRejectsInvalidID(t *testing.T) {
+	repo := &deleteSiteCaptureRepo{}
+	service := NewService(repo)
+
+	if err := service.DeleteSite(context.Background(), 0); err == nil {
+		t.Fatal("expected error for invalid id")
+	}
+	if repo.deletedID != 0 {
+		t.Fatalf("expected repo not called, got %d", repo.deletedID)
+	}
+}
+
 func TestBulkAddDiscoveryCandidatesCanIncludeUnsupported(t *testing.T) {
 	repo := &bulkPublishSitesRepo{}
 	service := NewService(repo)
@@ -131,6 +155,10 @@ type listSitesCaptureRepo struct {
 	limit int
 }
 
+type deleteSiteCaptureRepo struct {
+	deletedID int64
+}
+
 func (r *bulkPublishSitesRepo) ListSites(context.Context, SiteFilter) ([]*adminplusdomain.SiteCatalogSite, error) {
 	return nil, errors.New("not implemented")
 }
@@ -156,6 +184,18 @@ func (r *listSitesCaptureRepo) CreateSite(context.Context, *adminplusdomain.Site
 	return nil, errors.New("not implemented")
 }
 
+func (r *bulkPublishSitesRepo) DeleteSite(context.Context, int64) error {
+	return errors.New("not implemented")
+}
+
+func (r *listSitesCaptureRepo) DeleteSite(context.Context, int64) error {
+	return errors.New("not implemented")
+}
+
+func (r *deleteSiteCaptureRepo) CreateSite(context.Context, *adminplusdomain.SiteCatalogSite) (*adminplusdomain.SiteCatalogSite, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (r *bulkPublishSitesRepo) BulkPublishSites(_ context.Context, input BulkPublishSitesInput, publishedAt time.Time) (int64, error) {
 	r.input = input
 	r.input.IDs = append([]int64(nil), input.IDs...)
@@ -164,6 +204,10 @@ func (r *bulkPublishSitesRepo) BulkPublishSites(_ context.Context, input BulkPub
 }
 
 func (r *listSitesCaptureRepo) BulkPublishSites(context.Context, BulkPublishSitesInput, time.Time) (int64, error) {
+	return 0, errors.New("not implemented")
+}
+
+func (r *deleteSiteCaptureRepo) BulkPublishSites(context.Context, BulkPublishSitesInput, time.Time) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
@@ -181,11 +225,19 @@ func (r *listSitesCaptureRepo) AddDiscoveryCandidate(context.Context, *adminplus
 	return nil, errors.New("not implemented")
 }
 
+func (r *deleteSiteCaptureRepo) AddDiscoveryCandidate(context.Context, *adminplusdomain.SiteDiscoveryItem, AddDiscoveryCandidateInput) (*adminplusdomain.SiteCatalogSite, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (r *bulkPublishSitesRepo) ListCategories(context.Context) ([]*adminplusdomain.SiteCatalogCategory, error) {
 	return nil, errors.New("not implemented")
 }
 
 func (r *listSitesCaptureRepo) ListCategories(context.Context) ([]*adminplusdomain.SiteCatalogCategory, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (r *deleteSiteCaptureRepo) ListCategories(context.Context) ([]*adminplusdomain.SiteCatalogCategory, error) {
 	return nil, errors.New("not implemented")
 }
 
@@ -197,10 +249,31 @@ func (r *listSitesCaptureRepo) ListTags(context.Context) ([]*adminplusdomain.Sit
 	return nil, errors.New("not implemented")
 }
 
+func (r *deleteSiteCaptureRepo) ListTags(context.Context) ([]*adminplusdomain.SiteCatalogTag, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (r *bulkPublishSitesRepo) SlugExists(context.Context, string) (bool, error) {
 	return false, nil
 }
 
 func (r *listSitesCaptureRepo) SlugExists(context.Context, string) (bool, error) {
 	return false, nil
+}
+
+func (r *deleteSiteCaptureRepo) SlugExists(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func (r *deleteSiteCaptureRepo) ListSites(context.Context, SiteFilter) ([]*adminplusdomain.SiteCatalogSite, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (r *deleteSiteCaptureRepo) GetSite(context.Context, int64) (*adminplusdomain.SiteCatalogSite, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (r *deleteSiteCaptureRepo) DeleteSite(_ context.Context, id int64) error {
+	r.deletedID = id
+	return nil
 }

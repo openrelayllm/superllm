@@ -5,6 +5,7 @@ import (
 
 	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	provisionjobsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/provisionjobs"
+	schedulerapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -14,6 +15,7 @@ import (
 type CostHandler struct {
 	service       *costsapp.Service
 	provisionJobs *provisionjobsapp.Service
+	scheduler     *schedulerapp.Service
 }
 
 func NewCostHandler(service *costsapp.Service) *CostHandler {
@@ -24,7 +26,22 @@ func NewCostHandlerWithProvisionJobs(service *costsapp.Service, provisionJobs *p
 	return &CostHandler{service: service, provisionJobs: provisionJobs}
 }
 
+func NewCostHandlerWithProvisionJobsAndScheduler(service *costsapp.Service, provisionJobs *provisionjobsapp.Service, scheduler *schedulerapp.Service) *CostHandler {
+	return &CostHandler{service: service, provisionJobs: provisionJobs, scheduler: scheduler}
+}
+
 type syncSupplierCostsRequest struct {
+	StartedAt                      string `json:"started_at"`
+	EndedAt                        string `json:"ended_at"`
+	IncludeFundingTransactions     *bool  `json:"include_funding_transactions"`
+	IncludeEntitlementTransactions *bool  `json:"include_entitlement_transactions"`
+	IncludeUsageCostLines          *bool  `json:"include_usage_cost_lines"`
+	IncludeBalanceSnapshot         *bool  `json:"include_balance_snapshot"`
+	LowBalanceThresholdCents       int64  `json:"low_balance_threshold_cents"`
+}
+
+type backfillSupplierCostsRequest struct {
+	SupplierID                     int64  `json:"supplier_id"`
 	StartedAt                      string `json:"started_at"`
 	EndedAt                        string `json:"ended_at"`
 	IncludeFundingTransactions     *bool  `json:"include_funding_transactions"`
@@ -76,6 +93,42 @@ func (h *CostHandler) SyncSupplierCosts(c *gin.Context) {
 		return
 	}
 	response.Accepted(c, result)
+}
+
+func (h *CostHandler) BackfillSupplierCosts(c *gin.Context) {
+	var req backfillSupplierCostsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	startedAt, ok := parseOptionalNamedTime(c, "started_at", req.StartedAt)
+	if !ok {
+		return
+	}
+	endedAt, ok := parseOptionalNamedTime(c, "ended_at", req.EndedAt)
+	if !ok {
+		return
+	}
+	if h.scheduler == nil {
+		err := infraerrors.New(500, "ADMIN_PLUS_INTERNAL_ERROR", "scheduler service is not configured")
+		response.ErrorFrom(c, err)
+		return
+	}
+	run, err := h.scheduler.EnqueueCostHistoryBackfill(c.Request.Context(), schedulerapp.CostBackfillInput{
+		Mode:                           "manual:cost-history-backfill",
+		SupplierID:                     req.SupplierID,
+		StartedAt:                      startedAt,
+		EndedAt:                        endedAt,
+		IncludeFundingTransactions:     boolDefault(req.IncludeFundingTransactions, true),
+		IncludeEntitlementTransactions: boolDefault(req.IncludeEntitlementTransactions, true),
+		IncludeUsageCostLines:          boolDefault(req.IncludeUsageCostLines, true),
+		IncludeBalanceSnapshot:         boolDefault(req.IncludeBalanceSnapshot, true),
+		LowBalanceThresholdCents:       req.LowBalanceThresholdCents,
+	})
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Accepted(c, run)
 }
 
 func (h *CostHandler) ListSupplierSummaries(c *gin.Context) {

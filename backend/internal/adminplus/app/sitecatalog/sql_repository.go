@@ -106,6 +106,60 @@ func (r *SQLRepository) CreateSite(ctx context.Context, site *adminplusdomain.Si
 	return r.GetSite(ctx, created.ID)
 }
 
+func (r *SQLRepository) DeleteSite(ctx context.Context, id int64) error {
+	if r == nil || r.db == nil {
+		return dbNotConfigured()
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollbackUnlessCommitted(tx, &err)
+
+	var lockedID int64
+	if err = tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM admin_plus_site_catalog_sites
+		WHERE id = $1
+		FOR UPDATE
+	`, id).Scan(&lockedID); err == sql.ErrNoRows {
+		return infraerrors.New(http.StatusNotFound, "SITE_CATALOG_SITE_NOT_FOUND", "site catalog site not found")
+	} else if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE admin_plus_site_discoveries
+		SET catalog_site_id = NULL,
+			process_status = CASE
+				WHEN process_status = 'added_to_catalog' THEN 'unprocessed'
+				ELSE process_status
+			END,
+			updated_at = NOW()
+		WHERE catalog_site_id = $1
+	`, id); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `
+		DELETE FROM admin_plus_site_catalog_sites
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return infraerrors.New(http.StatusNotFound, "SITE_CATALOG_SITE_NOT_FOUND", "site catalog site not found")
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	err = nil
+	return nil
+}
+
 func (r *SQLRepository) BulkPublishSites(ctx context.Context, input BulkPublishSitesInput, publishedAt time.Time) (int64, error) {
 	if r == nil || r.db == nil {
 		return 0, dbNotConfigured()

@@ -136,7 +136,7 @@ var ProviderSet = wire.NewSet(
 	adminplushandler.NewHealthHandler,
 	adminplushandler.NewNotificationHandler,
 	adminplushandler.NewUsageCostHandler,
-	adminplushandler.NewCostHandlerWithProvisionJobs,
+	adminplushandler.NewCostHandlerWithProvisionJobsAndScheduler,
 	adminplushandler.NewChannelCheckHandlerWithProvisionJobs,
 	adminplushandler.NewExtensionHandler,
 	adminplushandler.NewSiteDiscoveryHandler,
