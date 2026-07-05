@@ -65,6 +65,123 @@ func TestServiceOverviewClassifiesRoundRobinCacheRisk(t *testing.T) {
 	}
 }
 
+func TestServiceOverviewUsesUsageDerivedCacheRisk(t *testing.T) {
+	now := time.Date(2026, 7, 4, 1, 30, 0, 0, time.UTC)
+	repo := &fakeRepository{
+		market: []*adminplusdomain.MarketPriceSnapshot{
+			{ID: 1, Model: "gpt-derived-cache", Currency: "USD", PriceMicros: 2000000, ObservedAt: now.Add(-time.Hour)},
+		},
+		costs: []*SupplierRateCost{
+			{SupplierID: 10, Model: "gpt-derived-cache", Currency: "USD", PriceMicros: 1200000, CapturedAt: now},
+		},
+		derived: &UsageDerivedSnapshots{
+			Cache: []*adminplusdomain.CacheEfficiencySnapshot{
+				{
+					ID:                   -1,
+					SupplyType:           "own_pool",
+					Model:                "gpt-derived-cache",
+					RoutingStrategy:      "round_robin",
+					StickyScope:          "none",
+					CacheHitRatio:        0.08,
+					EstimatedWasteCents:  25,
+					Status:               "bad",
+					ObservedAt:           now,
+					DuplicateInputTokens: 9000,
+					RawPayload:           map[string]any{"derived": true, "source": "usage_logs"},
+				},
+			},
+		},
+	}
+	svc := NewService(repo)
+	svc.now = func() time.Time { return now }
+
+	overview, err := svc.Overview(context.Background(), OverviewFilter{TargetMarginPercent: 25, RiskBufferPercent: 8})
+	if err != nil {
+		t.Fatalf("Overview() error = %v", err)
+	}
+	if overview.CacheSnapshotCount != 1 {
+		t.Fatalf("CacheSnapshotCount = %d, want 1 derived snapshot", overview.CacheSnapshotCount)
+	}
+	if overview.RiskyCacheModelCount != 1 {
+		t.Fatalf("RiskyCacheModelCount = %d, want 1", overview.RiskyCacheModelCount)
+	}
+	row := overview.ModelMargins[0]
+	if row.RiskLevel != "high" {
+		t.Fatalf("RiskLevel = %q, want high", row.RiskLevel)
+	}
+	if row.CacheHitRatio == nil || *row.CacheHitRatio != 0.08 {
+		t.Fatalf("CacheHitRatio = %v, want 0.08", row.CacheHitRatio)
+	}
+	if len(overview.RecentCacheSnapshots) != 1 || overview.RecentCacheSnapshots[0].ID != -1 {
+		t.Fatalf("RecentCacheSnapshots = %#v, want derived cache snapshot", overview.RecentCacheSnapshots)
+	}
+}
+
+func TestGenerateAcceptanceReportUsesUsageDerivedEvidence(t *testing.T) {
+	now := time.Date(2026, 7, 4, 2, 15, 0, 0, time.UTC)
+	repo := &fakeRepository{
+		derived: &UsageDerivedSnapshots{
+			Cache: []*adminplusdomain.CacheEfficiencySnapshot{
+				{
+					ID:                    -1,
+					SupplyType:            "supplier",
+					SupplierID:            7,
+					LocalSub2APIAccountID: 19,
+					Model:                 "gpt-derived-acceptance",
+					CacheHitRatio:         0.1,
+					Status:                "bad",
+					ObservedAt:            now,
+					RawPayload:            map[string]any{"derived": true, "source": "usage_logs"},
+				},
+			},
+			Quality: []*adminplusdomain.SupplyQualitySnapshot{
+				{
+					ID:                    -100001,
+					SupplyType:            "supplier",
+					SupplierID:            7,
+					LocalSub2APIAccountID: 19,
+					Model:                 "gpt-derived-acceptance",
+					AvailabilityRatio:     0.76,
+					ErrorRatio:            0.24,
+					CacheHitRatio:         0.1,
+					PurityScore:           90,
+					UsageTrustScore:       76,
+					BalanceRiskScore:      15,
+					ConcurrencyScore:      80,
+					QualityScore:          60,
+					Decision:              "paused",
+					ObservedAt:            now,
+					RawPayload:            map[string]any{"derived": true, "source": "usage_logs", "error_count": int64(24)},
+				},
+			},
+		},
+	}
+	svc := NewService(repo)
+	svc.now = func() time.Time { return now }
+
+	report, err := svc.GenerateAcceptanceReport(context.Background(), AcceptanceReportGenerateInput{
+		SupplyType:            "supplier",
+		SupplierID:            7,
+		LocalSub2APIAccountID: 19,
+		Model:                 "gpt-derived-acceptance",
+	})
+	if err != nil {
+		t.Fatalf("GenerateAcceptanceReport() error = %v", err)
+	}
+	if report.Status != "blocked" {
+		t.Fatalf("Status = %q, want blocked", report.Status)
+	}
+	if report.ConnectivityStatus != "fail" || report.CacheAuditStatus != "fail" {
+		t.Fatalf("report statuses = %#v, want usage-derived connectivity/cache failures", report)
+	}
+	if report.ReportPayload["quality_snapshot_id"] != int64(-100001) || report.ReportPayload["cache_snapshot_id"] != int64(-1) {
+		t.Fatalf("payload = %#v, want usage-derived snapshot ids", report.ReportPayload)
+	}
+	if len(repo.events) != 1 || repo.events[0].EventType != "acceptance_risk" {
+		t.Fatalf("events = %#v, want acceptance_risk from derived evidence", repo.events)
+	}
+}
+
 func TestRecordCacheEfficiencyCreatesRiskEvent(t *testing.T) {
 	now := time.Date(2026, 7, 4, 3, 0, 0, 0, time.UTC)
 	repo := &fakeRepository{}
@@ -97,6 +214,80 @@ func TestRecordCacheEfficiencyCreatesRiskEvent(t *testing.T) {
 	}
 	if event.RelatedSnapshotID != snapshot.ID {
 		t.Fatalf("RelatedSnapshotID = %d, want %d", event.RelatedSnapshotID, snapshot.ID)
+	}
+}
+
+func TestListCacheEfficiencyEmptySupplyTypeDoesNotFilterToSupplier(t *testing.T) {
+	now := time.Date(2026, 7, 4, 3, 30, 0, 0, time.UTC)
+	repo := &fakeRepository{
+		cache: []*adminplusdomain.CacheEfficiencySnapshot{
+			{ID: 1, SupplyType: "supplier", Model: "gpt-cache-list", CacheHitRatio: 0.8, Status: "healthy", ObservedAt: now},
+			{ID: 2, SupplyType: "own_pool", Model: "gpt-cache-list", CacheHitRatio: 0.2, Status: "bad", ObservedAt: now.Add(time.Minute)},
+		},
+	}
+	svc := NewService(repo)
+	svc.now = func() time.Time { return now }
+
+	items, err := svc.ListCacheEfficiency(context.Background(), CacheEfficiencyFilter{Model: "gpt-cache-list"})
+	if err != nil {
+		t.Fatalf("ListCacheEfficiency() error = %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items len = %d, want supplier and own_pool", len(items))
+	}
+	if items[0].SupplyType != "own_pool" || items[1].SupplyType != "supplier" {
+		t.Fatalf("items order/types = %#v, want all supply types sorted by observed_at", items)
+	}
+}
+
+func TestListSupplyQualityEmptySupplyTypeDoesNotFilterToSupplier(t *testing.T) {
+	now := time.Date(2026, 7, 4, 3, 45, 0, 0, time.UTC)
+	repo := &fakeRepository{
+		quality: []*adminplusdomain.SupplyQualitySnapshot{
+			{ID: 1, SupplyType: "supplier", Model: "gpt-quality-list", AvailabilityRatio: 0.99, QualityScore: 90, Decision: "production", ObservedAt: now},
+			{ID: 2, SupplyType: "own_pool", Model: "gpt-quality-list", AvailabilityRatio: 0.8, QualityScore: 60, Decision: "paused", ObservedAt: now.Add(time.Minute)},
+		},
+	}
+	svc := NewService(repo)
+	svc.now = func() time.Time { return now }
+
+	items, err := svc.ListSupplyQuality(context.Background(), SupplyQualityFilter{Model: "gpt-quality-list"})
+	if err != nil {
+		t.Fatalf("ListSupplyQuality() error = %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items len = %d, want supplier and own_pool", len(items))
+	}
+	if items[0].SupplyType != "own_pool" || items[1].SupplyType != "supplier" {
+		t.Fatalf("items order/types = %#v, want all supply types sorted by observed_at", items)
+	}
+}
+
+func TestUsageDerivedQualityFromErrorOnlyRow(t *testing.T) {
+	now := time.Date(2026, 7, 4, 3, 50, 0, 0, time.UTC)
+	row := usageDerivedRow{
+		supplyType:   "supplier",
+		supplierID:   7,
+		accountID:    19,
+		model:        "gpt-error-only",
+		accountCount: 1,
+		observedAt:   now,
+		errorCount:   3,
+	}
+
+	snapshot := qualitySnapshotFromUsageDerivedRow(row, -100001)
+
+	if snapshot.AvailabilityRatio != 0 {
+		t.Fatalf("AvailabilityRatio = %v, want 0 for error-only evidence", snapshot.AvailabilityRatio)
+	}
+	if snapshot.ErrorRatio != 1 {
+		t.Fatalf("ErrorRatio = %v, want 1 for error-only evidence", snapshot.ErrorRatio)
+	}
+	if snapshot.Decision != "paused" {
+		t.Fatalf("Decision = %q, want paused", snapshot.Decision)
+	}
+	if snapshot.RawPayload["derived"] != true || snapshot.RawPayload["error_count"] != int64(3) {
+		t.Fatalf("RawPayload = %#v, want derived error evidence", snapshot.RawPayload)
 	}
 }
 
@@ -633,6 +824,7 @@ type fakeRepository struct {
 	acceptance []*adminplusdomain.AcceptanceReport
 	costs      []*SupplierRateCost
 	events     []*adminplusdomain.KanbanEvent
+	derived    *UsageDerivedSnapshots
 }
 
 type fakeSiteCatalogReader struct {
@@ -686,7 +878,7 @@ func (r *fakeRepository) CreateMarketPriceSnapshot(_ context.Context, snapshot *
 }
 
 func (r *fakeRepository) ListMarketPriceSnapshots(_ context.Context, filter MarketPriceFilter) ([]*adminplusdomain.MarketPriceSnapshot, error) {
-	return filterMarketSnapshots(r.market, filter.Model), nil
+	return filterMarketSnapshots(r.market, filter), nil
 }
 
 func (r *fakeRepository) CreateCacheEfficiencySnapshot(_ context.Context, snapshot *adminplusdomain.CacheEfficiencySnapshot) (*adminplusdomain.CacheEfficiencySnapshot, error) {
@@ -698,7 +890,7 @@ func (r *fakeRepository) CreateCacheEfficiencySnapshot(_ context.Context, snapsh
 }
 
 func (r *fakeRepository) ListCacheEfficiencySnapshots(_ context.Context, filter CacheEfficiencyFilter) ([]*adminplusdomain.CacheEfficiencySnapshot, error) {
-	return filterCacheSnapshots(r.cache, filter.Model), nil
+	return filterCacheSnapshots(r.cache, filter), nil
 }
 
 func (r *fakeRepository) CreateSupplyQualitySnapshot(_ context.Context, snapshot *adminplusdomain.SupplyQualitySnapshot) (*adminplusdomain.SupplyQualitySnapshot, error) {
@@ -710,7 +902,7 @@ func (r *fakeRepository) CreateSupplyQualitySnapshot(_ context.Context, snapshot
 }
 
 func (r *fakeRepository) ListSupplyQualitySnapshots(_ context.Context, filter SupplyQualityFilter) ([]*adminplusdomain.SupplyQualitySnapshot, error) {
-	return filterQualitySnapshots(r.quality, filter.Model), nil
+	return filterQualitySnapshots(r.quality, filter), nil
 }
 
 func (r *fakeRepository) CreateAcceptanceReport(_ context.Context, report *adminplusdomain.AcceptanceReport) (*adminplusdomain.AcceptanceReport, error) {
@@ -776,32 +968,124 @@ func (r *fakeRepository) ListSupplierRateCosts(_ context.Context, model string, 
 	return out, nil
 }
 
-func filterMarketSnapshots(items []*adminplusdomain.MarketPriceSnapshot, model string) []*adminplusdomain.MarketPriceSnapshot {
+func (r *fakeRepository) ListUsageDerivedSnapshots(_ context.Context, filter UsageDerivedFilter) (*UsageDerivedSnapshots, error) {
+	if r.derived == nil {
+		return &UsageDerivedSnapshots{}, nil
+	}
+	out := &UsageDerivedSnapshots{
+		Cache:   make([]*adminplusdomain.CacheEfficiencySnapshot, 0, len(r.derived.Cache)),
+		Quality: make([]*adminplusdomain.SupplyQualitySnapshot, 0, len(r.derived.Quality)),
+	}
+	for _, item := range r.derived.Cache {
+		if item == nil {
+			continue
+		}
+		if filter.Model != "" && item.Model != filter.Model {
+			continue
+		}
+		if filter.SupplyType != "" && item.SupplyType != filter.SupplyType {
+			continue
+		}
+		if filter.SupplierID > 0 && item.SupplierID != filter.SupplierID {
+			continue
+		}
+		if filter.LocalSub2APIAccountID > 0 && item.LocalSub2APIAccountID != filter.LocalSub2APIAccountID {
+			continue
+		}
+		out.Cache = append(out.Cache, item)
+	}
+	for _, item := range r.derived.Quality {
+		if item == nil {
+			continue
+		}
+		if filter.Model != "" && item.Model != filter.Model {
+			continue
+		}
+		if filter.SupplyType != "" && item.SupplyType != filter.SupplyType {
+			continue
+		}
+		if filter.SupplierID > 0 && item.SupplierID != filter.SupplierID {
+			continue
+		}
+		if filter.LocalSub2APIAccountID > 0 && item.LocalSub2APIAccountID != filter.LocalSub2APIAccountID {
+			continue
+		}
+		out.Quality = append(out.Quality, item)
+	}
+	return out, nil
+}
+
+func filterMarketSnapshots(items []*adminplusdomain.MarketPriceSnapshot, filter MarketPriceFilter) []*adminplusdomain.MarketPriceSnapshot {
 	out := make([]*adminplusdomain.MarketPriceSnapshot, 0, len(items))
 	for _, item := range items {
-		if item != nil && (model == "" || item.Model == model) {
-			out = append(out, item)
+		if item == nil {
+			continue
 		}
+		if filter.Model != "" && item.Model != filter.Model {
+			continue
+		}
+		if filter.SourceType != "" && item.SourceType != filter.SourceType {
+			continue
+		}
+		if filter.SiteID > 0 && item.SiteID != filter.SiteID {
+			continue
+		}
+		if filter.SupplierID > 0 && item.SupplierID != filter.SupplierID {
+			continue
+		}
+		out = append(out, item)
 	}
 	return out
 }
 
-func filterCacheSnapshots(items []*adminplusdomain.CacheEfficiencySnapshot, model string) []*adminplusdomain.CacheEfficiencySnapshot {
+func filterCacheSnapshots(items []*adminplusdomain.CacheEfficiencySnapshot, filter CacheEfficiencyFilter) []*adminplusdomain.CacheEfficiencySnapshot {
 	out := make([]*adminplusdomain.CacheEfficiencySnapshot, 0, len(items))
 	for _, item := range items {
-		if item != nil && (model == "" || item.Model == model) {
-			out = append(out, item)
+		if item == nil {
+			continue
 		}
+		if filter.Model != "" && item.Model != filter.Model {
+			continue
+		}
+		if filter.SupplyType != "" && item.SupplyType != filter.SupplyType {
+			continue
+		}
+		if filter.SupplierID > 0 && item.SupplierID != filter.SupplierID {
+			continue
+		}
+		if filter.LocalSub2APIAccountID > 0 && item.LocalSub2APIAccountID != filter.LocalSub2APIAccountID {
+			continue
+		}
+		if filter.Status != "" && item.Status != filter.Status {
+			continue
+		}
+		out = append(out, item)
 	}
 	return out
 }
 
-func filterQualitySnapshots(items []*adminplusdomain.SupplyQualitySnapshot, model string) []*adminplusdomain.SupplyQualitySnapshot {
+func filterQualitySnapshots(items []*adminplusdomain.SupplyQualitySnapshot, filter SupplyQualityFilter) []*adminplusdomain.SupplyQualitySnapshot {
 	out := make([]*adminplusdomain.SupplyQualitySnapshot, 0, len(items))
 	for _, item := range items {
-		if item != nil && (model == "" || item.Model == model) {
-			out = append(out, item)
+		if item == nil {
+			continue
 		}
+		if filter.Model != "" && item.Model != filter.Model {
+			continue
+		}
+		if filter.SupplyType != "" && item.SupplyType != filter.SupplyType {
+			continue
+		}
+		if filter.SupplierID > 0 && item.SupplierID != filter.SupplierID {
+			continue
+		}
+		if filter.LocalSub2APIAccountID > 0 && item.LocalSub2APIAccountID != filter.LocalSub2APIAccountID {
+			continue
+		}
+		if filter.Decision != "" && item.Decision != filter.Decision {
+			continue
+		}
+		out = append(out, item)
 	}
 	return out
 }

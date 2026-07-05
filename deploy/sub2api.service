@@ -22,10 +22,12 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/opt/sub2api-admin-plus
+ReadWritePaths=/etc/sub2api-admin-plus
 
 # Environment - Server configuration
 # Modify these values to change listen address and port
 Environment=GIN_MODE=release
+Environment=DATA_DIR=/etc/sub2api-admin-plus
 Environment=SERVER_HOST=0.0.0.0
 Environment=SERVER_PORT=8080
 Environment=ADMIN_PLUS_PROXY_MIHOMO_BINARY_PATH=/opt/sub2api-admin-plus/bin/mihomo

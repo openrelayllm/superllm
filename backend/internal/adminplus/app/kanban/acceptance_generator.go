@@ -82,7 +82,7 @@ func (s *Service) GenerateAcceptanceReport(ctx context.Context, in AcceptanceRep
 }
 
 func (s *Service) latestSupplyQuality(ctx context.Context, model string, supplyType string, supplierID int64, accountID int64) (*adminplusdomain.SupplyQualitySnapshot, error) {
-	items, err := s.repo.ListSupplyQualitySnapshots(ctx, SupplyQualityFilter{Model: model, SupplyType: supplyType, SupplierID: supplierID, LocalSub2APIAccountID: accountID, Limit: 20})
+	items, err := s.ListSupplyQuality(ctx, SupplyQualityFilter{Model: model, SupplyType: supplyType, SupplierID: supplierID, LocalSub2APIAccountID: accountID, Limit: 20})
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func (s *Service) latestSupplyQuality(ctx context.Context, model string, supplyT
 }
 
 func (s *Service) latestCacheEfficiency(ctx context.Context, model string, supplyType string, supplierID int64, accountID int64) (*adminplusdomain.CacheEfficiencySnapshot, error) {
-	items, err := s.repo.ListCacheEfficiencySnapshots(ctx, CacheEfficiencyFilter{Model: model, SupplyType: supplyType, SupplierID: supplierID, LocalSub2APIAccountID: accountID, Limit: 20})
+	items, err := s.ListCacheEfficiency(ctx, CacheEfficiencyFilter{Model: model, SupplyType: supplyType, SupplierID: supplierID, LocalSub2APIAccountID: accountID, Limit: 20})
 	if err != nil {
 		return nil, err
 	}

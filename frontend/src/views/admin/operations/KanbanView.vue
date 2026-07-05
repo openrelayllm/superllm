@@ -266,8 +266,8 @@
 
         <div v-if="currentSection === 'supply-quality'" class="card overflow-hidden">
           <div class="border-b border-gray-100 px-5 py-4 dark:border-dark-700">
-            <h2 class="text-base font-semibold text-gray-900 dark:text-white">记录缓存效率</h2>
-            <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">用命中率、重复输入和浪费成本衡量自有号池、第三方供应商或竞品。</p>
+            <h2 class="text-base font-semibold text-gray-900 dark:text-white">补录缓存效率</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">自有号池和第三方供应商会自动从近 7 天 usage 日志派生；这里用于竞品、自定义或历史证据补录。</p>
           </div>
           <form class="space-y-4 p-5" @submit.prevent="submitCacheEfficiency">
             <div class="grid gap-4 sm:grid-cols-2">
@@ -383,8 +383,8 @@
 
         <div v-if="currentSection === 'supply-quality'" class="card overflow-hidden">
           <div class="border-b border-gray-100 px-5 py-4 dark:border-dark-700">
-            <h2 class="text-base font-semibold text-gray-900 dark:text-white">记录供应质量</h2>
-            <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">把可用率、错误率、纯度、账单可信度和缓存效率归一为生产决策。</p>
+            <h2 class="text-base font-semibold text-gray-900 dark:text-white">补录供应质量</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">成功请求、错误日志、模型纯度、余额和并发会自动归一为质量证据；这里用于外部或历史证据补录。</p>
           </div>
           <form class="space-y-4 p-5" @submit.prevent="submitSupplyQuality">
             <div class="grid gap-4 sm:grid-cols-2">
@@ -902,7 +902,7 @@ const pageTitle = computed(() => {
 const pageDescription = computed(() => {
   return {
     'market-prices': '采集、解析和查看同行公开售价、套餐、倍率和促销。',
-    'supply-quality': '记录自有号池和第三方供应商的缓存效率、质量评分和生产决策。',
+    'supply-quality': '用真实 usage 和错误日志派生自有号池、第三方供应商的缓存效率、质量评分和生产决策。',
     profit: '按模型汇总市场价、真实成本、缓存惩罚、建议售价和风险等级。',
     acceptance: '对新供应商或自有号池账号执行接入前检查并生成验收报告。',
     events: '处理市场降价、异常低价、缓存风险、质量风险和验收风险事件。',
@@ -1619,6 +1619,25 @@ function supplyTypeLabel(value?: string): string {
   }[value || ''] || value || '-'
 }
 
+function snapshotSourceLabel(item: { raw_payload?: Record<string, unknown> }): string {
+  const payload = item.raw_payload || {}
+  const source = typeof payload.source === 'string' ? payload.source : ''
+  const errorCount = Number(payload.error_count || 0)
+  if (payload.derived === true) {
+    if (source === 'usage_logs' && errorCount > 0) return '自动派生 · usage/错误日志'
+    if (source === 'usage_logs') return '自动派生 · usage 日志'
+    return source ? `自动派生 · ${source}` : '自动派生'
+  }
+  return source ? source : '手工/任务快照'
+}
+
+function snapshotTargetLabel(item: { supplier_id?: number; local_sub2api_account_id?: number }): string {
+  const parts: string[] = []
+  if (item.supplier_id) parts.push(`供应商 ${item.supplier_id}`)
+  if (item.local_sub2api_account_id) parts.push(`账号 ${item.local_sub2api_account_id}`)
+  return parts.join(' · ')
+}
+
 function routingStrategyLabel(value?: string): string {
   return {
     fixed_account: '固定账号',
@@ -1722,20 +1741,29 @@ const CacheSnapshotTable = defineComponent({
       h('tbody', { class: 'divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900' }, [
         ...(props.items as CacheEfficiencySnapshot[]).length === 0
           ? [h('tr', [h('td', { class: 'px-4 py-8 text-center text-sm text-gray-500 dark:text-dark-400', colspan: 6 }, '暂无缓存审计快照')])]
-          : (props.items as CacheEfficiencySnapshot[]).map((item) => h('tr', { key: item.id }, [
-            h('td', { class: 'px-4 py-4 text-sm text-gray-900 dark:text-gray-100' }, supplyTypeLabel(item.supply_type)),
-            h('td', { class: 'px-4 py-4 text-sm text-gray-900 dark:text-gray-100' }, item.model),
-            h('td', { class: 'px-4 py-4 text-sm text-gray-900 dark:text-gray-100' }, [
-              h('div', routingStrategyLabel(item.routing_strategy)),
-              h('div', { class: 'mt-1 text-xs text-gray-500 dark:text-dark-400' }, `sticky: ${item.sticky_scope || 'none'}`)
-            ]),
-            h('td', { class: 'px-4 py-4 text-right text-sm font-medium text-gray-900 dark:text-gray-100' }, formatPercentFraction(item.cache_hit_ratio)),
-            h('td', { class: 'px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100' }, formatMoneyCents(item.estimated_waste_cents)),
-            h('td', { class: 'px-4 py-4 text-sm' }, [
-              h('span', { class: ['badge', cacheStatusClass(item.status)] }, cacheStatusLabel(item.status)),
-              h('div', { class: 'mt-1 text-xs text-gray-500 dark:text-dark-400' }, formatDateTime(item.observed_at))
+          : (props.items as CacheEfficiencySnapshot[]).map((item) => {
+            const target = snapshotTargetLabel(item)
+            return h('tr', { key: item.id }, [
+              h('td', { class: 'px-4 py-4 text-sm text-gray-900 dark:text-gray-100' }, [
+                h('div', supplyTypeLabel(item.supply_type)),
+                h('div', { class: 'mt-1 text-xs text-gray-500 dark:text-dark-400' }, snapshotSourceLabel(item)),
+                target
+                  ? h('div', { class: 'mt-1 text-xs text-gray-500 dark:text-dark-400' }, target)
+                  : null
+              ]),
+              h('td', { class: 'px-4 py-4 text-sm text-gray-900 dark:text-gray-100' }, item.model),
+              h('td', { class: 'px-4 py-4 text-sm text-gray-900 dark:text-gray-100' }, [
+                h('div', routingStrategyLabel(item.routing_strategy)),
+                h('div', { class: 'mt-1 text-xs text-gray-500 dark:text-dark-400' }, `sticky: ${item.sticky_scope || 'none'}`)
+              ]),
+              h('td', { class: 'px-4 py-4 text-right text-sm font-medium text-gray-900 dark:text-gray-100' }, formatPercentFraction(item.cache_hit_ratio)),
+              h('td', { class: 'px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100' }, formatMoneyCents(item.estimated_waste_cents)),
+              h('td', { class: 'px-4 py-4 text-sm' }, [
+                h('span', { class: ['badge', cacheStatusClass(item.status)] }, cacheStatusLabel(item.status)),
+                h('div', { class: 'mt-1 text-xs text-gray-500 dark:text-dark-400' }, formatDateTime(item.observed_at))
+              ])
             ])
-          ]))
+          })
       ])
     ])
   }
@@ -1759,15 +1787,24 @@ const QualitySnapshotTable = defineComponent({
       h('tbody', { class: 'divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900' }, [
         ...(props.items as SupplyQualitySnapshot[]).length === 0
           ? [h('tr', [h('td', { class: 'px-4 py-8 text-center text-sm text-gray-500 dark:text-dark-400', colspan: 4 }, '暂无供应质量快照')])]
-          : (props.items as SupplyQualitySnapshot[]).map((item) => h('tr', { key: item.id }, [
-            h('td', { class: 'px-4 py-4 text-sm text-gray-900 dark:text-gray-100' }, supplyTypeLabel(item.supply_type)),
-            h('td', { class: 'px-4 py-4 text-sm text-gray-900 dark:text-gray-100' }, item.model || '-'),
-            h('td', { class: 'px-4 py-4 text-right text-sm font-medium text-gray-900 dark:text-gray-100' }, formatScore(item.quality_score)),
-            h('td', { class: 'px-4 py-4 text-sm' }, [
-              h('span', { class: ['badge', qualityDecisionClass(item.decision)] }, qualityDecisionLabel(item.decision)),
-              h('div', { class: 'mt-1 text-xs text-gray-500 dark:text-dark-400' }, `${formatPercentFraction(item.availability_ratio)} 可用 · ${formatDateTime(item.observed_at)}`)
+          : (props.items as SupplyQualitySnapshot[]).map((item) => {
+            const target = snapshotTargetLabel(item)
+            return h('tr', { key: item.id }, [
+              h('td', { class: 'px-4 py-4 text-sm text-gray-900 dark:text-gray-100' }, [
+                h('div', supplyTypeLabel(item.supply_type)),
+                h('div', { class: 'mt-1 text-xs text-gray-500 dark:text-dark-400' }, snapshotSourceLabel(item)),
+                target
+                  ? h('div', { class: 'mt-1 text-xs text-gray-500 dark:text-dark-400' }, target)
+                  : null
+              ]),
+              h('td', { class: 'px-4 py-4 text-sm text-gray-900 dark:text-gray-100' }, item.model || '-'),
+              h('td', { class: 'px-4 py-4 text-right text-sm font-medium text-gray-900 dark:text-gray-100' }, formatScore(item.quality_score)),
+              h('td', { class: 'px-4 py-4 text-sm' }, [
+                h('span', { class: ['badge', qualityDecisionClass(item.decision)] }, qualityDecisionLabel(item.decision)),
+                h('div', { class: 'mt-1 text-xs text-gray-500 dark:text-dark-400' }, `${formatPercentFraction(item.availability_ratio)} 可用 · ${formatDateTime(item.observed_at)}`)
+              ])
             ])
-          ]))
+          })
       ])
     ])
   }

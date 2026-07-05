@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Optional build version override, for example 0.37.0'
+        description: 'Optional build version override, for example 0.38.0'
         required: false
         type: string
 

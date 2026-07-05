@@ -20,6 +20,7 @@ const (
 	defaultCacheRiskHitRatio    = 0.25
 	defaultWatchingHitRatio     = 0.45
 	defaultSuggestedPriceMicros = int64(0)
+	defaultUsageDerivedWindow   = 7 * 24 * time.Hour
 )
 
 type MarketPriceInput struct {
@@ -159,6 +160,21 @@ type OverviewFilter struct {
 	Limit               int
 }
 
+type UsageDerivedFilter struct {
+	Model                 string
+	SupplyType            string
+	SupplierID            int64
+	LocalSub2APIAccountID int64
+	Since                 time.Time
+	Until                 time.Time
+	Limit                 int
+}
+
+type UsageDerivedSnapshots struct {
+	Cache   []*adminplusdomain.CacheEfficiencySnapshot
+	Quality []*adminplusdomain.SupplyQualitySnapshot
+}
+
 type Repository interface {
 	CreateMarketPriceSnapshot(ctx context.Context, snapshot *adminplusdomain.MarketPriceSnapshot) (*adminplusdomain.MarketPriceSnapshot, error)
 	ListMarketPriceSnapshots(ctx context.Context, filter MarketPriceFilter) ([]*adminplusdomain.MarketPriceSnapshot, error)
@@ -172,6 +188,7 @@ type Repository interface {
 	ListKanbanEvents(ctx context.Context, filter KanbanEventFilter) ([]*adminplusdomain.KanbanEvent, error)
 	UpdateKanbanEventStatus(ctx context.Context, id int64, status string) (*adminplusdomain.KanbanEvent, error)
 	ListSupplierRateCosts(ctx context.Context, model string, limit int) ([]*SupplierRateCost, error)
+	ListUsageDerivedSnapshots(ctx context.Context, filter UsageDerivedFilter) (*UsageDerivedSnapshots, error)
 }
 
 type SupplierRateCost struct {
@@ -238,7 +255,7 @@ func (s *Service) ListMarketPrices(ctx context.Context, filter MarketPriceFilter
 		return nil, internalError("kanban service is not configured")
 	}
 	filter.Model = strings.TrimSpace(filter.Model)
-	filter.SourceType = normalizeSourceType(filter.SourceType)
+	filter.SourceType = normalizeSourceTypeFilter(filter.SourceType)
 	filter.Limit = normalizeLimit(filter.Limit)
 	return s.repo.ListMarketPriceSnapshots(ctx, filter)
 }
@@ -264,10 +281,30 @@ func (s *Service) ListCacheEfficiency(ctx context.Context, filter CacheEfficienc
 		return nil, internalError("kanban service is not configured")
 	}
 	filter.Model = strings.TrimSpace(filter.Model)
-	filter.SupplyType = normalizeSupplyType(filter.SupplyType)
+	filter.SupplyType = normalizeSupplyTypeFilter(filter.SupplyType)
 	filter.Status = normalizeCacheStatus(filter.Status)
 	filter.Limit = normalizeLimit(filter.Limit)
-	return s.repo.ListCacheEfficiencySnapshots(ctx, filter)
+	items, err := s.repo.ListCacheEfficiencySnapshots(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	derived, err := s.usageDerivedSnapshots(ctx, usageDerivedFilterFromCache(filter))
+	if err != nil {
+		return nil, err
+	}
+	if derived != nil {
+		for _, item := range derived.Cache {
+			if item == nil {
+				continue
+			}
+			if filter.Status != "" && item.Status != filter.Status {
+				continue
+			}
+			items = append(items, item)
+		}
+	}
+	sortCacheSnapshots(items)
+	return firstCacheSnapshots(items, filter.Limit), nil
 }
 
 func (s *Service) RecordSupplyQuality(ctx context.Context, in SupplyQualityInput) (*adminplusdomain.SupplyQualitySnapshot, error) {
@@ -291,10 +328,30 @@ func (s *Service) ListSupplyQuality(ctx context.Context, filter SupplyQualityFil
 		return nil, internalError("kanban service is not configured")
 	}
 	filter.Model = strings.TrimSpace(filter.Model)
-	filter.SupplyType = normalizeSupplyType(filter.SupplyType)
+	filter.SupplyType = normalizeSupplyTypeFilter(filter.SupplyType)
 	filter.Decision = normalizeQualityDecision(filter.Decision)
 	filter.Limit = normalizeLimit(filter.Limit)
-	return s.repo.ListSupplyQualitySnapshots(ctx, filter)
+	items, err := s.repo.ListSupplyQualitySnapshots(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	derived, err := s.usageDerivedSnapshots(ctx, usageDerivedFilterFromQuality(filter))
+	if err != nil {
+		return nil, err
+	}
+	if derived != nil {
+		for _, item := range derived.Quality {
+			if item == nil {
+				continue
+			}
+			if filter.Decision != "" && item.Decision != filter.Decision {
+				continue
+			}
+			items = append(items, item)
+		}
+	}
+	sortQualitySnapshots(items)
+	return firstQualitySnapshots(items, filter.Limit), nil
 }
 
 func (s *Service) RecordAcceptanceReport(ctx context.Context, in AcceptanceReportInput) (*adminplusdomain.AcceptanceReport, error) {
@@ -318,7 +375,7 @@ func (s *Service) ListAcceptanceReports(ctx context.Context, filter AcceptanceRe
 		return nil, internalError("kanban service is not configured")
 	}
 	filter.Model = strings.TrimSpace(filter.Model)
-	filter.SupplyType = normalizeSupplyType(filter.SupplyType)
+	filter.SupplyType = normalizeSupplyTypeFilter(filter.SupplyType)
 	filter.Status = normalizeQualityDecision(filter.Status)
 	filter.Limit = normalizeLimit(filter.Limit)
 	return s.repo.ListAcceptanceReports(ctx, filter)
@@ -362,11 +419,11 @@ func (s *Service) Overview(ctx context.Context, filter OverviewFilter) (*adminpl
 	if err != nil {
 		return nil, err
 	}
-	cache, err := s.repo.ListCacheEfficiencySnapshots(ctx, CacheEfficiencyFilter{Model: strings.TrimSpace(filter.Model), Limit: limit})
+	cache, err := s.ListCacheEfficiency(ctx, CacheEfficiencyFilter{Model: strings.TrimSpace(filter.Model), Limit: limit})
 	if err != nil {
 		return nil, err
 	}
-	quality, err := s.repo.ListSupplyQualitySnapshots(ctx, SupplyQualityFilter{Model: strings.TrimSpace(filter.Model), Limit: limit})
+	quality, err := s.ListSupplyQuality(ctx, SupplyQualityFilter{Model: strings.TrimSpace(filter.Model), Limit: limit})
 	if err != nil {
 		return nil, err
 	}
@@ -983,12 +1040,38 @@ func normalizeSourceType(value string) string {
 	}
 }
 
+func normalizeSourceTypeFilter(value string) string {
+	v := strings.ToLower(strings.TrimSpace(value))
+	if v == "" {
+		return ""
+	}
+	switch v {
+	case "manual", "site_catalog", "site_discovery", "provider_page", "api":
+		return v
+	default:
+		return ""
+	}
+}
+
 func normalizeSupplyType(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "own_pool", "competitor", "custom":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return "supplier"
+	}
+}
+
+func normalizeSupplyTypeFilter(value string) string {
+	v := strings.ToLower(strings.TrimSpace(value))
+	if v == "" {
+		return ""
+	}
+	switch v {
+	case "supplier", "own_pool", "competitor", "custom":
+		return v
+	default:
+		return ""
 	}
 }
 
