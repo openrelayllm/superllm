@@ -12,15 +12,20 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
+var newAPIUserIDHeaderNames = []string{
+	"New-Api-User",
+	"New-API-User",
+	"Veloera-User",
+	"voapi-user",
+	"User-id",
+	"X-User-Id",
+	"Rix-Api-User",
+	"neo-api-user",
+}
+
 func buildSessionBundle(supplierID int64, origin string, apiBaseURL string, userID int64, loginData map[string]any, cookies []any, capturedAt time.Time, expiresAt *time.Time) map[string]any {
 	userIDText := strconv.FormatInt(userID, 10)
-	requiredHeaders := map[string]any{
-		"New-Api-User": userIDText,
-	}
-	if origin != "" {
-		requiredHeaders["origin"] = origin
-		requiredHeaders["referer"] = strings.TrimRight(origin, "/") + "/"
-	}
+	requiredHeaders := buildNewAPIRequiredHeaders(userIDText, origin)
 	contextValue := map[string]any{
 		"api_base_url":   apiBaseURL,
 		"login_method":   "direct_login",
@@ -57,13 +62,7 @@ func buildSessionBundle(supplierID int64, origin string, apiBaseURL string, user
 func buildAccessTokenSessionBundle(supplierID int64, origin string, apiBaseURL string, userID string, accessToken string, capturedAt time.Time) map[string]any {
 	userID = strings.TrimSpace(userID)
 	accessToken = strings.TrimSpace(accessToken)
-	requiredHeaders := map[string]any{
-		"New-Api-User": userID,
-	}
-	if origin != "" {
-		requiredHeaders["origin"] = origin
-		requiredHeaders["referer"] = strings.TrimRight(origin, "/") + "/"
-	}
+	requiredHeaders := buildNewAPIRequiredHeaders(userID, origin)
 	contextValue := map[string]any{
 		"api_base_url":   apiBaseURL,
 		"login_method":   "access_token",
@@ -94,14 +93,9 @@ func buildAccessTokenSessionBundle(supplierID int64, origin string, apiBaseURL s
 func applySessionHeaders(req *http.Request, bundle map[string]any) {
 	applyBrowserCompatHeaders(req)
 	requiredHeaders := mapValue(bundle, "required_headers")
-	userID := firstNonEmpty(
-		stringValue(requiredHeaders, "New-Api-User"),
-		stringValue(requiredHeaders, "new-api-user"),
-		stringValue(bundle, "auth_header_value"),
-		stringValueAt(bundle, "context", "user_id"),
-	)
+	userID := newAPIUserIDFromSessionBundle(bundle)
 	if userID != "" {
-		req.Header.Set("New-Api-User", userID)
+		applyNewAPIUserIDHeaders(req, userID)
 	}
 	if accessToken := firstNonEmpty(stringValue(bundle, "access_token"), stringValueAt(bundle, "tokens", "access_token")); accessToken != "" {
 		req.Header.Set("Authorization", accessToken)
@@ -114,6 +108,44 @@ func applySessionHeaders(req *http.Request, bundle map[string]any) {
 	}
 	if referer := stringValue(requiredHeaders, "referer"); referer != "" {
 		req.Header.Set("Referer", referer)
+	}
+}
+
+func buildNewAPIRequiredHeaders(userID string, origin string) map[string]any {
+	requiredHeaders := map[string]any{}
+	if userID = strings.TrimSpace(userID); userID != "" {
+		for _, headerName := range newAPIUserIDHeaderNames {
+			requiredHeaders[headerName] = userID
+		}
+	}
+	if origin != "" {
+		requiredHeaders["origin"] = origin
+		requiredHeaders["referer"] = strings.TrimRight(origin, "/") + "/"
+	}
+	return requiredHeaders
+}
+
+func newAPIUserIDFromSessionBundle(bundle map[string]any) string {
+	requiredHeaders := mapValue(bundle, "required_headers")
+	values := make([]string, 0, len(newAPIUserIDHeaderNames)+3)
+	for _, headerName := range newAPIUserIDHeaderNames {
+		values = append(values, stringValue(requiredHeaders, headerName))
+	}
+	values = append(values,
+		stringValue(requiredHeaders, "new-api-user"),
+		stringValue(bundle, "auth_header_value"),
+		stringValueAt(bundle, "context", "user_id"),
+	)
+	return firstNonEmpty(values...)
+}
+
+func applyNewAPIUserIDHeaders(req *http.Request, userID string) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return
+	}
+	for _, headerName := range newAPIUserIDHeaderNames {
+		req.Header.Set(headerName, userID)
 	}
 }
 

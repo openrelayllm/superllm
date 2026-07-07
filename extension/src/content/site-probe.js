@@ -76,8 +76,9 @@
     const storageKeys = Object.keys(storage)
       .map((key) => key.includes(':') ? key.slice(key.indexOf(':') + 1) : key)
       .map((key) => key.toLowerCase())
+    const storageKeySet = new Set(storageKeys)
 
-    if (/sub2api/i.test(`${title} ${text}`)) {
+    if (/sub(?:2)?api/i.test(`${title} ${text}`)) {
       sub2apiScore += 3
       evidence.push('dom:sub2api-brand')
     }
@@ -89,17 +90,21 @@
       sub2apiScore += 1
       evidence.push('route:sub2api-like')
     }
-    if (storageKeys.includes('user') || storageKeys.includes('uid')) {
+    if (storageKeySet.has('user') || storageKeySet.has('uid')) {
       newAPIScore += 1
       evidence.push('storage:user')
     }
-    if (storageKeys.includes('quota_per_unit') || storageKeys.includes('quota_display_type') || storageKeys.includes('display_in_currency')) {
+    if (storageKeySet.has('quota_per_unit') || storageKeySet.has('quota_display_type') || storageKeySet.has('display_in_currency')) {
       newAPIScore += 2
       evidence.push('storage:new-api-quota')
     }
-    if (storageKeys.includes('auth_token') || storageKeys.includes('access_token') || storageKeys.includes('refresh_token')) {
+    if (storageKeySet.has('auth_token') || storageKeySet.has('access_token') || storageKeySet.has('refresh_token')) {
       sub2apiScore += 1
       evidence.push('storage:token')
+    }
+    if (storageKeySet.has('auth_user') && storageKeySet.has('auth_token')) {
+      sub2apiScore += 3
+      evidence.push('storage:sub2api-auth')
     }
 
     const apiEvidence = await probeKnownAPIs()
@@ -134,12 +139,12 @@
       probeJSON('/api/status')
     ])
     const result = { sub2apiScore: 0, newAPIScore: 0, evidence: [] }
-    if (sub2api.ok) {
-      result.sub2apiScore += 4
+    if (sub2api.ok && looksLikeSub2APISettings(sub2api.json)) {
+      result.sub2apiScore += 5
       result.evidence.push('api:/api/v1/settings/public')
     }
-    if (newAPI.ok) {
-      result.newAPIScore += 4
+    if (newAPI.ok && looksLikeNewAPIStatus(newAPI.json)) {
+      result.newAPIScore += 5
       result.evidence.push('api:/api/status')
     }
     return result
@@ -158,13 +163,35 @@
       if (!response.ok) return { ok: false }
       const contentType = response.headers.get('content-type') || ''
       if (!contentType.includes('json')) return { ok: false }
-      await response.clone().json().catch(() => null)
-      return { ok: true }
+      const json = await response.clone().json().catch(() => null)
+      if (!json || typeof json !== 'object') return { ok: false }
+      return { ok: true, json }
     } catch {
       return { ok: false }
     } finally {
       clearTimeout(timer)
     }
+  }
+
+  function looksLikeSub2APISettings(payload) {
+    const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload
+    return payload?.code === 0 && Boolean(
+      data?.site_name ||
+      data?.site_logo ||
+      data?.api_base_url ||
+      data?.version ||
+      Object.prototype.hasOwnProperty.call(data || {}, 'registration_enabled')
+    )
+  }
+
+  function looksLikeNewAPIStatus(payload) {
+    const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload
+    return payload?.success === true && Boolean(
+      data?.system_name ||
+      data?.quota_per_unit ||
+      data?.quota_display_type ||
+      Object.prototype.hasOwnProperty.call(data || {}, 'display_in_currency')
+    )
   }
 
   function collectLoginForm(includeSensitive) {

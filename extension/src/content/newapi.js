@@ -1,5 +1,19 @@
 (() => {
   if (window.AdminPlusNewAPI) return
+  const NEW_API_USER_HEADER_NAMES = [
+    'New-Api-User',
+    'New-API-User',
+    'Veloera-User',
+    'voapi-user',
+    'User-id',
+    'X-User-Id',
+    'Rix-Api-User',
+    'neo-api-user'
+  ]
+  const NEW_API_USER_HEADER_ALIASES = [
+    ...NEW_API_USER_HEADER_NAMES,
+    'new-api-user'
+  ]
 
   window.AdminPlusNewAPI = {
     enrichSessionBundle,
@@ -9,17 +23,18 @@
   async function enrichSessionBundle({ bundle, storage, supplier }) {
     const context = bundle.context || {}
     const storageUser = userObjectFromStorage(storage)
-    const userID = firstNonEmpty(
+    const userID = normalizePositiveIntegerText(firstNonEmpty(
       context.user_id,
       userIDFromStorage(storage),
+      userIDFromTokenStorage(storage),
       storageUser?.id
-    )
+    ))
     const profile = await probeProfile(storage, supplier, userID)
     const providerType = inferProviderType(supplier, profile, storageUser, storage)
     if (providerType !== 'new_api') return bundle
 
     const profileUser = profile || storageUser || {}
-    const profileUserID = firstNonEmpty(profileUser?.id, userID)
+    const profileUserID = normalizePositiveIntegerText(firstNonEmpty(profileUser?.id, userID))
     bundle.provider_type = 'new_api'
     bundle.system_type = 'new_api'
     bundle.auth_header_name = 'New-Api-User'
@@ -43,7 +58,7 @@
     headers.origin = headers.origin || location.origin
     headers.referer = headers.referer || location.href
     if (profileUserID) {
-      headers['New-Api-User'] = profileUserID
+      applyNewAPIUserHeaders(headers, profileUserID)
     }
     bundle.required_headers = headers
     return bundle
@@ -54,14 +69,14 @@
       return false
     }
     return Boolean(
-      bundle?.required_headers?.['New-Api-User'] ||
-      bundle?.required_headers?.['New-API-User'] ||
+      newAPIUserHeader(bundle) ||
       bundle?.context?.user_id ||
       bundle?.auth_header_value
     )
   }
 
   async function probeProfile(storage, supplier, userID) {
+    userID = normalizePositiveIntegerText(userID)
     const providerType = normalizeProviderType(supplier?.type || supplier?.supplier_type || supplier?.provider_type)
     if (!userID || (providerType !== 'new_api' && !hasStorageMarkers(storage))) {
       return null
@@ -76,7 +91,7 @@
         headers: {
           'Accept': 'application/json',
           'Cache-Control': 'no-store',
-          'New-Api-User': String(userID)
+          ...newAPIUserHeaders(userID)
         },
         signal: controller.signal
       })
@@ -120,6 +135,43 @@
       firstStorageValue(storage, ['new_api_user', 'new-api-user', 'newApiUser'], { exact: true }),
       userObjectFromStorage(storage)?.id
     )
+  }
+
+  function userIDFromTokenStorage(storage) {
+    for (const token of [
+      firstStorageValue(storage, ['auth_token', 'authToken', 'access_token', 'accessToken', 'token', 'jwt'], { exact: true }),
+      firstStorageValue(storage, ['auth_token', 'authToken', 'access_token', 'accessToken', 'token', 'jwt'])
+    ]) {
+      const userID = userIDFromJWT(token)
+      if (userID) return userID
+    }
+    return ''
+  }
+
+  function userIDFromJWT(value) {
+    const token = String(value || '').replace(/^Bearer\s+/i, '').trim()
+    const parts = token.split('.')
+    if (parts.length !== 3) return ''
+    const payload = parseJSON(decodeBase64URL(parts[1]))
+    return normalizePositiveIntegerText(firstNonEmpty(
+      payload?.id,
+      payload?.sub,
+      payload?.user_id,
+      payload?.userId,
+      payload?.uid
+    ))
+  }
+
+  function decodeBase64URL(value) {
+    const raw = String(value || '').trim()
+    if (!raw || raw.length > 8192) return ''
+    const normalized = raw.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+    try {
+      return atob(padded)
+    } catch {
+      return ''
+    }
   }
 
   function userObjectFromStorage(storage) {
@@ -209,6 +261,34 @@
       if (parsed) return parsed
     }
     return ''
+  }
+
+  function newAPIUserHeader(bundle) {
+    const headers = bundle?.required_headers || {}
+    return firstNonEmpty(...NEW_API_USER_HEADER_ALIASES.map((headerName) => headers[headerName]))
+  }
+
+  function applyNewAPIUserHeaders(headers, userID) {
+    const value = normalizePositiveIntegerText(userID)
+    if (!headers || !value) return headers
+    for (const headerName of NEW_API_USER_HEADER_NAMES) {
+      headers[headerName] = value
+    }
+    return headers
+  }
+
+  function newAPIUserHeaders(userID) {
+    const headers = {}
+    applyNewAPIUserHeaders(headers, userID)
+    return headers
+  }
+
+  function normalizePositiveIntegerText(value) {
+    const text = firstNonEmpty(value)
+    if (!/^\d+$/.test(text)) return ''
+    const numeric = Number(text)
+    if (!Number.isSafeInteger(numeric) || numeric <= 0 || numeric > 10000000) return ''
+    return String(numeric)
   }
 
   function firstNonEmpty(...values) {

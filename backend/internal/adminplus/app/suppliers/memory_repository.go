@@ -290,6 +290,23 @@ func cloneSupplier(in *adminplusdomain.Supplier) *adminplusdomain.Supplier {
 		t := *in.BalanceUpdatedAt
 		out.BalanceUpdatedAt = &t
 	}
+	if in.Capabilities != nil {
+		out.Capabilities = append([]adminplusdomain.SupplierCapability(nil), in.Capabilities...)
+	}
+	out.IntegrationHint = cloneSupplierIntegrationHint(in.IntegrationHint)
+	if in.PlatformHint != nil {
+		platformHint := *in.PlatformHint
+		out.PlatformHint = &platformHint
+	}
+	if in.APIEndpointCandidates != nil {
+		out.APIEndpointCandidates = append([]adminplusdomain.SupplierAPIEndpointCandidate(nil), in.APIEndpointCandidates...)
+	}
+	if in.URLHints != nil {
+		out.URLHints = append([]adminplusdomain.SupplierURLHint(nil), in.URLHints...)
+	}
+	if in.OperationHints != nil {
+		out.OperationHints = append([]adminplusdomain.SupplierOperationHint(nil), in.OperationHints...)
+	}
 	return &out
 }
 

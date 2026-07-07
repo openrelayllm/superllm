@@ -134,7 +134,7 @@ func (c *Client) findNewAPIProviderToken(ctx context.Context, tokenEndpoint stri
 	if !envelope.Success {
 		return nil, classifyKeyBusinessFailure(envelope.Message)
 	}
-	tokens := parseNewAPITokenList(envelope.Data)
+	tokens := parseNewAPITokenList(envelope.Raw)
 	for _, token := range tokens {
 		if !newAPITokenMatchesRequest(token, name, request.ExternalGroupID) {
 			continue
@@ -246,8 +246,8 @@ func newAPITokenRenamePayload(raw map[string]any, tokenID int64, name string) ma
 }
 
 func parseNewAPITokenList(data map[string]any) []newAPITokenSnapshot {
-	items, ok := data["items"].([]any)
-	if !ok {
+	items := newAPITokenItems(data)
+	if len(items) == 0 {
 		return nil
 	}
 	out := make([]newAPITokenSnapshot, 0, len(items))
@@ -262,6 +262,41 @@ func parseNewAPITokenList(data map[string]any) []newAPITokenSnapshot {
 		}
 	}
 	return out
+}
+
+func newAPITokenItems(payload map[string]any) []any {
+	if payload == nil {
+		return nil
+	}
+	for _, value := range []any{
+		payload["items"],
+		payload["list"],
+		payload["data"],
+	} {
+		if items := newAPITokenItemsFromAny(value); len(items) > 0 {
+			return items
+		}
+	}
+	if data, ok := payload["data"].(map[string]any); ok {
+		for _, value := range []any{
+			data["items"],
+			data["list"],
+			data["data"],
+		} {
+			if items := newAPITokenItemsFromAny(value); len(items) > 0 {
+				return items
+			}
+		}
+	}
+	return nil
+}
+
+func newAPITokenItemsFromAny(value any) []any {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	return items
 }
 
 func parseNewAPITokenSnapshot(raw map[string]any) newAPITokenSnapshot {

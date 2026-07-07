@@ -1,7 +1,7 @@
 import { extractApiErrorCode } from '@/utils/apiError'
 import { supplierGroupAction } from '../supplierProvisionPresentation'
 import { supplierBalanceDeltaCents } from '../supplierCostPresentation'
-import type { Supplier, SupplierBrowserSession, SupplierChannelProbeStatus, SupplierGroup, SupplierGroupStatus, SupplierKey, SupplierKeyStatus, SupplierProvisionJob, SupplierProvisionJobType, SupplierProvisionStatus, SupplierRuntimeStatus } from '@/api/admin/adminPlus'
+import type { Supplier, SupplierAPIEndpointCandidate, SupplierBrowserSession, SupplierCapability, SupplierChannelProbeStatus, SupplierGroup, SupplierGroupStatus, SupplierKey, SupplierKeyStatus, SupplierOperationHint, SupplierPlatformHint, SupplierProvisionJob, SupplierProvisionJobType, SupplierProvisionStatus, SupplierRuntimeStatus, SupplierURLHint } from '@/api/admin/adminPlus'
 import type { ChannelScheduleStepStatus, ChannelScheduleStepIcon, ChannelScheduleStep, ScheduleListRow } from './types'
 import { ctxFn, ctxValue } from './ctxProxy'
 export function attachPresentationStatus(ctx: any) {
@@ -549,6 +549,203 @@ export function attachPresentationStatus(ctx: any) {
       supplier.credential.browser_login_token_configured
   }
 
+  function supplierVisibleCapabilities(supplier: Supplier): SupplierCapability[] {
+    return (supplier.capabilities || []).filter((capability) => capability.status !== 'unsupported').slice(0, 4)
+  }
+
+  function supplierHiddenCapabilityCount(supplier: Supplier): number {
+    const visible = (supplier.capabilities || []).filter((capability) => capability.status !== 'unsupported')
+    return Math.max(visible.length - 4, 0)
+  }
+
+  function supplierCapabilityBadgeClass(capability: SupplierCapability): string {
+    if (capability.status === 'available') return 'badge-success'
+    if (capability.status === 'needs_session') return 'badge-warning'
+    if (capability.status === 'needs_readonly_db') return 'badge-purple'
+    if (capability.status === 'planned') return 'badge-primary'
+    return 'badge-gray'
+  }
+
+  function supplierCapabilityTitle(capability: SupplierCapability): string {
+    const status = supplierCapabilityStatusLabel(capability)
+    return [status, capability.description].filter(Boolean).join(' · ')
+  }
+
+  function supplierCapabilitySummary(supplier: Supplier): string {
+    const capabilities = (supplier.capabilities || []).filter((capability) => capability.status !== 'unsupported')
+    if (capabilities.length === 0) return '无可展示能力'
+    const counts = capabilities.reduce((acc, capability) => {
+      acc[capability.status] = (acc[capability.status] || 0) + 1
+      return acc
+    }, {} as Record<SupplierCapability['status'], number>)
+    const parts = [
+      capabilityCountLabel(counts.available, '可用'),
+      capabilityCountLabel(counts.needs_session, '需会话'),
+      capabilityCountLabel(counts.needs_readonly_db, '需只读库'),
+      capabilityCountLabel(counts.planned, '待接入')
+    ].filter(Boolean)
+    return parts.join(' · ') || `${capabilities.length} 项能力`
+  }
+
+  function capabilityCountLabel(count: number | undefined, label: string): string {
+    return count && count > 0 ? `${count} ${label}` : ''
+  }
+
+  function supplierCapabilityStatusLabel(capability: SupplierCapability): string {
+    if (capability.status === 'available') return '已可用'
+    if (capability.status === 'needs_session') return '需要会话'
+    if (capability.status === 'needs_readonly_db') return '需要只读数据源'
+    if (capability.status === 'planned') return '待接入'
+    return '不支持'
+  }
+
+  function supplierIntegrationBadgeClass(supplier: Supplier): string {
+    const protocol = supplier.integration_hint?.protocol
+    if (protocol === 'openai') return 'badge-success'
+    if (protocol === 'claude') return 'badge-purple'
+    if (protocol === 'gemini') return 'badge-primary'
+    return 'badge-gray'
+  }
+
+  function supplierIntegrationProtocolLabel(supplier: Supplier): string {
+    const protocol = supplier.integration_hint?.protocol
+    if (protocol === 'openai') return 'OpenAI'
+    if (protocol === 'claude') return 'Claude'
+    if (protocol === 'gemini') return 'Gemini'
+    return '兼容'
+  }
+
+  function supplierIntegrationTitle(supplier: Supplier): string {
+    const hint = supplier.integration_hint
+    if (!hint) return ''
+    return [
+      hint.label,
+      hint.description,
+      hint.recommended_skip_model_fetch ? '建议 API Key 优先初始化' : '',
+      supplierIntegrationModelsLabel(supplier),
+      hint.docs_url ? `文档: ${hint.docs_url}` : ''
+    ].filter(Boolean).join(' · ')
+  }
+
+  function supplierIntegrationModelsLabel(supplier: Supplier): string {
+    const models = supplier.integration_hint?.recommended_models || []
+    if (models.length === 0) return ''
+    const visible = models.slice(0, 2).join(' / ')
+    return models.length > 2 ? `${visible} / +${models.length - 2}` : visible
+  }
+
+  function supplierIntegrationSetupLabel(supplier: Supplier): string {
+    return supplier.integration_hint?.recommended_skip_model_fetch ? 'API Key 优先' : ''
+  }
+
+  function supplierPlatformHintBadgeClass(supplier: Supplier): string {
+    const family = supplier.platform_hint?.family
+    if (family === 'sub2api') return 'badge-primary'
+    if (family === 'new_api') return 'badge-success'
+    if (family === 'source_account' || family === 'api_provider') return 'badge-purple'
+    if (family === 'cli_proxy') return 'badge-warning'
+    return 'badge-gray'
+  }
+
+  function supplierPlatformHintFamilyLabel(hint?: SupplierPlatformHint): string {
+    if (!hint) return ''
+    if (hint.family === 'sub2api') return 'Sub2API'
+    if (hint.family === 'new_api') return 'New API 家族'
+    if (hint.family === 'source_account') return '源站'
+    if (hint.family === 'api_provider') return 'API 供应商'
+    if (hint.family === 'cli_proxy') return 'CLI 代理'
+    if (hint.family === 'browser_only') return '浏览器采集'
+    return hint.family || ''
+  }
+
+  function supplierPlatformHintTitle(supplier: Supplier): string {
+    const hint = supplier.platform_hint
+    if (!hint) return ''
+    return [
+      hint.label,
+      supplierPlatformHintFamilyLabel(hint),
+      hint.description,
+      hint.source ? `来源: ${hint.source}` : ''
+    ].filter(Boolean).join(' · ')
+  }
+
+  function supplierVisibleEndpointCandidates(supplier: Supplier): SupplierAPIEndpointCandidate[] {
+    return (supplier.api_endpoint_candidates || []).filter((candidate) => candidate.url).slice(0, 3)
+  }
+
+  function supplierHiddenEndpointCandidateCount(supplier: Supplier): number {
+    const visible = (supplier.api_endpoint_candidates || []).filter((candidate) => candidate.url)
+    return Math.max(visible.length - 3, 0)
+  }
+
+  function supplierEndpointCandidateLabel(candidate: SupplierAPIEndpointCandidate): string {
+    if (candidate.source === 'configured') return '当前 API'
+    const suffix = candidate.source === 'manual_integration_preset' ? ' 手动' : ''
+    if (candidate.protocol === 'openai') return `OpenAI${suffix}`
+    if (candidate.protocol === 'claude') return `Claude${suffix}`
+    if (candidate.protocol === 'gemini') return `Gemini${suffix}`
+    return candidate.label || 'API'
+  }
+
+  function supplierEndpointCandidateBadgeClass(candidate: SupplierAPIEndpointCandidate): string {
+    if (candidate.source === 'configured') return 'badge-success'
+    if (candidate.protocol === 'claude') return 'badge-purple'
+    if (candidate.protocol === 'gemini') return 'badge-primary'
+    if (candidate.protocol === 'openai') return 'badge-success'
+    if (candidate.recommended) return 'badge-warning'
+    return 'badge-gray'
+  }
+
+  function supplierEndpointCandidateTitle(candidate: SupplierAPIEndpointCandidate): string {
+    return [
+      candidate.label,
+      candidate.url,
+      candidate.source === 'manual_integration_preset' ? '手动候选入口' : '',
+      candidate.description
+    ].filter(Boolean).join(' · ')
+  }
+
+  function supplierVisibleURLHints(supplier: Supplier): SupplierURLHint[] {
+    return (supplier.url_hints || []).filter((hint) => hint.label).slice(0, 2)
+  }
+
+  function supplierURLHintBadgeClass(hint: SupplierURLHint): string {
+    if (hint.severity === 'success') return 'badge-success'
+    if (hint.severity === 'warning') return 'badge-warning'
+    return 'badge-gray'
+  }
+
+  function supplierURLHintTitle(hint: SupplierURLHint): string {
+    return [
+      hint.url,
+      hint.matched_path ? `路径: ${hint.matched_path}` : '',
+      hint.suggested_url ? `建议: ${hint.suggested_url}` : '',
+      hint.description
+    ].filter(Boolean).join(' · ')
+  }
+
+  function supplierVisibleOperationHints(supplier: Supplier): SupplierOperationHint[] {
+    return (supplier.operation_hints || []).filter((hint) => hint.label).slice(0, 3)
+  }
+
+  function supplierHiddenOperationHintCount(supplier: Supplier): number {
+    const visible = (supplier.operation_hints || []).filter((hint) => hint.label)
+    return Math.max(visible.length - 3, 0)
+  }
+
+  function supplierOperationHintBadgeClass(hint: SupplierOperationHint): string {
+    if (hint.severity === 'action') return 'badge-warning'
+    if (hint.severity === 'warning') return 'badge-danger'
+    return 'badge-primary'
+  }
+
+  function supplierOperationHintTitle(hint: SupplierOperationHint): string {
+    return [
+      hint.description,
+      hint.source ? `来源: ${hint.source}` : ''
+    ].filter(Boolean).join(' · ')
+  }
+
   Object.assign(ctx, {
     firstNonEmptyString,
     scheduleRowRisky,
@@ -613,6 +810,31 @@ export function attachPresentationStatus(ctx: any) {
     channelStatusErrorMessage,
     isSwitchable,
     isSwitchableRuntimeStatus,
-    hasCredential
+    hasCredential,
+    supplierVisibleCapabilities,
+    supplierHiddenCapabilityCount,
+    supplierCapabilityBadgeClass,
+    supplierCapabilityTitle,
+    supplierCapabilitySummary,
+    supplierIntegrationBadgeClass,
+    supplierIntegrationProtocolLabel,
+    supplierIntegrationTitle,
+    supplierIntegrationModelsLabel,
+    supplierIntegrationSetupLabel,
+    supplierPlatformHintBadgeClass,
+    supplierPlatformHintFamilyLabel,
+    supplierPlatformHintTitle,
+    supplierVisibleEndpointCandidates,
+    supplierHiddenEndpointCandidateCount,
+    supplierEndpointCandidateLabel,
+    supplierEndpointCandidateBadgeClass,
+    supplierEndpointCandidateTitle,
+    supplierVisibleURLHints,
+    supplierURLHintBadgeClass,
+    supplierURLHintTitle,
+    supplierVisibleOperationHints,
+    supplierHiddenOperationHintCount,
+    supplierOperationHintBadgeClass,
+    supplierOperationHintTitle
   })
 }

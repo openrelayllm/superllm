@@ -52,6 +52,7 @@ func ProvideAdminPlusHandlers(
 	sub2apiHandler *adminplushandler.Sub2APIHandler,
 	proxyHandler *adminplushandler.ProxyHandler,
 	backupHandler *adminplushandler.BackupHandler,
+	importExportHandler *adminplushandler.ImportExportHandler,
 ) *AdminPlusHandlers {
 	return &AdminPlusHandlers{
 		Supplier:         supplierHandler,
@@ -79,6 +80,7 @@ func ProvideAdminPlusHandlers(
 		Sub2API:          sub2apiHandler,
 		Proxy:            proxyHandler,
 		Backup:           backupHandler,
+		ImportExport:     importExportHandler,
 	}
 }
 
@@ -156,6 +158,7 @@ var ProviderSet = wire.NewSet(
 	adminplushandler.NewSub2APIHandlerWithAccountTest,
 	adminplushandler.NewProxyHandler,
 	adminplushandler.NewBackupHandler,
+	adminplushandler.NewImportExportHandler,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,

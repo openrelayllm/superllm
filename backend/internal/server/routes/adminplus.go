@@ -189,6 +189,14 @@ func RegisterAdminPlusRoutes(
 			backups.DELETE("/:id", h.AdminPlus.Backup.DeleteBackup)
 		}
 
+		importExport := adminPlus.Group("/import-export")
+		{
+			importExport.GET("/scope", h.AdminPlus.ImportExport.Scope)
+			importExport.GET("/export", h.AdminPlus.ImportExport.Export)
+			importExport.POST("/preview", h.AdminPlus.ImportExport.Preview)
+			importExport.POST("/import", h.AdminPlus.ImportExport.Import)
+		}
+
 		adminPlus.GET("/server-renewal", h.AdminPlus.Backup.GetServerRenewal)
 		adminPlus.PUT("/server-renewal", h.AdminPlus.Backup.UpdateServerRenewal)
 

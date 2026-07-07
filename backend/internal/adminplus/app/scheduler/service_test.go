@@ -563,8 +563,7 @@ func TestServiceEnqueueCostHistoryBackfillUsesStepSnapshot(t *testing.T) {
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
 	repo := newFakeSchedulerRepository()
 	costSyncer := &stubCostSyncer{}
-	service := NewServiceWithDependenciesAndRepository(repo, supplierService, extensionService, nil, nil, nil, nil, nil, nil).
-		WithCostSyncer(costSyncer)
+	service := ProvideService(repo, supplierService, extensionService, nil, nil, nil, nil, nil, costSyncer, nil, nil, nil)
 	now := time.Date(2026, 6, 20, 10, 4, 0, 0, time.UTC)
 	service.now = func() time.Time {
 		return now

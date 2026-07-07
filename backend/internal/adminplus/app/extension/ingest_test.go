@@ -320,7 +320,7 @@ func TestCompleteTaskNormalizesNewAPIBrowserSessionWithoutSyncingBalance(t *test
 				},
 				"context": map[string]any{
 					"api_base_url": "https://www.codexapis.com",
-					"user_id":      "42",
+					"id":           float64(4111),
 				},
 				"required_headers": map[string]any{
 					"origin":  "https://www.codexapis.com",
@@ -336,7 +336,7 @@ func TestCompleteTaskNormalizesNewAPIBrowserSessionWithoutSyncingBalance(t *test
 	summary, ok := completed.Result["session_summary"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "new_api", summary["provider_type"])
-	require.Equal(t, "42", summary["user_id"])
+	require.Equal(t, "4111", summary["user_id"])
 	require.Equal(t, true, summary["has_new_api_user_header"])
 	require.Equal(t, 1, summary["cookie_count"])
 
@@ -359,10 +359,42 @@ func TestCompleteTaskNormalizesNewAPIBrowserSessionWithoutSyncingBalance(t *test
 	require.Equal(t, "new_api", savedBundle["provider_type"])
 	require.Equal(t, "new_api", savedBundle["system_type"])
 	require.Equal(t, "New-Api-User", savedBundle["auth_header_name"])
-	require.Equal(t, "42", savedBundle["auth_header_value"])
+	require.Equal(t, "4111", savedBundle["auth_header_value"])
 	headers, ok := savedBundle["required_headers"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "42", headers["New-Api-User"])
+	require.Equal(t, "4111", headers["New-Api-User"])
+	require.Equal(t, "4111", headers["Veloera-User"])
+	require.Equal(t, "4111", headers["X-User-Id"])
+	require.Equal(t, "4111", headers["neo-api-user"])
+}
+
+func TestNormalizeSessionBundleBackfillsNewAPICompatibleUserHeaders(t *testing.T) {
+	bundle := normalizeSessionBundle(map[string]any{
+		"origin": "https://veloera.example.com",
+		"context": map[string]any{
+			"api_base_url": "https://veloera.example.com",
+		},
+		"required_headers": map[string]any{
+			"Veloera-User": float64(4111),
+		},
+	}, &adminplusdomain.ExtensionTask{
+		Payload: map[string]any{
+			"provider_type": "new-api",
+		},
+	})
+
+	require.Equal(t, "new_api", bundle["provider_type"])
+	require.Equal(t, "New-Api-User", bundle["auth_header_name"])
+	require.Equal(t, "4111", bundle["auth_header_value"])
+	contextValue, ok := bundle["context"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "4111", contextValue["user_id"])
+	headers, ok := bundle["required_headers"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "4111", headers["New-Api-User"])
+	require.Equal(t, "4111", headers["Veloera-User"])
+	require.Equal(t, "4111", headers["X-User-Id"])
+	require.Equal(t, "4111", headers["neo-api-user"])
 }
 
 type stubSessionCipher struct{}

@@ -5,6 +5,17 @@
     'admin-plus:detect-login',
     'admin-plus:capture-session'
   ])
+  const NEW_API_USER_HEADER_NAMES = [
+    'New-Api-User',
+    'New-API-User',
+    'Veloera-User',
+    'voapi-user',
+    'User-id',
+    'X-User-Id',
+    'Rix-Api-User',
+    'neo-api-user',
+    'new-api-user'
+  ]
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!SUPPORTED_MESSAGES.has(message?.type)) return false
@@ -30,10 +41,11 @@
   }
 
   async function captureSession(task, supplier) {
-    if (isLoginLikePage()) {
+    const loginLike = isLoginLikePage()
+    const bundle = await collectSessionBundle(supplier)
+    if (!hasSessionEvidence(bundle) && loginLike && !supportsCookieBackedCapture(bundle, supplier)) {
       return fail('SUPPLIER_LOGIN_REQUIRED', '请先在当前供应商页面完成登录，再执行一键上报')
     }
-    const bundle = await collectSessionBundle(supplier)
     return ok({
       source: 'chrome',
       captured_at: new Date().toISOString(),
@@ -48,12 +60,12 @@
   }
 
   async function detectLogin() {
-    if (isLoginLikePage()) {
-      return { status: 'logged_out' }
-    }
     const bundle = await collectSessionBundle({})
     if (hasSessionEvidence(bundle)) {
       return { status: 'logged_in', summary: summarizeBundle(bundle) }
+    }
+    if (isLoginLikePage()) {
+      return { status: 'logged_out' }
     }
     return { status: 'unknown' }
   }
@@ -65,9 +77,17 @@
   async function collectSessionBundle(supplier) {
     const storage = collectStorage()
     const tokens = extractTokens(storage)
-    const context = extractContext(storage, supplier)
+    const providerType = normalizeProviderType(
+      supplier?.type ||
+      supplier?.supplier_type ||
+      supplier?.provider_type ||
+      inferProviderTypeFromStorage(storage)
+    )
+    const context = extractContext(storage, supplier, providerType)
     const bundle = {
       supplier_id: supplier?.id || supplier?.supplier_id,
+      provider_type: providerType,
+      system_type: providerType,
       origin: location.origin,
       url: location.href,
       captured_at: new Date().toISOString(),
@@ -113,16 +133,16 @@
 
   function extractTokens(storage) {
     const access = firstFoundStorageValue([
-      firstStorageValue(storage, ['auth_token', 'access_token', 'accessToken'], { exact: true }),
+      firstStorageValue(storage, ['auth_token', 'authToken', 'access_token', 'accessToken'], { exact: true }),
       firstStorageValue(storage, ['token', 'jwt', 'bearer'], { exact: true }),
-      firstStorageValue(storage, ['auth_token', 'access_token', 'accessToken']),
+      firstStorageValue(storage, ['auth_token', 'authToken', 'access_token', 'accessToken']),
       firstStorageValue(storage, ['token', 'jwt', 'bearer'], { exclude: ['token_expires_at', 'expires_at', 'today_token', 'total_token'] })
     ])
     return {
       access_token: access.value,
       access_token_source: access.source,
       refresh_token: firstStorageValue(storage, ['refresh_token', 'refreshToken'], { exact: true }).value,
-      csrf_token: firstStorageValue(storage, ['csrf', 'xsrf']).value
+      csrf_token: firstStorageValue(storage, ['csrf', 'xsrf', 'csrf_token', 'csrfToken']).value
     }
   }
 
@@ -130,9 +150,15 @@
     return candidates.find((item) => item.value) || { value: '', source: '' }
   }
 
-  function extractContext(storage, supplier) {
+  function extractContext(storage, supplier, providerType) {
+    const identity = userObjectFromStorage(storage)
     return {
-      user_id: firstStorageValue(storage, ['user_id', 'userid', 'uid']).value,
+      provider_type: providerType,
+      system_type: providerType,
+      user_id: firstNonEmpty(firstStorageValue(storage, ['user_id', 'userid', 'uid']).value, identity?.id),
+      username: firstNonEmpty(identity?.username, identity?.name, identity?.email),
+      email: firstNonEmpty(identity?.email),
+      role: firstNonEmpty(identity?.role),
       organization_id: firstStorageValue(storage, ['organization_id', 'org_id', 'orgid']).value,
       project_id: firstStorageValue(storage, ['project_id', 'projectid']).value,
       account_id: firstStorageValue(storage, ['account_id', 'accountid']).value,
@@ -173,7 +199,7 @@
 
   function findTokenLikeValue(value) {
     if (!value || typeof value !== 'object') return ''
-    for (const key of ['access_token', 'auth_token', 'token', 'jwt', 'refresh_token', 'csrf_token']) {
+    for (const key of ['access_token', 'accessToken', 'auth_token', 'authToken', 'token', 'jwt', 'refresh_token', 'refreshToken', 'csrf_token', 'csrfToken']) {
       if (typeof value[key] === 'string' && value[key]) return value[key]
     }
     for (const nested of Object.values(value)) {
@@ -181,6 +207,79 @@
       if (found) return found
     }
     return ''
+  }
+
+  function inferProviderTypeFromStorage(storage) {
+    const keys = new Set(Object.keys(storage || {})
+      .map((key) => key.includes(':') ? key.slice(key.indexOf(':') + 1) : key)
+      .map((key) => key.toLowerCase()))
+    if (keys.has('auth_token') || keys.has('auth_user')) return 'sub2api'
+    if (keys.has('user') || keys.has('uid') || keys.has('quota_per_unit') || keys.has('quota_display_type')) return 'new_api'
+    return ''
+  }
+
+  function userObjectFromStorage(storage) {
+    const prioritized = []
+    const fallback = []
+    for (const [key, value] of Object.entries(storage || {})) {
+      const storageKey = key.includes(':') ? key.slice(key.indexOf(':') + 1) : key
+      const normalized = storageKey.toLowerCase()
+      if (['auth_user', 'user', 'userstorage', 'auth-store', 'auth_storage', 'authstore'].includes(normalized)) {
+        prioritized.push(value)
+      } else if (looksLikeJSON(value)) {
+        fallback.push(value)
+      }
+    }
+    for (const value of [...prioritized, ...fallback]) {
+      const user = findUserLikeObject(parseJSON(value))
+      if (user?.id || user?.username || user?.email) return user
+    }
+    return {}
+  }
+
+  function findUserLikeObject(value, depth = 0) {
+    if (!value || typeof value !== 'object' || depth > 5) return null
+    const candidate = normalizeUserCandidate(value)
+    if (candidate) return candidate
+    for (const key of ['user', 'currentUser', 'profile', 'self', 'data', 'auth', 'state']) {
+      const found = findUserLikeObject(value[key], depth + 1)
+      if (found) return found
+    }
+    for (const nested of Object.values(value)) {
+      const found = findUserLikeObject(nested, depth + 1)
+      if (found) return found
+    }
+    return null
+  }
+
+  function normalizeUserCandidate(value) {
+    if (!value || typeof value !== 'object') return null
+    const id = firstNonEmpty(value.id, value.user_id, value.userId, value.uid)
+    const username = firstNonEmpty(value.username, value.name, value.display_name, value.displayName, value.email)
+    const email = firstNonEmpty(value.email)
+    if (!id && !username && !email) return null
+    return {
+      id,
+      username,
+      name: firstNonEmpty(value.name, value.display_name, value.displayName),
+      email,
+      role: firstNonEmpty(value.role)
+    }
+  }
+
+  function parseJSON(value) {
+    try {
+      const raw = String(value || '').trim()
+      if (!raw) return null
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
+  }
+
+  function looksLikeJSON(value) {
+    const raw = String(value || '').trim()
+    return raw.startsWith('{') || raw.startsWith('[')
   }
 
   function inferExpiresAt(storage) {
@@ -202,6 +301,43 @@
     return Boolean(bundle.tokens.access_token || bundle.tokens.refresh_token || bundle.tokens.csrf_token)
   }
 
+  function isNewAPISession(bundle, supplier) {
+    return providerTypeForSession(bundle, supplier) === 'new_api'
+  }
+
+  function supportsCookieBackedCapture(bundle, supplier) {
+    return ['new_api', 'sub2api'].includes(providerTypeForSession(bundle, supplier))
+  }
+
+  function providerTypeForSession(bundle, supplier) {
+    const providerType = normalizeProviderType(
+      bundle?.provider_type ||
+      bundle?.system_type ||
+      bundle?.context?.provider_type ||
+      bundle?.context?.system_type ||
+      supplier?.type ||
+      supplier?.supplier_type ||
+      supplier?.provider_type ||
+      ''
+    )
+    return providerType
+  }
+
+  function normalizeProviderType(value) {
+    const normalized = String(value || '').trim().toLowerCase()
+    if (normalized === 'newapi' || normalized === 'new-api') return 'new_api'
+    if (['subapi', 'sub api', 'sub-api', 'sub_api', 'sub2api', 'sub2 api', 'sub2-api', 'sub2_api'].includes(normalized)) return 'sub2api'
+    return normalized
+  }
+
+  function firstNonEmpty(...values) {
+    for (const value of values) {
+      const text = String(value || '').trim()
+      if (text) return text
+    }
+    return ''
+  }
+
   function summarizeBundle(bundle) {
     return {
       origin: bundle.origin,
@@ -217,8 +353,13 @@
       organization_id: bundle.context.organization_id,
       project_id: bundle.context.project_id,
       account_id: bundle.context.account_id,
-      has_new_api_user_header: Boolean(bundle.required_headers?.['New-Api-User'])
+      has_new_api_user_header: Boolean(newAPIUserHeader(bundle))
     }
+  }
+
+  function newAPIUserHeader(bundle) {
+    const headers = bundle?.required_headers || {}
+    return firstNonEmpty(...NEW_API_USER_HEADER_NAMES.map((headerName) => headers[headerName]))
   }
 
   function ok(result) {

@@ -6,7 +6,7 @@ import { useAppStore } from '@/stores/app'
 import { supplierDisplayUsageCents, supplierRechargeTotalCents } from '../supplierCostPresentation'
 import type { Column } from '@/components/common/types'
 import type { AdminGroup } from '@/types'
-import type { LocalSub2APIAccount, Supplier, SupplierAccount, SupplierBrowserSession, SupplierChannelCheckOverviewRow, SupplierChannelCheckSnapshot, SupplierChannelMonitorView, SupplierCostSnapshot, SupplierCurrentBalance, SupplierGroup, SupplierGroupChangeEvent, SupplierGroupStatus, SupplierHealthStatus, SupplierKey, SupplierProvisionJob, SupplierSessionProbeResult, SupplierKind, SupplierRuntimeStatus, SupplierType } from '@/api/admin/adminPlus'
+import type { LocalSub2APIAccount, Supplier, SupplierAccount, SupplierBrowserSession, SupplierCapabilityStatus, SupplierChannelCheckOverviewRow, SupplierChannelCheckSnapshot, SupplierChannelMonitorView, SupplierCostSnapshot, SupplierCurrentBalance, SupplierGroup, SupplierGroupChangeEvent, SupplierGroupStatus, SupplierHealthStatus, SupplierIntegrationProtocol, SupplierKey, SupplierProvisionJob, SupplierSessionProbeResult, SupplierKind, SupplierRuntimeStatus, SupplierType } from '@/api/admin/adminPlus'
 import type { ChannelStatusWindow, ScheduleListStatusFilter, ScheduleListLocalGroupFilter, ChannelProtocol, RateCheckMode, RateCheckProtocol } from './types'
 
 export function createSuppliersState() {
@@ -113,7 +113,9 @@ export function createSuppliersState() {
     kind: '' as '' | SupplierKind,
     type: '' as '' | SupplierType,
     runtime_status: '' as '' | SupplierRuntimeStatus,
-    health_status: '' as '' | SupplierHealthStatus
+    health_status: '' as '' | SupplierHealthStatus,
+    capability_status: '' as '' | SupplierCapabilityStatus,
+    integration_protocol: '' as '' | SupplierIntegrationProtocol
   })
   const channelProtocolFilter = ref<ChannelProtocol | ''>('openai')
   const rateCheckProtocol = ref<RateCheckProtocol>('openai')

@@ -41,6 +41,7 @@ type AdminPlusHandlers struct {
 	Sub2API          *adminplushandler.Sub2APIHandler
 	Proxy            *adminplushandler.ProxyHandler
 	Backup           *adminplushandler.BackupHandler
+	ImportExport     *adminplushandler.ImportExportHandler
 }
 
 // Handlers contains all HTTP handlers

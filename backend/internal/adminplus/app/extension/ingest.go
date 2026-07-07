@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,17 @@ type SessionCipher interface {
 type RegistrationResultProcessor interface {
 	ProcessRegistrationTaskResult(ctx context.Context, task *adminplusdomain.ExtensionTask, result map[string]any) (map[string]any, error)
 	ProcessRegistrationTaskFailure(ctx context.Context, task *adminplusdomain.ExtensionTask, errorCode string, errorMessage string) (map[string]any, error)
+}
+
+var newAPIUserIDHeaderNames = []string{
+	"New-Api-User",
+	"New-API-User",
+	"Veloera-User",
+	"voapi-user",
+	"User-id",
+	"X-User-Id",
+	"Rix-Api-User",
+	"neo-api-user",
 }
 
 func NewIngestProcessor(
@@ -319,8 +331,43 @@ func stringValue(values map[string]any, key string) string {
 	if values == nil {
 		return ""
 	}
-	if value, ok := values[key].(string); ok {
+	switch value := values[key].(type) {
+	case string:
 		return value
+	case int:
+		return strconv.Itoa(value)
+	case int8:
+		return strconv.FormatInt(int64(value), 10)
+	case int16:
+		return strconv.FormatInt(int64(value), 10)
+	case int32:
+		return strconv.FormatInt(int64(value), 10)
+	case int64:
+		return strconv.FormatInt(value, 10)
+	case uint:
+		return strconv.FormatUint(uint64(value), 10)
+	case uint8:
+		return strconv.FormatUint(uint64(value), 10)
+	case uint16:
+		return strconv.FormatUint(uint64(value), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(value), 10)
+	case uint64:
+		return strconv.FormatUint(value, 10)
+	case float64:
+		if math.IsInf(value, 0) || math.IsNaN(value) || math.Trunc(value) != value {
+			return ""
+		}
+		return strconv.FormatFloat(value, 'f', 0, 64)
+	case json.Number:
+		if parsed, err := value.Int64(); err == nil {
+			return strconv.FormatInt(parsed, 10)
+		}
+		parsed, err := value.Float64()
+		if err != nil || math.IsInf(parsed, 0) || math.IsNaN(parsed) || math.Trunc(parsed) != parsed {
+			return ""
+		}
+		return strconv.FormatFloat(parsed, 'f', 0, 64)
 	}
 	return ""
 }
@@ -459,26 +506,22 @@ func sessionSummary(bundle map[string]any) map[string]any {
 		cookieCount = 1
 	}
 	return map[string]any{
-		"origin":               stringValue(bundle, "origin"),
-		"provider_type":        providerType,
-		"captured_at":          stringValue(bundle, "captured_at"),
-		"expires_at":           stringValue(bundle, "expires_at"),
-		"has_access_token":     accessToken != "",
-		"has_refresh_token":    refreshToken != "",
-		"has_csrf_token":       csrfToken != "",
-		"cookie_count":         cookieCount,
-		"user_id":              stringValue(context, "user_id"),
-		"organization_id":      stringValue(context, "organization_id"),
-		"project_id":           stringValue(context, "project_id"),
-		"account_id":           stringValue(context, "account_id"),
-		"api_base_url":         stringValue(context, "api_base_url"),
-		"has_required_origin":  strings.TrimSpace(stringValue(requiredHeaders, "origin")) != "",
-		"has_required_referer": strings.TrimSpace(stringValue(requiredHeaders, "referer")) != "",
-		"has_new_api_user_header": firstNonEmptyString(
-			stringValue(requiredHeaders, "New-Api-User"),
-			stringValue(requiredHeaders, "New-API-User"),
-			stringValue(requiredHeaders, "new-api-user"),
-		) != "",
+		"origin":                  stringValue(bundle, "origin"),
+		"provider_type":           providerType,
+		"captured_at":             stringValue(bundle, "captured_at"),
+		"expires_at":              stringValue(bundle, "expires_at"),
+		"has_access_token":        accessToken != "",
+		"has_refresh_token":       refreshToken != "",
+		"has_csrf_token":          csrfToken != "",
+		"cookie_count":            cookieCount,
+		"user_id":                 stringValue(context, "user_id"),
+		"organization_id":         stringValue(context, "organization_id"),
+		"project_id":              stringValue(context, "project_id"),
+		"account_id":              stringValue(context, "account_id"),
+		"api_base_url":            stringValue(context, "api_base_url"),
+		"has_required_origin":     strings.TrimSpace(stringValue(requiredHeaders, "origin")) != "",
+		"has_required_referer":    strings.TrimSpace(stringValue(requiredHeaders, "referer")) != "",
+		"has_new_api_user_header": newAPIUserIDFromRequiredHeaders(requiredHeaders) != "",
 	}
 }
 
@@ -504,9 +547,7 @@ func normalizeSessionBundle(bundle map[string]any, task *adminplusdomain.Extensi
 		bundle["required_headers"] = requiredHeaders
 	}
 	userID := firstNonEmptyString(
-		stringValue(requiredHeaders, "New-Api-User"),
-		stringValue(requiredHeaders, "New-API-User"),
-		stringValue(requiredHeaders, "new-api-user"),
+		newAPIUserIDFromRequiredHeaders(requiredHeaders),
 		stringValue(bundle, "auth_header_value"),
 		stringValue(context, "user_id"),
 		stringValue(context, "id"),
@@ -522,9 +563,28 @@ func normalizeSessionBundle(bundle map[string]any, task *adminplusdomain.Extensi
 		context["api_base_url"] = firstNonEmptyString(stringValue(bundle, "api_base_url"), stringValue(bundle, "origin"))
 	}
 	if userID != "" {
-		requiredHeaders["New-Api-User"] = userID
+		applyNewAPIUserIDRequiredHeaders(requiredHeaders, userID)
 	}
 	return bundle
+}
+
+func newAPIUserIDFromRequiredHeaders(requiredHeaders map[string]any) string {
+	values := make([]string, 0, len(newAPIUserIDHeaderNames)+1)
+	for _, headerName := range newAPIUserIDHeaderNames {
+		values = append(values, stringValue(requiredHeaders, headerName))
+	}
+	values = append(values, stringValue(requiredHeaders, "new-api-user"))
+	return firstNonEmptyString(values...)
+}
+
+func applyNewAPIUserIDRequiredHeaders(requiredHeaders map[string]any, userID string) {
+	userID = strings.TrimSpace(userID)
+	if requiredHeaders == nil || userID == "" {
+		return
+	}
+	for _, headerName := range newAPIUserIDHeaderNames {
+		requiredHeaders[headerName] = userID
+	}
 }
 
 func providerTypeFromBundle(bundle map[string]any) string {
@@ -542,6 +602,8 @@ func normalizeProviderType(value string) string {
 	switch normalized {
 	case "newapi", "new-api":
 		return "new_api"
+	case "subapi", "sub api", "sub-api", "sub_api", "sub2api", "sub2 api", "sub2-api", "sub2_api":
+		return "sub2api"
 	default:
 		return normalized
 	}

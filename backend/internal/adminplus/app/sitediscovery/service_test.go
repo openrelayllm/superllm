@@ -154,6 +154,7 @@ func TestClassifyItem(t *testing.T) {
 	}{
 		{name: "new api", text: "new-api 模板 支持 New-Api-User", expected: adminplusdomain.SupplierTypeNewAPI},
 		{name: "sub2api", text: "sub2api admin channel", expected: adminplusdomain.SupplierTypeSub2API},
+		{name: "subapi", text: "subapi admin channel", expected: adminplusdomain.SupplierTypeSub2API},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

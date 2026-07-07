@@ -54,29 +54,103 @@ type SupplierCredentialStatus struct {
 	MaskedBrowserLoginUsername     string `json:"masked_browser_login_username,omitempty"`
 }
 
+type SupplierCapabilityStatus string
+
+const (
+	SupplierCapabilityStatusAvailable       SupplierCapabilityStatus = "available"
+	SupplierCapabilityStatusNeedsSession    SupplierCapabilityStatus = "needs_session"
+	SupplierCapabilityStatusNeedsReadonlyDB SupplierCapabilityStatus = "needs_readonly_db"
+	SupplierCapabilityStatusUnsupported     SupplierCapabilityStatus = "unsupported"
+	SupplierCapabilityStatusPlanned         SupplierCapabilityStatus = "planned"
+)
+
+type SupplierCapability struct {
+	Key         string                   `json:"key"`
+	Label       string                   `json:"label"`
+	Status      SupplierCapabilityStatus `json:"status"`
+	Source      string                   `json:"source"`
+	Description string                   `json:"description,omitempty"`
+}
+
+type SupplierIntegrationHint struct {
+	ID                        string   `json:"id"`
+	Label                     string   `json:"label"`
+	ProviderLabel             string   `json:"provider_label"`
+	Protocol                  string   `json:"protocol"`
+	Description               string   `json:"description,omitempty"`
+	DocsURL                   string   `json:"docs_url,omitempty"`
+	RecommendedSkipModelFetch bool     `json:"recommended_skip_model_fetch"`
+	RecommendedModels         []string `json:"recommended_models,omitempty"`
+	SourceURL                 string   `json:"source_url,omitempty"`
+}
+
+type SupplierPlatformHint struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Family      string `json:"family"`
+	Source      string `json:"source"`
+	Description string `json:"description,omitempty"`
+}
+
+type SupplierAPIEndpointCandidate struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	URL         string `json:"url"`
+	Protocol    string `json:"protocol,omitempty"`
+	Source      string `json:"source"`
+	Recommended bool   `json:"recommended"`
+	Description string `json:"description,omitempty"`
+}
+
+type SupplierURLHint struct {
+	Key          string `json:"key"`
+	Label        string `json:"label"`
+	URL          string `json:"url"`
+	Source       string `json:"source"`
+	Action       string `json:"action"`
+	Severity     string `json:"severity"`
+	MatchedPath  string `json:"matched_path,omitempty"`
+	SuggestedURL string `json:"suggested_url,omitempty"`
+	Description  string `json:"description,omitempty"`
+}
+
+type SupplierOperationHint struct {
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Severity    string `json:"severity"`
+	Source      string `json:"source"`
+	Description string `json:"description,omitempty"`
+}
+
 type Supplier struct {
-	ID                    int64                    `json:"id"`
-	Name                  string                   `json:"name"`
-	Kind                  SupplierKind             `json:"kind"`
-	Type                  SupplierType             `json:"type"`
-	RuntimeStatus         SupplierRuntimeStatus    `json:"runtime_status"`
-	HealthStatus          SupplierHealthStatus     `json:"health_status"`
-	DashboardURL          string                   `json:"dashboard_url,omitempty"`
-	APIBaseURL            string                   `json:"api_base_url,omitempty"`
-	ThirdPartyRechargeURL string                   `json:"third_party_recharge_url,omitempty"`
-	LocalRechargeURL      string                   `json:"local_recharge_url,omitempty"`
-	Contact               string                   `json:"contact,omitempty"`
-	Notes                 string                   `json:"notes,omitempty"`
-	BrowserLoginUsername  string                   `json:"-"`
-	BrowserLoginPassword  string                   `json:"-"`
-	BrowserLoginToken     string                   `json:"-"`
-	Credential            SupplierCredentialStatus `json:"credential"`
-	BalanceCents          int64                    `json:"balance_cents"`
-	BalanceCurrency       string                   `json:"balance_currency"`
-	BalanceUpdatedAt      *time.Time               `json:"balance_updated_at,omitempty"`
-	RechargeMultiplier    float64                  `json:"recharge_multiplier"`
-	CreatedAt             time.Time                `json:"created_at"`
-	UpdatedAt             time.Time                `json:"updated_at"`
+	ID                    int64                          `json:"id"`
+	Name                  string                         `json:"name"`
+	Kind                  SupplierKind                   `json:"kind"`
+	Type                  SupplierType                   `json:"type"`
+	RuntimeStatus         SupplierRuntimeStatus          `json:"runtime_status"`
+	HealthStatus          SupplierHealthStatus           `json:"health_status"`
+	DashboardURL          string                         `json:"dashboard_url,omitempty"`
+	APIBaseURL            string                         `json:"api_base_url,omitempty"`
+	ThirdPartyRechargeURL string                         `json:"third_party_recharge_url,omitempty"`
+	LocalRechargeURL      string                         `json:"local_recharge_url,omitempty"`
+	Contact               string                         `json:"contact,omitempty"`
+	Notes                 string                         `json:"notes,omitempty"`
+	BrowserLoginUsername  string                         `json:"-"`
+	BrowserLoginPassword  string                         `json:"-"`
+	BrowserLoginToken     string                         `json:"-"`
+	Credential            SupplierCredentialStatus       `json:"credential"`
+	Capabilities          []SupplierCapability           `json:"capabilities,omitempty"`
+	IntegrationHint       *SupplierIntegrationHint       `json:"integration_hint,omitempty"`
+	PlatformHint          *SupplierPlatformHint          `json:"platform_hint,omitempty"`
+	APIEndpointCandidates []SupplierAPIEndpointCandidate `json:"api_endpoint_candidates,omitempty"`
+	URLHints              []SupplierURLHint              `json:"url_hints,omitempty"`
+	OperationHints        []SupplierOperationHint        `json:"operation_hints,omitempty"`
+	BalanceCents          int64                          `json:"balance_cents"`
+	BalanceCurrency       string                         `json:"balance_currency"`
+	BalanceUpdatedAt      *time.Time                     `json:"balance_updated_at,omitempty"`
+	RechargeMultiplier    float64                        `json:"recharge_multiplier"`
+	CreatedAt             time.Time                      `json:"created_at"`
+	UpdatedAt             time.Time                      `json:"updated_at"`
 }
 
 type SupplierBrowserCredential struct {
@@ -190,12 +264,35 @@ func (s SupplierHealthStatus) Valid() bool {
 	}
 }
 
+func (s SupplierCapabilityStatus) Valid() bool {
+	switch s {
+	case SupplierCapabilityStatusAvailable, SupplierCapabilityStatusNeedsSession, SupplierCapabilityStatusNeedsReadonlyDB, SupplierCapabilityStatusUnsupported, SupplierCapabilityStatusPlanned:
+		return true
+	default:
+		return false
+	}
+}
+
 func NormalizeSupplierKind(value string) SupplierKind {
 	return SupplierKind(strings.ToLower(strings.TrimSpace(value)))
 }
 
 func NormalizeSupplierType(value string) SupplierType {
-	return SupplierType(strings.ToLower(strings.TrimSpace(value)))
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "newapi", "new api", "new-api", "oneapi", "one api", "one-api", "onehub", "one-hub", "donehub", "done-hub", "veloera", "anyrouter", "vo-api", "voapi", "super-api", "superapi", "rix-api", "rixapi", "neo-api", "neoapi", "wong-gongyi", "wong gongyi":
+		return SupplierTypeNewAPI
+	case "sub2api", "sub2 api", "sub2-api", "sub2_api", "subapi", "sub api", "sub-api", "sub_api":
+		return SupplierTypeSub2API
+	case "anthropic", "claude", "claude-compatible", "claude_compatible":
+		return SupplierTypeAnthropic
+	case "gemini", "google", "google-ai", "google_ai", "google-ai-studio", "google_ai_studio":
+		return SupplierTypeGemini
+	case "browser", "browser-only", "browser_only":
+		return SupplierTypeBrowserOnly
+	default:
+		return SupplierType(normalized)
+	}
 }
 
 func NormalizeSupplierRuntimeStatus(value string) SupplierRuntimeStatus {
@@ -204,6 +301,10 @@ func NormalizeSupplierRuntimeStatus(value string) SupplierRuntimeStatus {
 
 func NormalizeSupplierHealthStatus(value string) SupplierHealthStatus {
 	return SupplierHealthStatus(strings.ToLower(strings.TrimSpace(value)))
+}
+
+func NormalizeSupplierCapabilityStatus(value string) SupplierCapabilityStatus {
+	return SupplierCapabilityStatus(strings.ToLower(strings.TrimSpace(value)))
 }
 
 func IsSwitchableSupplierStatus(status SupplierRuntimeStatus) bool {

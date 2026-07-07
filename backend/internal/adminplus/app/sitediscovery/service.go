@@ -2588,7 +2588,7 @@ func classifyText(text string, source string) classificationResult {
 			add(&newScore, 0.85, marker)
 		}
 	}
-	for _, marker := range []string{"sub2api", "sub2 api", "sub2-api", "sub2api-admin"} {
+	for _, marker := range []string{"sub2api", "sub2 api", "sub2-api", "sub2api-admin", "subapi", "sub api", "sub-api", "subapi-admin"} {
 		if strings.Contains(lower, marker) {
 			add(&subScore, 0.9, marker)
 		}

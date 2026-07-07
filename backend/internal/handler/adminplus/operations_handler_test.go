@@ -296,6 +296,51 @@ func TestExtensionHandlerReportSupplierCandidateRequiresRegisteredCredential(t *
 	require.Contains(t, reported.Body.String(), "SUPPLIER_SITE_REGISTRATION_REQUIRED")
 }
 
+func TestExtensionHandlerReportSupplierCandidateNormalizesProviderAlias(t *testing.T) {
+	router := newOperationsHandlerTestRouter()
+
+	reported := performJSON(t, router, http.MethodPost, "/extension/suppliers/report-candidate", `{
+		"device_id": "chrome-1",
+		"name": "Gemini Source",
+		"provider_type": "google",
+		"dashboard_url": "https://gemini-source.example.com",
+		"api_base_url": "https://generativelanguage.googleapis.com/v1beta",
+		"source_url": "https://gemini-source.example.com/settings",
+		"source_host": "gemini-source.example.com",
+		"browser_login_enabled": true,
+		"browser_login_username": "gemini@example.com",
+		"browser_login_password": "gemini-secret"
+	}`)
+	require.Equal(t, http.StatusOK, reported.Code, reported.Body.String())
+	var reportBody struct {
+		Data struct {
+			SupplierID int64 `json:"supplier_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(reported.Body.Bytes(), &reportBody))
+
+	created := performJSON(t, router, http.MethodPost, "/extension/session/capture-task", `{
+		"supplier_id": `+strconv.FormatInt(reportBody.Data.SupplierID, 10)+`,
+		"device_id": "chrome-1",
+		"lease_ttl_seconds": 60
+	}`)
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	var createdBody struct {
+		Data struct {
+			ID         int64  `json:"id"`
+			LeaseToken string `json:"lease_token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &createdBody))
+
+	credential := performJSON(t, router, http.MethodPost, "/extension/tasks/"+strconv.FormatInt(createdBody.Data.ID, 10)+"/browser-credential", `{
+		"device_id": "chrome-1",
+		"lease_token": "`+createdBody.Data.LeaseToken+`"
+	}`)
+	require.Equal(t, http.StatusOK, credential.Code, credential.Body.String())
+	require.Contains(t, credential.Body.String(), `"supplier_type":"gemini"`)
+}
+
 func TestExtensionHandlerReportSupplierCandidateUpdatesExistingSupplierCredential(t *testing.T) {
 	router := newOperationsHandlerTestRouter()
 

@@ -181,11 +181,13 @@ func ProvideService(
 	balanceSyncer BalanceSyncer,
 	healthSyncer HealthSyncer,
 	usageCostSyncer UsageCostSyncer,
+	costSyncer CostSyncer,
 	channelChecker ChannelChecker,
 	purityChecker PurityChecker,
 	sessionRefresher SessionRefresher,
 ) *Service {
 	return NewServiceWithDependenciesAndRepository(repo, supplierService, extensionService, groupSyncer, rateSyncer, balanceSyncer, healthSyncer, usageCostSyncer, channelChecker).
+		WithCostSyncer(costSyncer).
 		WithPurityChecker(purityChecker).
 		WithSessionRefresher(sessionRefresher)
 }

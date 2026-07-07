@@ -68,6 +68,8 @@ export function attachSupplierDialogs(ctx: any) {
     filters.type = ''
     filters.runtime_status = ''
     filters.health_status = ''
+    filters.capability_status = ''
+    filters.integration_protocol = ''
     channelProtocolFilter.value = 'openai'
     moreMenuOpen.value = false
   }

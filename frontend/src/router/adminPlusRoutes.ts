@@ -158,6 +158,12 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     meta: adminMeta('数据备份')
   },
   {
+    path: '/admin/import-export',
+    name: 'AdminPlusImportExport',
+    component: () => import('@/views/admin/ImportExportView.vue'),
+    meta: adminMeta('导入/导出')
+  },
+  {
     path: '/admin/collection/scheduler',
     redirect: redirectWithQuery('/admin/scheduler')
   },

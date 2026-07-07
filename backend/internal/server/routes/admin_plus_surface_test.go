@@ -14,6 +14,7 @@ import (
 	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
+	importexportapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/importexport"
 	mailverificationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
 	notificationsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
 	proxyapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/proxy"
@@ -100,6 +101,7 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 			Sub2API:          adminplushandler.NewSub2APIHandler(sub2apiapp.NewService(newRouteSurfaceSub2APIRepository(), newRouteSurfaceSub2APIRuntimeReader())),
 			Proxy:            adminplushandler.NewProxyHandler(proxyapp.NewService(nil, nil, nil, nil, proxyapp.RuntimeConfig{})),
 			Backup:           adminplushandler.NewBackupHandler(nil, nil, nil, nil),
+			ImportExport:     adminplushandler.NewImportExportHandler(importexportapp.NewService(nil)),
 		},
 	}
 
@@ -236,6 +238,10 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"POST /api/v1/admin-plus/backups/:id/restore",
 		"GET /api/v1/admin-plus/backups/:id/download-url",
 		"DELETE /api/v1/admin-plus/backups/:id",
+		"GET /api/v1/admin-plus/import-export/scope",
+		"GET /api/v1/admin-plus/import-export/export",
+		"POST /api/v1/admin-plus/import-export/preview",
+		"POST /api/v1/admin-plus/import-export/import",
 		"GET /api/v1/admin-plus/server-renewal",
 		"PUT /api/v1/admin-plus/server-renewal",
 		"GET /api/v1/admin-plus/mails/oauth/config",

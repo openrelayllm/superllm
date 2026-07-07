@@ -41,6 +41,9 @@ func TestClientDirectLoginStoresCookieAndProbesSelfWithUserHeader(t *testing.T) 
 		case "/api/user/self":
 			require.Equal(t, http.MethodGet, r.Method)
 			require.Equal(t, "42", r.Header.Get("New-Api-User"))
+			require.Equal(t, "42", r.Header.Get("Veloera-User"))
+			require.Equal(t, "42", r.Header.Get("X-User-Id"))
+			require.Equal(t, "42", r.Header.Get("neo-api-user"))
 			require.Equal(t, "session=signed-session", r.Header.Get("Cookie"))
 			sawSelf = true
 			_, _ = w.Write([]byte(`{"success":true,"message":"","data":{"id":42,"username":"ops","display_name":"Ops","role":1,"status":1,"group":"default","quota":12345,"used_quota":67,"request_count":8}}`))
@@ -71,6 +74,12 @@ func TestClientDirectLoginStoresCookieAndProbesSelfWithUserHeader(t *testing.T) 
 	require.NotNil(t, result.ExpiresAt)
 	require.Equal(t, "New-Api-User", result.SessionBundle["auth_header_name"])
 	require.Equal(t, "42", result.SessionBundle["auth_header_value"])
+	headers, ok := result.SessionBundle["required_headers"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "42", headers["New-Api-User"])
+	require.Equal(t, "42", headers["Veloera-User"])
+	require.Equal(t, "42", headers["X-User-Id"])
+	require.Equal(t, "42", headers["neo-api-user"])
 
 	contextValue, ok := result.SessionBundle["context"].(map[string]any)
 	require.True(t, ok)
@@ -128,6 +137,8 @@ func TestClientDirectLoginWithAccessTokenStoresAuthorizationAndUserHeader(t *tes
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/user/self", r.URL.Path)
 		require.Equal(t, "42", r.Header.Get("New-Api-User"))
+		require.Equal(t, "42", r.Header.Get("Veloera-User"))
+		require.Equal(t, "42", r.Header.Get("X-User-Id"))
 		require.Equal(t, "new-api-access-token", r.Header.Get("Authorization"))
 		require.Empty(t, r.Header.Get("Cookie"))
 		w.Header().Set("Content-Type", "application/json")
@@ -155,12 +166,132 @@ func TestClientDirectLoginWithAccessTokenStoresAuthorizationAndUserHeader(t *tes
 	headers, ok := result.SessionBundle["required_headers"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "42", headers["New-Api-User"])
+	require.Equal(t, "42", headers["Veloera-User"])
+	require.Equal(t, "42", headers["X-User-Id"])
 	contextValue, ok := result.SessionBundle["context"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "access_token", contextValue["login_method"])
 	require.Equal(t, "42", contextValue["user_id"])
 	require.Equal(t, "10", contextValue["role"])
 	require.Equal(t, "enabled", contextValue["status"])
+}
+
+func TestClientDirectLoginUsesAccessTokenFromLoginResponseWhenCookieMissing(t *testing.T) {
+	now := time.Date(2026, 6, 22, 10, 45, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/user/login":
+			require.Equal(t, http.MethodPost, r.Method)
+			_, _ = w.Write([]byte(`{"success":true,"message":"","data":{"id":42,"username":"root","display_name":"Root","role":10,"status":1,"group":"default","access_token":"login-access-token"}}`))
+		case "/api/user/self":
+			require.Equal(t, "42", r.Header.Get("New-Api-User"))
+			require.Equal(t, "login-access-token", r.Header.Get("Authorization"))
+			require.Empty(t, r.Header.Get("Cookie"))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":42,"username":"root","display_name":"Root","role":10,"status":1,"group":"default","quota":2500000,"used_quota":0,"request_count":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.now = func() time.Time { return now }
+	result, err := client.DirectLogin(context.Background(), ports.DirectLoginInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Username:   "root",
+		Password:   "secret",
+	})
+
+	require.NoError(t, err)
+	require.Nil(t, result.ExpiresAt)
+	require.Equal(t, "login-access-token", result.SessionBundle["access_token"])
+	require.Equal(t, "access_token_from_login_response", result.Diagnostics["login_method"])
+	require.Equal(t, "42", result.SessionBundle["auth_header_value"])
+}
+
+func TestClientDirectLoginWithAccessTokenInfersUserIDFromJWT(t *testing.T) {
+	jwt := "eyJhbGciOiJub25lIn0.eyJzdWIiOiI0MiJ9.sig"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/user/self", r.URL.Path)
+		require.Equal(t, "42", r.Header.Get("New-Api-User"))
+		require.Equal(t, jwt, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"id":42,"username":"root","display_name":"Root","role":10,"status":1,"group":"default","quota":2500000,"used_quota":0,"request_count":1}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.DirectLogin(context.Background(), ports.DirectLoginInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Token:      jwt,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "42", result.SessionBundle["auth_header_value"])
+	require.Equal(t, jwt, result.SessionBundle["access_token"])
+}
+
+func TestClientDirectLoginWithAccessTokenRetriesBearerAuthorization(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		require.Equal(t, "/api/user/self", r.URL.Path)
+		require.Equal(t, "42", r.Header.Get("New-Api-User"))
+		w.Header().Set("Content-Type", "application/json")
+		if attempts == 1 {
+			require.Equal(t, "new-api-access-token", r.Header.Get("Authorization"))
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"success":false,"message":"invalid token"}`))
+			return
+		}
+		require.Equal(t, "Bearer new-api-access-token", r.Header.Get("Authorization"))
+		_, _ = w.Write([]byte(`{"success":true,"data":{"id":42,"username":"root","display_name":"Root","role":10,"status":1,"group":"default","quota":2500000,"used_quota":0,"request_count":1}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.DirectLogin(context.Background(), ports.DirectLoginInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Token:      `{"access_token":"new-api-access-token","user_id":42}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, attempts)
+	require.Equal(t, "42", result.SessionBundle["auth_header_value"])
+}
+
+func TestClientProbeSelfUsesCompatibleUserHeaderVariants(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/user/self", r.URL.Path)
+		require.Equal(t, "9", r.Header.Get("New-Api-User"))
+		require.Equal(t, "9", r.Header.Get("Veloera-User"))
+		require.Equal(t, "9", r.Header.Get("X-User-Id"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"id":9,"username":"alice","role":1,"status":1,"quota":2500000,"used_quota":1000000,"request_count":3}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.ProbeSub2APIUserProfile(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Bundle: map[string]any{
+			"provider_type":    "new_api",
+			"required_headers": map[string]any{"Veloera-User": "9"},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "new_api", result.SystemType)
+	require.Equal(t, int64(9), result.Profile.ID)
 }
 
 func TestClientDirectLoginWithAccessTokenRequiresUserID(t *testing.T) {
@@ -270,6 +401,40 @@ func TestClientReadGroups(t *testing.T) {
 	require.ElementsMatch(t, []string{"default", "vip"}, []string{result.Groups[0].ExternalGroupID, result.Groups[1].ExternalGroupID})
 }
 
+func TestClientReadGroupsFallsBackToUserGroupMap(t *testing.T) {
+	var sawFallback bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		require.Equal(t, "9", r.Header.Get("New-Api-User"))
+		switch r.URL.Path {
+		case "/api/user/self/groups":
+			http.NotFound(w, r)
+			_, _ = w.Write([]byte(`{"message":"not found"}`))
+		case "/api/user_group_map":
+			sawFallback = true
+			_, _ = w.Write([]byte(`{"success":true,"data":["default","vip"]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.ReadGroups(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Bundle: map[string]any{
+			"provider_type":    "new_api",
+			"required_headers": map[string]any{"New-Api-User": "9"},
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, sawFallback)
+	require.ElementsMatch(t, []string{"default", "vip"}, []string{result.Groups[0].ExternalGroupID, result.Groups[1].ExternalGroupID})
+}
+
 func TestClientCreateKeyCreatesTokenSearchesAndReadsSecret(t *testing.T) {
 	var created bool
 	var searchCount int
@@ -334,6 +499,21 @@ func TestClientCreateKeyCreatesTokenSearchesAndReadsSecret(t *testing.T) {
 	require.Equal(t, "sk-raw-new-api-secret", result.Secret)
 	require.Equal(t, "active", result.Status)
 	require.NotContains(t, result.RawPayload, "key")
+}
+
+func TestParseNewAPITokenListSupportsResponseVariants(t *testing.T) {
+	tests := []map[string]any{
+		{"data": map[string]any{"items": []any{map[string]any{"id": float64(701), "name": "AdminPlus", "group": "default"}}}},
+		{"data": map[string]any{"list": []any{map[string]any{"id": float64(702), "name": "AdminPlus", "group": "default"}}}},
+		{"data": []any{map[string]any{"id": float64(703), "name": "AdminPlus", "group": "default"}}},
+		{"items": []any{map[string]any{"id": float64(704), "name": "AdminPlus", "group": "default"}}},
+		{"list": []any{map[string]any{"id": float64(705), "name": "AdminPlus", "group": "default"}}},
+	}
+	for _, payload := range tests {
+		tokens := parseNewAPITokenList(payload)
+		require.Len(t, tokens, 1)
+		require.Equal(t, "AdminPlus", tokens[0].Name)
+	}
 }
 
 func TestClientCreateKeyConvertsQuotaUSDToNewAPIUnits(t *testing.T) {

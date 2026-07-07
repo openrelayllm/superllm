@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Annotated tag to publish, for example v0.38.0'
+        description: 'Annotated tag to publish, for example v0.39.0'
         required: true
         type: string
 

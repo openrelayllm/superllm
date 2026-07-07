@@ -57,6 +57,8 @@ export function attachSuppliersData(ctx: any) {
         type: filters.type || undefined,
         runtime_status: filters.runtime_status || undefined,
         health_status: filters.health_status || undefined,
+        capability_status: filters.capability_status || undefined,
+        integration_protocol: filters.integration_protocol || undefined,
         page: pagination.page,
         page_size: pagination.page_size
       })

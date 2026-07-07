@@ -543,19 +543,14 @@ func stringFromPayload(in map[string]any, key string) string {
 }
 
 func normalizeCaptureSupplierType(value string) adminplusdomain.SupplierType {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	switch normalized {
-	case "":
-		return ""
-	case "newapi", "new-api", "new_api":
-		return adminplusdomain.SupplierTypeNewAPI
-	default:
-		supplierType := adminplusdomain.NormalizeSupplierType(normalized)
-		if supplierType.Valid() {
-			return supplierType
-		}
+	supplierType := adminplusdomain.NormalizeSupplierType(value)
+	if supplierType == "" {
 		return ""
 	}
+	if supplierType.Valid() {
+		return supplierType
+	}
+	return ""
 }
 
 func normalizeReportSupplierKind(value string, supplierType adminplusdomain.SupplierType) adminplusdomain.SupplierKind {

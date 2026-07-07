@@ -2,7 +2,7 @@
 <TablePageLayout>
   <template #filters>
     <div class="flex flex-wrap-reverse items-start justify-between gap-3">
-      <div class="grid flex-1 gap-3 lg:grid-cols-[minmax(220px,1fr)_150px_160px_160px_160px_160px]">
+      <div class="grid flex-1 gap-3 lg:grid-cols-[minmax(220px,1fr)_150px_150px_150px_150px_150px_150px_150px]">
         <label class="block">
           <span class="input-label">搜索</span>
           <div class="relative">
@@ -43,6 +43,15 @@
           </select>
         </label>
         <label class="block">
+          <span class="input-label">集成协议</span>
+          <select v-model="filters.integration_protocol" class="input">
+            <option value="">全部</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+          </select>
+        </label>
+        <label class="block">
           <span class="input-label">运行状态</span>
           <select v-model="filters.runtime_status" class="input">
             <option value="">全部</option>
@@ -60,6 +69,17 @@
             <option value="unavailable">不可用</option>
             <option value="credential_invalid">凭据失效</option>
             <option value="paused">暂停</option>
+          </select>
+        </label>
+        <label class="block">
+          <span class="input-label">能力状态</span>
+          <select v-model="filters.capability_status" class="input">
+            <option value="">全部</option>
+            <option value="available">已可用</option>
+            <option value="needs_session">需会话</option>
+            <option value="needs_readonly_db">需只读库</option>
+            <option value="planned">待接入</option>
+            <option value="unsupported">不支持</option>
           </select>
         </label>
       </div>
@@ -209,9 +229,74 @@
       </template>
 
       <template #cell-kind_type="{ row }">
-        <div class="flex min-w-[150px] flex-wrap gap-1">
-          <span class="badge badge-gray">{{ kindLabel(row.kind) }}</span>
-          <span class="badge badge-primary">{{ typeLabel(row.type) }}</span>
+        <div class="min-w-[180px] max-w-[220px]">
+          <div class="flex flex-wrap gap-1">
+            <span class="badge badge-gray">{{ kindLabel(row.kind) }}</span>
+            <span class="badge badge-primary">{{ typeLabel(row.type) }}</span>
+            <span
+              v-if="row.platform_hint"
+              class="badge"
+              :class="supplierPlatformHintBadgeClass(row)"
+              :title="supplierPlatformHintTitle(row)"
+            >
+              {{ row.platform_hint.label }}
+            </span>
+          </div>
+          <div v-if="row.integration_hint" class="mt-1.5 space-y-1 text-xs">
+            <div class="flex min-w-0 items-center gap-1.5" :title="supplierIntegrationTitle(row)">
+              <span class="badge shrink-0" :class="supplierIntegrationBadgeClass(row)">
+                {{ supplierIntegrationProtocolLabel(row) }}
+              </span>
+              <a
+                v-if="row.integration_hint.docs_url"
+                :href="row.integration_hint.docs_url"
+                target="_blank"
+                rel="noreferrer"
+                class="min-w-0 truncate text-primary-600 hover:underline dark:text-primary-400"
+              >
+                {{ row.integration_hint.provider_label }}
+              </a>
+              <span v-else class="min-w-0 truncate text-gray-600 dark:text-dark-300">
+                {{ row.integration_hint.provider_label }}
+              </span>
+              <span v-if="supplierIntegrationSetupLabel(row)" class="badge badge-warning shrink-0">
+                {{ supplierIntegrationSetupLabel(row) }}
+              </span>
+            </div>
+            <div v-if="supplierIntegrationModelsLabel(row)" class="truncate text-gray-500 dark:text-dark-400" :title="supplierIntegrationModelsLabel(row)">
+              推荐 {{ supplierIntegrationModelsLabel(row) }}
+            </div>
+            <div v-if="supplierIntegrationSetupLabel(row)" class="truncate text-amber-600 dark:text-amber-300">
+              先保存 Base URL + Key，再补推荐模型
+            </div>
+          </div>
+          <div v-if="supplierVisibleEndpointCandidates(row).length > 0" class="mt-1.5 flex min-w-0 flex-wrap items-center gap-1 text-xs">
+            <span class="shrink-0 text-gray-500 dark:text-dark-400">API</span>
+            <span
+              v-for="candidate in supplierVisibleEndpointCandidates(row)"
+              :key="candidate.id"
+              class="badge"
+              :class="supplierEndpointCandidateBadgeClass(candidate)"
+              :title="supplierEndpointCandidateTitle(candidate)"
+            >
+              {{ supplierEndpointCandidateLabel(candidate) }}
+            </span>
+            <span v-if="supplierHiddenEndpointCandidateCount(row) > 0" class="badge badge-gray">
+              +{{ supplierHiddenEndpointCandidateCount(row) }}
+            </span>
+          </div>
+          <div v-if="supplierVisibleURLHints(row).length > 0" class="mt-1 flex min-w-0 flex-wrap items-center gap-1 text-xs">
+            <span class="shrink-0 text-gray-500 dark:text-dark-400">URL</span>
+            <span
+              v-for="hint in supplierVisibleURLHints(row)"
+              :key="hint.key"
+              class="badge"
+              :class="supplierURLHintBadgeClass(hint)"
+              :title="supplierURLHintTitle(hint)"
+            >
+              {{ hint.label }}
+            </span>
+          </div>
         </div>
       </template>
 
@@ -499,6 +584,44 @@
               <span v-if="row.credential.redis_configured" class="badge badge-primary">Redis</span>
             </div>
           </div>
+          <div v-if="supplierVisibleCapabilities(row).length > 0" class="flex items-center gap-2">
+            <span class="w-10 shrink-0 text-gray-500 dark:text-dark-400">能力</span>
+            <div class="flex flex-wrap gap-1">
+              <span
+                v-for="capability in supplierVisibleCapabilities(row)"
+                :key="capability.key"
+                class="badge"
+                :class="supplierCapabilityBadgeClass(capability)"
+                :title="supplierCapabilityTitle(capability)"
+              >
+                {{ capability.label }}
+              </span>
+              <span v-if="supplierHiddenCapabilityCount(row) > 0" class="badge badge-gray">
+                +{{ supplierHiddenCapabilityCount(row) }}
+              </span>
+            </div>
+          </div>
+          <div v-if="supplierVisibleCapabilities(row).length > 0" class="flex items-center gap-2">
+            <span class="w-10 shrink-0 text-gray-500 dark:text-dark-400">摘要</span>
+            <span class="text-gray-500 dark:text-dark-400">{{ supplierCapabilitySummary(row) }}</span>
+          </div>
+          <div v-if="supplierVisibleOperationHints(row).length > 0" class="flex items-center gap-2">
+            <span class="w-10 shrink-0 text-gray-500 dark:text-dark-400">建议</span>
+            <div class="flex flex-wrap gap-1">
+              <span
+                v-for="hint in supplierVisibleOperationHints(row)"
+                :key="hint.key"
+                class="badge"
+                :class="supplierOperationHintBadgeClass(hint)"
+                :title="supplierOperationHintTitle(hint)"
+              >
+                {{ hint.label }}
+              </span>
+              <span v-if="supplierHiddenOperationHintCount(row) > 0" class="badge badge-gray">
+                +{{ supplierHiddenOperationHintCount(row) }}
+              </span>
+            </div>
+          </div>
         </div>
       </template>
 
@@ -643,6 +766,30 @@ const {
   credentialTokenBadgeTitle,
   oneClickLoginTitle,
   hasCredential,
+  supplierVisibleCapabilities,
+  supplierHiddenCapabilityCount,
+  supplierCapabilityBadgeClass,
+  supplierCapabilityTitle,
+  supplierCapabilitySummary,
+  supplierIntegrationBadgeClass,
+  supplierIntegrationProtocolLabel,
+  supplierIntegrationTitle,
+  supplierIntegrationModelsLabel,
+  supplierIntegrationSetupLabel,
+  supplierPlatformHintBadgeClass,
+  supplierPlatformHintTitle,
+  supplierVisibleEndpointCandidates,
+  supplierHiddenEndpointCandidateCount,
+  supplierEndpointCandidateLabel,
+  supplierEndpointCandidateBadgeClass,
+  supplierEndpointCandidateTitle,
+  supplierVisibleURLHints,
+  supplierURLHintBadgeClass,
+  supplierURLHintTitle,
+  supplierVisibleOperationHints,
+  supplierHiddenOperationHintCount,
+  supplierOperationHintBadgeClass,
+  supplierOperationHintTitle,
   loadSuppliers,
   openScheduleListDialog,
   handlePageChange,

@@ -17,6 +17,18 @@ type Router struct {
 	newapi  *newapiprovider.Client
 }
 
+var newAPIUserIDHeaderNames = []string{
+	"New-Api-User",
+	"New-API-User",
+	"Veloera-User",
+	"voapi-user",
+	"User-id",
+	"X-User-Id",
+	"Rix-Api-User",
+	"neo-api-user",
+	"new-api-user",
+}
+
 func New(sub2api *sub2apiprovider.SessionProfileClient, newapi *newapiprovider.Client) *Router {
 	return &Router{sub2api: sub2api, newapi: newapi}
 }
@@ -224,6 +236,8 @@ func normalizeProviderType(value string) string {
 	switch v {
 	case "newapi", "new-api":
 		return "new_api"
+	case "subapi", "sub api", "sub-api", "sub_api", "sub2api", "sub2 api", "sub2-api", "sub2_api":
+		return "sub2api"
 	default:
 		return v
 	}
@@ -289,14 +303,22 @@ func hasNewAPISessionEvidence(bundle map[string]any) bool {
 		return false
 	}
 	requiredHeaders := mapValue(bundle, "required_headers")
-	if firstNonEmpty(
-		stringValue(requiredHeaders, "New-Api-User"),
-		stringValue(requiredHeaders, "New-API-User"),
-		stringValue(requiredHeaders, "new-api-user"),
-	) != "" {
-		return true
+	for _, headerName := range newAPIUserIDHeaderNames {
+		if stringValue(requiredHeaders, headerName) != "" {
+			return true
+		}
 	}
-	return strings.EqualFold(strings.TrimSpace(stringValue(bundle, "auth_header_name")), "New-Api-User")
+	return isNewAPIUserIDHeaderName(stringValue(bundle, "auth_header_name"))
+}
+
+func isNewAPIUserIDHeaderName(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, headerName := range newAPIUserIDHeaderNames {
+		if value == strings.ToLower(headerName) {
+			return true
+		}
+	}
+	return false
 }
 
 func mapValue(in map[string]any, key string) map[string]any {

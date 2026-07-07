@@ -86,11 +86,15 @@ type supplierSiteMatchRequest struct {
 func (h *SupplierHandler) List(c *gin.Context) {
 	page := parsePagination(c)
 	items, err := h.service.List(c.Request.Context(), suppliersapp.SupplierFilter{
-		Kind:          adminplusdomain.NormalizeSupplierKind(c.Query("kind")),
-		Type:          adminplusdomain.NormalizeSupplierType(c.Query("type")),
-		RuntimeStatus: adminplusdomain.NormalizeSupplierRuntimeStatus(c.Query("runtime_status")),
-		HealthStatus:  adminplusdomain.NormalizeSupplierHealthStatus(c.Query("health_status")),
-		Query:         c.Query("q"),
+		Kind:                adminplusdomain.NormalizeSupplierKind(c.Query("kind")),
+		Type:                adminplusdomain.NormalizeSupplierType(c.Query("type")),
+		RuntimeStatus:       adminplusdomain.NormalizeSupplierRuntimeStatus(c.Query("runtime_status")),
+		HealthStatus:        adminplusdomain.NormalizeSupplierHealthStatus(c.Query("health_status")),
+		CapabilityStatus:    adminplusdomain.NormalizeSupplierCapabilityStatus(c.Query("capability_status")),
+		IntegrationProtocol: c.Query("integration_protocol"),
+		PlatformHint:        c.Query("platform_hint"),
+		PlatformFamily:      c.Query("platform_family"),
+		Query:               c.Query("q"),
 	})
 	if response.ErrorFrom(c, err) {
 		return

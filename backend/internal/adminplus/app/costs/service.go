@@ -549,6 +549,8 @@ func normalizeProviderType(value string) string {
 		return "sub2api"
 	case "newapi", "new-api":
 		return "new_api"
+	case "subapi", "sub api", "sub-api", "sub_api", "sub2api", "sub2 api", "sub2-api", "sub2_api":
+		return "sub2api"
 	default:
 		return value
 	}

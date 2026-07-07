@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRouterProbeProfileUsesNewAPIWhenBundleHasNewAPIUserHeader(t *testing.T) {
+func TestRouterProbeProfileUsesNewAPIWhenBundleHasCompatibleUserHeader(t *testing.T) {
 	var sawSelf bool
 	var sawSub2APIProfile bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -22,6 +22,7 @@ func TestRouterProbeProfileUsesNewAPIWhenBundleHasNewAPIUserHeader(t *testing.T)
 		case "/api/user/self":
 			sawSelf = true
 			require.Equal(t, "9", r.Header.Get("New-Api-User"))
+			require.Equal(t, "9", r.Header.Get("Veloera-User"))
 			_, _ = w.Write([]byte(`{"success":true,"data":{"id":9,"username":"alice","role":1,"status":1,"quota":500000,"used_quota":0}}`))
 		case "/api/v1/user/profile":
 			sawSub2APIProfile = true
@@ -38,7 +39,7 @@ func TestRouterProbeProfileUsesNewAPIWhenBundleHasNewAPIUserHeader(t *testing.T)
 		Origin:     server.URL,
 		APIBaseURL: server.URL,
 		Bundle: map[string]any{
-			"required_headers": map[string]any{"New-Api-User": "9"},
+			"required_headers": map[string]any{"Veloera-User": "9"},
 		},
 	})
 

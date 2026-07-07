@@ -2,6 +2,20 @@
 const CONFIG_KEY = 'adminPlusOperatorConfig'
 const LAST_CAPTURE_RESULT_KEY = 'adminPlusLastCaptureResult'
 const DEFAULT_CONFIG_PATH = 'config/default-config.json'
+const NEW_API_USER_HEADER_NAMES = [
+  'New-Api-User',
+  'New-API-User',
+  'Veloera-User',
+  'voapi-user',
+  'User-id',
+  'X-User-Id',
+  'Rix-Api-User',
+  'neo-api-user'
+]
+const NEW_API_USER_HEADER_ALIASES = [
+  ...NEW_API_USER_HEADER_NAMES,
+  'new-api-user'
+]
 let registrationTaskRun = null
 
 async function loadConfig() {
@@ -1206,7 +1220,8 @@ async function enrichCaptureResult(result, supplier, fallbackURL) {
       cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
     }
   }
-  normalizeNewAPISessionBundle(mergedBundle, supplier, captureURL)
+  await normalizeNewAPISessionBundle(mergedBundle, supplier, captureURL)
+  normalizeSub2APISessionBundle(mergedBundle, supplier, captureURL)
   return {
     ...result,
     session_bundle: mergedBundle,
@@ -1242,9 +1257,24 @@ async function collectCookies(url) {
 function hasSessionEvidence(bundle) {
   const tokens = bundle?.tokens || {}
   if (providerTypeFromBundle(bundle) === 'new_api') {
-    return Boolean((bundle?.cookies || []).length > 0 && newAPIUserHeader(bundle))
+    return Boolean(newAPIUserHeader(bundle) && newAPICredentialEvidence(bundle))
   }
   return Boolean(tokens.access_token || tokens.refresh_token || tokens.csrf_token || (bundle?.cookies || []).length > 0)
+}
+
+function newAPICredentialEvidence(bundle) {
+  const tokens = bundle?.tokens || {}
+  return Boolean(
+    (bundle?.cookies || []).length > 0 ||
+    bundle?.access_token ||
+    bundle?.accessToken ||
+    bundle?.auth_token ||
+    bundle?.authToken ||
+    tokens.access_token ||
+    tokens.accessToken ||
+    tokens.auth_token ||
+    tokens.authToken
+  )
 }
 
 function summarizeSessionBundle(bundle) {
@@ -1256,9 +1286,9 @@ function summarizeSessionBundle(bundle) {
     provider_type: providerTypeFromBundle(bundle),
     captured_at: bundle?.captured_at || '',
     expires_at: bundle?.expires_at || '',
-    has_access_token: Boolean(tokens.access_token),
-    has_refresh_token: Boolean(tokens.refresh_token),
-    has_csrf_token: Boolean(tokens.csrf_token),
+    has_access_token: Boolean(bundle?.access_token || bundle?.accessToken || tokens.access_token || tokens.accessToken),
+    has_refresh_token: Boolean(bundle?.refresh_token || bundle?.refreshToken || tokens.refresh_token || tokens.refreshToken),
+    has_csrf_token: Boolean(bundle?.csrf_token || bundle?.csrfToken || tokens.csrf_token || tokens.csrfToken),
     cookie_count: (bundle?.cookies || []).length,
     api_base_url: context.api_base_url || '',
     user_id: context.user_id || '',
@@ -1272,7 +1302,35 @@ function summarizeSessionBundle(bundle) {
   }
 }
 
-function normalizeNewAPISessionBundle(bundle, supplier, captureURL) {
+function normalizeSub2APISessionBundle(bundle, supplier, captureURL) {
+  const providerType = normalizeProviderType(
+    providerTypeFromBundle(bundle) ||
+    supplier?.type ||
+    supplier?.supplier_type ||
+    supplier?.provider_type
+  )
+  if (providerType !== 'sub2api') return bundle
+
+  const context = bundle.context || {}
+  const headers = bundle.required_headers || {}
+  const apiBaseURL = firstNonEmpty(context.api_base_url, bundle.api_base_url, supplier?.api_base_url, originFromURL(captureURL), bundle.origin)
+  const origin = firstNonEmpty(bundle.origin, originFromURL(captureURL), originFromURL(apiBaseURL))
+
+  bundle.provider_type = 'sub2api'
+  bundle.system_type = 'sub2api'
+  bundle.api_base_url = apiBaseURL
+  bundle.origin = origin
+  context.provider_type = 'sub2api'
+  context.system_type = 'sub2api'
+  context.api_base_url = apiBaseURL
+  headers.origin = firstNonEmpty(headers.origin, origin)
+  headers.referer = firstNonEmpty(headers.referer, captureURL, origin)
+  bundle.context = context
+  bundle.required_headers = headers
+  return bundle
+}
+
+async function normalizeNewAPISessionBundle(bundle, supplier, captureURL) {
   const providerType = normalizeProviderType(
     providerTypeFromBundle(bundle) ||
     supplier?.type ||
@@ -1283,12 +1341,18 @@ function normalizeNewAPISessionBundle(bundle, supplier, captureURL) {
 
   const context = bundle.context || {}
   const headers = bundle.required_headers || {}
-  const userID = firstNonEmpty(
+  let userID = normalizePositiveIntegerText(firstNonEmpty(
     newAPIUserHeader(bundle),
     bundle.auth_header_value,
     context.user_id,
     context.id
-  )
+  ))
+  let profile = null
+  if (!userID) {
+    const resolved = await resolveNewAPIUser(bundle, supplier, captureURL)
+    userID = resolved.userID
+    profile = resolved.profile
+  }
 
   bundle.provider_type = 'new_api'
   bundle.system_type = 'new_api'
@@ -1298,14 +1362,278 @@ function normalizeNewAPISessionBundle(bundle, supplier, captureURL) {
   context.system_type = 'new_api'
   context.user_id = userID
   context.api_base_url = firstNonEmpty(context.api_base_url, bundle.api_base_url, supplier?.api_base_url, originFromURL(captureURL), bundle.origin)
+  if (profile) {
+    context.username = firstNonEmpty(context.username, profile.username)
+    context.display_name = firstNonEmpty(context.display_name, profile.display_name, profile.displayName)
+    context.email = firstNonEmpty(context.email, profile.email)
+    context.group = firstNonEmpty(context.group, profile.group)
+    context.role = firstNonEmpty(context.role, profile.role)
+    context.status = firstNonEmpty(context.status, profile.status)
+  }
   headers.origin = firstNonEmpty(headers.origin, bundle.origin, originFromURL(captureURL))
   headers.referer = firstNonEmpty(headers.referer, captureURL)
   if (userID) {
-    headers['New-Api-User'] = userID
+    applyNewAPIUserHeaders(headers, userID)
   }
   bundle.context = context
   bundle.required_headers = headers
   return bundle
+}
+
+async function resolveNewAPIUser(bundle, supplier, captureURL) {
+  const apiBaseURL = firstNonEmpty(
+    bundle?.context?.api_base_url,
+    bundle?.api_base_url,
+    supplier?.api_base_url,
+    originFromURL(captureURL),
+    bundle?.origin
+  )
+  const candidates = newAPIUserIDCandidates(bundle)
+  for (const userID of candidates) {
+    const profile = await probeNewAPIUser(apiBaseURL, userID)
+    if (profile) {
+      return { userID, profile }
+    }
+  }
+  if (candidates.length === 1) {
+    return { userID: candidates[0], profile: null }
+  }
+  return { userID: '', profile: null }
+}
+
+function newAPIUserIDCandidates(bundle) {
+  const context = bundle?.context || {}
+  const headers = bundle?.required_headers || {}
+  const candidates = []
+  const push = (value) => {
+    const text = normalizePositiveIntegerText(value)
+    if (!text || candidates.includes(text)) return
+    candidates.push(text)
+  }
+
+  for (const headerName of NEW_API_USER_HEADER_ALIASES) {
+    push(headers[headerName])
+  }
+  push(bundle?.auth_header_value)
+  push(context.user_id)
+  push(context.id)
+  push(context.uid)
+
+  const tokens = bundle?.tokens || {}
+  for (const tokenValue of [
+    bundle?.access_token,
+    bundle?.accessToken,
+    bundle?.auth_token,
+    bundle?.authToken,
+    tokens.access_token,
+    tokens.accessToken,
+    tokens.auth_token,
+    tokens.authToken
+  ]) {
+    collectNewAPIUserIDsFromText(tokenValue, push)
+  }
+
+  for (const cookie of bundle?.cookies || []) {
+    collectNewAPIUserIDsFromText(`${cookie?.name || ''}=${cookie?.value || ''}`, push)
+    collectNewAPIUserIDsFromText(cookie?.value || '', push)
+  }
+  return candidates
+}
+
+function collectNewAPIUserIDsFromText(value, push) {
+  const raw = String(value || '').trim()
+  if (!raw) return
+  const variants = [raw]
+  try {
+    const decodedURI = decodeURIComponent(raw)
+    if (decodedURI && decodedURI !== raw) variants.push(decodedURI)
+  } catch {
+    // ignore invalid percent encoding
+  }
+  const token = raw.replace(/^Bearer\s+/i, '').trim()
+  const parts = token.split('.')
+  if (parts.length === 3) {
+    const jwtPayload = decodeBase64Loose(parts[1])
+    if (jwtPayload) variants.push(jwtPayload)
+  }
+  for (const variant of [...variants]) {
+    const decoded = decodeBase64Loose(variant)
+    if (decoded) {
+      variants.push(decoded)
+      for (const part of decoded.split('|')) {
+        const nested = decodeBase64Loose(part)
+        if (nested) variants.push(nested)
+      }
+    }
+  }
+
+  for (const text of variants) {
+    collectNewAPIUserIDsFromJSON(text, push)
+    if (isLikelyNewAPIUserEvidenceText(text)) {
+      for (const match of text.matchAll(/_(\d{1,10})(?!\d)/g)) {
+        push(match[1])
+      }
+      for (const match of text.matchAll(/(?:user(?:_?id|name)?|uid|id)[^\d]{0,16}(\d{1,10})(?!\d)/gi)) {
+        push(match[1])
+      }
+      collectNewAPIGobUserIDs(text, push)
+    }
+  }
+}
+
+function isLikelyNewAPIUserEvidenceText(value) {
+  const text = String(value || '').trim()
+  if (!text) return false
+  const lower = text.toLowerCase()
+  return /[{}\[\]":_|;]/.test(text) || lower.includes('user') || lower.includes('uid') || text.includes('\x03int\x04')
+}
+
+function collectNewAPIUserIDsFromJSON(text, push) {
+  const raw = String(text || '').trim()
+  if (!raw || (!raw.startsWith('{') && !raw.startsWith('['))) return
+  try {
+    collectNewAPIUserIDsFromValue(JSON.parse(raw), push, 0)
+  } catch {
+    // ignore non-JSON cookie payloads
+  }
+}
+
+function collectNewAPIUserIDsFromValue(value, push, depth) {
+  if (!value || typeof value !== 'object' || depth > 5) return
+  for (const key of ['id', 'sub', 'user_id', 'userId', 'uid']) {
+    push(value[key])
+  }
+  for (const nested of Object.values(value)) {
+    collectNewAPIUserIDsFromValue(nested, push, depth + 1)
+  }
+}
+
+function collectNewAPIGobUserIDs(text, push) {
+  const bytes = binaryStringToBytes(text)
+  if (bytes.length === 0) return
+  for (const fieldName of ['id', 'Id', 'uid', 'UID', 'user_id', 'UserID', 'UserId']) {
+    for (const id of extractGobFieldInts(bytes, fieldName)) {
+      push(id)
+    }
+  }
+}
+
+function extractGobFieldInts(bytes, fieldName) {
+  const ids = []
+  const marker = [
+    ...utf8Bytes(fieldName),
+    0x03,
+    ...utf8Bytes('int'),
+    0x04
+  ]
+  let start = 0
+  while (start < bytes.length) {
+    const position = indexOfBytes(bytes, marker, start)
+    if (position < 0) break
+    const encodedLength = bytes[position + marker.length]
+    const delimiter = bytes[position + marker.length + 1]
+    if (typeof encodedLength === 'number' && delimiter === 0x00) {
+      const byteLength = encodedLength - 1
+      const valueStart = position + marker.length + 2
+      const valueEnd = valueStart + byteLength
+      if (byteLength > 0 && valueEnd <= bytes.length) {
+        const decoded = decodeGobSignedInt(bytes.slice(valueStart, valueEnd))
+        if (decoded) ids.push(decoded)
+      }
+    }
+    start = position + marker.length
+  }
+  return ids
+}
+
+function decodeGobSignedInt(bytes) {
+  if (!bytes.length) return null
+  let unsigned = 0n
+  if (bytes[0] < 0x80) {
+    unsigned = BigInt(bytes[0])
+  } else {
+    const width = 0x100 - bytes[0]
+    if (width <= 0 || bytes.length !== width + 1) return null
+    for (let index = 1; index < bytes.length; index += 1) {
+      unsigned = (unsigned << 8n) | BigInt(bytes[index])
+    }
+  }
+  const signed = (unsigned & 1n) === 0n ? unsigned >> 1n : -((unsigned >> 1n) + 1n)
+  if (signed <= 0n || signed > BigInt(Number.MAX_SAFE_INTEGER)) return null
+  return Number(signed)
+}
+
+async function probeNewAPIUser(apiBaseURL, userID) {
+  const base = originFromURL(apiBaseURL)
+  if (!base || !userID) return null
+  try {
+    const response = await fetch(`${base}/api/user/self`, {
+      method: 'GET',
+      credentials: 'include',
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        'Cache-Control': 'no-store',
+        ...newAPIUserHeaders(userID)
+      }
+    })
+    if (!response.ok) return null
+    const envelope = await response.json()
+    if (!envelope?.success || !envelope?.data) return null
+    const profileID = normalizePositiveIntegerText(envelope.data.id)
+    if (profileID && profileID !== String(userID)) return null
+    return envelope.data
+  } catch {
+    return null
+  }
+}
+
+function normalizePositiveIntegerText(value) {
+  const text = String(value ?? '').trim()
+  if (!/^\d+$/.test(text)) return ''
+  const numeric = Number(text)
+  if (!Number.isSafeInteger(numeric) || numeric <= 0 || numeric > 10000000) return ''
+  return String(numeric)
+}
+
+function decodeBase64Loose(value) {
+  const raw = String(value || '').trim()
+  if (!raw || raw.length > 8192) return ''
+  const normalized = raw.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+  try {
+    return atob(padded)
+  } catch {
+    return ''
+  }
+}
+
+function binaryStringToBytes(value) {
+  const text = String(value || '')
+  const bytes = []
+  for (let index = 0; index < text.length; index += 1) {
+    bytes.push(text.charCodeAt(index) & 0xff)
+  }
+  return bytes
+}
+
+function utf8Bytes(value) {
+  return Array.from(new TextEncoder().encode(value))
+}
+
+function indexOfBytes(bytes, needle, start) {
+  if (needle.length === 0) return start
+  for (let index = start; index <= bytes.length - needle.length; index += 1) {
+    let matched = true
+    for (let offset = 0; offset < needle.length; offset += 1) {
+      if (bytes[index + offset] !== needle[offset]) {
+        matched = false
+        break
+      }
+    }
+    if (matched) return index
+  }
+  return -1
 }
 
 function providerTypeFromIdentification(identification) {
@@ -1331,13 +1659,28 @@ function providerTypeFromBundle(bundle) {
 function normalizeProviderType(value) {
   const normalized = String(value || '').trim().toLowerCase()
   if (normalized === 'newapi' || normalized === 'new-api') return 'new_api'
-  if (normalized === 'sub-api' || normalized === 'sub2-api') return 'sub2api'
+  if (['subapi', 'sub api', 'sub-api', 'sub_api', 'sub2api', 'sub2 api', 'sub2-api', 'sub2_api'].includes(normalized)) return 'sub2api'
   return normalized
 }
 
 function newAPIUserHeader(bundle) {
   const headers = bundle?.required_headers || {}
-  return firstNonEmpty(headers['New-Api-User'], headers['New-API-User'], headers['new-api-user'])
+  return firstNonEmpty(...NEW_API_USER_HEADER_ALIASES.map((headerName) => headers[headerName]))
+}
+
+function applyNewAPIUserHeaders(headers, userID) {
+  const value = normalizePositiveIntegerText(userID)
+  if (!headers || !value) return headers
+  for (const headerName of NEW_API_USER_HEADER_NAMES) {
+    headers[headerName] = value
+  }
+  return headers
+}
+
+function newAPIUserHeaders(userID) {
+  const headers = {}
+  applyNewAPIUserHeaders(headers, userID)
+  return headers
 }
 
 function originFromURL(value) {

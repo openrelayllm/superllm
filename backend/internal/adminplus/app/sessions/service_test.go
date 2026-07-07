@@ -125,6 +125,156 @@ func TestServiceLoginSupportsNewAPI(t *testing.T) {
 	require.NotContains(t, result.Session.SessionBundleCiphertext, "signed-session")
 }
 
+func TestServiceDecryptedProbeInputRepairsLegacyNewAPIBundle(t *testing.T) {
+	repo := NewMemoryRepository()
+	supplier := &sessionTestSupplierLookup{supplier: &adminplusdomain.Supplier{
+		ID:           9,
+		Name:         "New API",
+		Type:         adminplusdomain.SupplierTypeNewAPI,
+		DashboardURL: "https://newapi.example.com",
+		APIBaseURL:   "https://newapi.example.com",
+	}}
+	cipher := sessionTestCipher{}
+	legacyBundle := map[string]any{
+		"provider_type": "new-api",
+		"origin":        "https://newapi.example.com",
+		"cookies": []any{
+			map[string]any{"name": "session", "value": "signed-session"},
+		},
+		"context": map[string]any{
+			"api_base_url": "https://newapi.example.com",
+			"id":           float64(4111),
+		},
+		"required_headers": map[string]any{
+			"origin": "https://newapi.example.com",
+		},
+	}
+	raw, err := json.Marshal(legacyBundle)
+	require.NoError(t, err)
+	ciphertext, err := cipher.Encrypt(string(raw))
+	require.NoError(t, err)
+	_, err = repo.Upsert(context.Background(), &adminplusdomain.SupplierBrowserSession{
+		SupplierID:              9,
+		SessionSource:           adminplusdomain.SupplierSessionSourceBrowserExtension,
+		Origin:                  "https://newapi.example.com",
+		APIBaseURL:              "https://newapi.example.com",
+		SessionBundleCiphertext: ciphertext,
+		CapturedAt:              time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC),
+		CreatedAt:               time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC),
+		UpdatedAt:               time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+	svc := NewServiceWithDependencies(repo, cipher, supplier, nil)
+
+	input, err := svc.DecryptedProbeInput(context.Background(), 9)
+
+	require.NoError(t, err)
+	headers, ok := input.Bundle["required_headers"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "4111", headers["New-Api-User"])
+	require.Equal(t, "4111", headers["Veloera-User"])
+	require.Equal(t, "4111", headers["X-User-Id"])
+	require.Equal(t, "new_api", input.Bundle["provider_type"])
+	contextValue, ok := input.Bundle["context"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "4111", contextValue["user_id"])
+
+	saved, err := repo.Get(context.Background(), 9)
+	require.NoError(t, err)
+	plain, err := cipher.Decrypt(saved.SessionBundleCiphertext)
+	require.NoError(t, err)
+	require.Contains(t, plain, "X-User-Id")
+	require.Equal(t, true, saved.SessionSummary["has_new_api_user_header"])
+	require.Equal(t, "4111", saved.SessionSummary["user_id"])
+}
+
+func TestServiceDecryptedProbeInputRepairsLegacyNewAPIBundleFromCookie(t *testing.T) {
+	repo := NewMemoryRepository()
+	supplier := &sessionTestSupplierLookup{supplier: &adminplusdomain.Supplier{
+		ID:           9,
+		Name:         "New API",
+		Type:         adminplusdomain.SupplierTypeNewAPI,
+		DashboardURL: "https://newapi.example.com",
+		APIBaseURL:   "https://newapi.example.com",
+	}}
+	cipher := sessionTestCipher{}
+	sessionCookie := base64.RawURLEncoding.EncodeToString([]byte(`{"id":4111,"username":"wutongci"}`))
+	legacyBundle := map[string]any{
+		"provider_type": "new-api",
+		"origin":        "https://newapi.example.com",
+		"cookies": []any{
+			map[string]any{"name": "session", "value": sessionCookie},
+		},
+		"context": map[string]any{
+			"api_base_url": "https://newapi.example.com",
+		},
+		"required_headers": map[string]any{
+			"origin": "https://newapi.example.com",
+		},
+	}
+	raw, err := json.Marshal(legacyBundle)
+	require.NoError(t, err)
+	ciphertext, err := cipher.Encrypt(string(raw))
+	require.NoError(t, err)
+	_, err = repo.Upsert(context.Background(), &adminplusdomain.SupplierBrowserSession{
+		SupplierID:              9,
+		SessionSource:           adminplusdomain.SupplierSessionSourceBrowserExtension,
+		Origin:                  "https://newapi.example.com",
+		APIBaseURL:              "https://newapi.example.com",
+		SessionBundleCiphertext: ciphertext,
+		CapturedAt:              time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC),
+		CreatedAt:               time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC),
+		UpdatedAt:               time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+	svc := NewServiceWithDependencies(repo, cipher, supplier, nil)
+
+	input, err := svc.DecryptedProbeInput(context.Background(), 9)
+
+	require.NoError(t, err)
+	headers, ok := input.Bundle["required_headers"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "4111", headers["New-Api-User"])
+	require.Equal(t, "4111", headers["Veloera-User"])
+	require.Equal(t, "4111", headers["X-User-Id"])
+	contextValue, ok := input.Bundle["context"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "4111", contextValue["user_id"])
+
+	saved, err := repo.Get(context.Background(), 9)
+	require.NoError(t, err)
+	require.Equal(t, true, saved.SessionSummary["has_new_api_user_header"])
+	require.Equal(t, "4111", saved.SessionSummary["user_id"])
+}
+
+func TestCollectNewAPIUserIDsFromTextExtractsBase64Cookie(t *testing.T) {
+	sessionCookie := base64.RawURLEncoding.EncodeToString([]byte(`{"id":4111,"username":"wutongci"}`))
+	candidates := []string{}
+	collectNewAPIUserIDsFromText(sessionCookie, func(value string) {
+		if id := normalizePositiveIntegerText(value); id != "" {
+			candidates = append(candidates, id)
+		}
+	})
+
+	require.Contains(t, candidates, "4111")
+	bundle := map[string]any{
+		"cookies": []any{map[string]any{"name": "session", "value": sessionCookie}},
+	}
+	evidenceCandidates := []string{}
+	for _, cookie := range cookieItemsFromBundle(bundle) {
+		collectNewAPIUserIDsFromText(cookie, func(value string) {
+			if id := normalizePositiveIntegerText(value); id != "" {
+				evidenceCandidates = append(evidenceCandidates, id)
+			}
+		})
+	}
+	require.NotEmpty(t, evidenceCandidates)
+	for _, candidate := range evidenceCandidates {
+		require.Equal(t, "4111", candidate)
+	}
+	require.Equal(t, "4111", uniqueNewAPIUserIDFromEvidence(bundle, nil))
+}
+
 func TestServiceLoginPreservesSecretsAndNormalizesOrigin(t *testing.T) {
 	repo := NewMemoryRepository()
 	supplier := &sessionTestSupplierLookup{supplier: &adminplusdomain.Supplier{

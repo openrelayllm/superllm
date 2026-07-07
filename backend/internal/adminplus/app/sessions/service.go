@@ -1,10 +1,15 @@
 package sessions
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,6 +76,22 @@ type Service struct {
 	bizlog      *bizlogs.Recorder
 	now         func() time.Time
 }
+
+var newAPIUserIDHeaderNames = []string{
+	"New-Api-User",
+	"New-API-User",
+	"Veloera-User",
+	"voapi-user",
+	"User-id",
+	"X-User-Id",
+	"Rix-Api-User",
+	"neo-api-user",
+}
+
+var (
+	newAPIUnderscoreIDPattern = regexp.MustCompile(`_(\d{1,10})`)
+	newAPIContextIDPattern    = regexp.MustCompile(`(?i)(?:user(?:_?id|name)?|uid|id)[^0-9]{0,16}(\d{1,10})`)
+)
 
 func NewService(repo Repository, cipher Cipher) *Service {
 	return &Service{
@@ -339,8 +360,7 @@ func sessionSummaryFromBundle(bundle map[string]any) map[string]any {
 	providerType := firstNonEmpty(stringValue(bundle, "provider_type"), stringValue(context, "provider_type"))
 	systemType := firstNonEmpty(stringValue(bundle, "system_type"), stringValue(context, "system_type"), providerType)
 	newAPIUserHeader := firstNonEmpty(
-		stringValue(requiredHeaders, "New-Api-User"),
-		stringValue(requiredHeaders, "new-api-user"),
+		newAPIUserIDFromBundle(bundle, context, requiredHeaders),
 		stringValue(bundle, "auth_header_value"),
 	)
 	return map[string]any{
@@ -386,7 +406,37 @@ func (s *Service) DecryptedBundle(ctx context.Context, supplierID int64) (map[st
 	if err := json.Unmarshal([]byte(plain), &bundle); err != nil {
 		return nil, nil, err
 	}
+	if normalizeSessionBundleForRead(bundle, session.APIBaseURL, session.Origin) {
+		s.repairDecryptedBundle(ctx, session, bundle)
+	}
 	return bundle, session, nil
+}
+
+func (s *Service) repairDecryptedBundle(ctx context.Context, session *adminplusdomain.SupplierBrowserSession, bundle map[string]any) {
+	if s == nil || s.repo == nil || s.cipher == nil || session == nil || len(bundle) == 0 {
+		return
+	}
+	raw, err := json.Marshal(bundle)
+	if err != nil {
+		return
+	}
+	ciphertext, err := s.cipher.Encrypt(string(raw))
+	if err != nil {
+		return
+	}
+	repaired := *session
+	repaired.SessionBundleCiphertext = ciphertext
+	repaired.SessionSummary = sessionSummaryFromBundle(bundle)
+	repaired.UpdatedAt = s.now().UTC()
+	if repaired.CreatedAt.IsZero() {
+		repaired.CreatedAt = repaired.UpdatedAt
+	}
+	if repaired.CapturedAt.IsZero() {
+		repaired.CapturedAt = repaired.UpdatedAt
+	}
+	if saved, err := s.repo.Upsert(ctx, &repaired); err == nil && saved != nil {
+		*session = *saved
+	}
 }
 
 func (s *Service) DecryptedProbeInput(ctx context.Context, supplierID int64) (ports.SessionProbeInput, error) {
@@ -431,6 +481,366 @@ func (s *Service) ReadChannelMonitors(ctx context.Context, supplierID int64) (*p
 		return nil, err
 	}
 	return s.monitors.ReadChannelMonitors(ctx, input)
+}
+
+func normalizeSessionBundleForRead(bundle map[string]any, apiBaseURL string, origin string) bool {
+	providerType := normalizeSessionProviderType(firstNonEmpty(
+		stringValue(bundle, "provider_type"),
+		stringValue(bundle, "system_type"),
+		stringValueAt(bundle, "context", "provider_type"),
+		stringValueAt(bundle, "context", "system_type"),
+	))
+	if providerType != "new_api" {
+		return false
+	}
+	changed := false
+	contextValue := mapValue(bundle, "context")
+	if contextValue == nil {
+		contextValue = map[string]any{}
+		bundle["context"] = contextValue
+		changed = true
+	}
+	requiredHeaders := mapValue(bundle, "required_headers")
+	if requiredHeaders == nil {
+		requiredHeaders = map[string]any{}
+		bundle["required_headers"] = requiredHeaders
+		changed = true
+	}
+	userID := firstNonEmpty(
+		newAPIUserIDFromBundle(bundle, contextValue, requiredHeaders),
+	)
+	changed = setStringValue(bundle, "provider_type", "new_api") || changed
+	changed = setStringValue(bundle, "system_type", "new_api") || changed
+	changed = setStringValue(contextValue, "provider_type", "new_api") || changed
+	changed = setStringValue(contextValue, "system_type", "new_api") || changed
+	if userID != "" {
+		changed = setStringValue(bundle, "auth_header_name", "New-Api-User") || changed
+		changed = setStringValue(bundle, "auth_header_value", userID) || changed
+		changed = setStringValue(contextValue, "user_id", userID) || changed
+		for _, headerName := range newAPIUserIDHeaderNames {
+			changed = setStringValue(requiredHeaders, headerName, userID) || changed
+		}
+	}
+	apiBaseURL = firstNonEmpty(stringValue(contextValue, "api_base_url"), stringValue(bundle, "api_base_url"), apiBaseURL, origin)
+	if apiBaseURL != "" {
+		changed = setStringValue(contextValue, "api_base_url", apiBaseURL) || changed
+		changed = setStringValue(bundle, "api_base_url", apiBaseURL) || changed
+	}
+	origin = firstNonEmpty(stringValue(bundle, "origin"), originFromRawURL(origin), originFromRawURL(apiBaseURL))
+	if origin != "" {
+		changed = setStringValue(bundle, "origin", origin) || changed
+		changed = setStringValue(requiredHeaders, "origin", origin) || changed
+		if stringValue(requiredHeaders, "referer") == "" {
+			changed = setStringValue(requiredHeaders, "referer", strings.TrimRight(origin, "/")+"/") || changed
+		}
+	}
+	return changed
+}
+
+func newAPIUserIDFromRequiredHeaders(requiredHeaders map[string]any) string {
+	values := make([]string, 0, len(newAPIUserIDHeaderNames)+1)
+	for _, headerName := range newAPIUserIDHeaderNames {
+		values = append(values, stringValue(requiredHeaders, headerName))
+	}
+	values = append(values, stringValue(requiredHeaders, "new-api-user"))
+	return firstNonEmpty(values...)
+}
+
+func newAPIUserIDFromBundle(bundle map[string]any, contextValue map[string]any, requiredHeaders map[string]any) string {
+	return firstNonEmpty(
+		newAPIUserIDFromRequiredHeaders(requiredHeaders),
+		stringValue(bundle, "auth_header_value"),
+		stringValue(contextValue, "user_id"),
+		stringValue(contextValue, "id"),
+		stringValue(contextValue, "uid"),
+		uniqueNewAPIUserIDFromEvidence(bundle, requiredHeaders),
+	)
+}
+
+func uniqueNewAPIUserIDFromEvidence(bundle map[string]any, requiredHeaders map[string]any) string {
+	candidates := make([]string, 0, 2)
+	push := func(value string) {
+		id := normalizePositiveIntegerText(value)
+		if id == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == id {
+				return
+			}
+		}
+		candidates = append(candidates, id)
+	}
+	for _, value := range []string{
+		stringValue(bundle, "access_token"),
+		stringValue(bundle, "accessToken"),
+		stringValueAt(bundle, "tokens", "access_token"),
+		stringValueAt(bundle, "tokens", "accessToken"),
+		stringValue(requiredHeaders, "cookie"),
+		stringValue(bundle, "cookie"),
+		stringValue(bundle, "cookies"),
+	} {
+		collectNewAPIUserIDsFromText(value, push)
+	}
+	for _, cookie := range cookieItemsFromBundle(bundle) {
+		collectNewAPIUserIDsFromText(cookie, push)
+	}
+	if len(candidates) != 1 {
+		return ""
+	}
+	return candidates[0]
+}
+
+func cookieItemsFromBundle(bundle map[string]any) []string {
+	items, ok := bundle["cookies"].([]any)
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(items)*2)
+	for _, item := range items {
+		cookie, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := stringFromAny(cookie["name"])
+		value := stringFromAny(cookie["value"])
+		if name != "" || value != "" {
+			out = append(out, name+"="+value, value)
+		}
+	}
+	return out
+}
+
+func collectNewAPIUserIDsFromText(value string, push func(string)) {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return
+	}
+	variants := []string{raw}
+	if decoded, err := url.QueryUnescape(raw); err == nil && decoded != "" && decoded != raw {
+		variants = append(variants, decoded)
+	}
+	if payload := decodeJWTPayload(raw); payload != "" {
+		variants = append(variants, payload)
+	}
+	for _, part := range strings.Split(raw, ";") {
+		if _, cookieValue, ok := strings.Cut(strings.TrimSpace(part), "="); ok {
+			cookieValue = strings.TrimSpace(cookieValue)
+			if cookieValue != "" {
+				variants = append(variants, cookieValue)
+			}
+		}
+	}
+	for index := 0; index < len(variants) && index < 64; index++ {
+		text := variants[index]
+		if decoded := decodeBase64Loose(text); decoded != "" {
+			variants = append(variants, decoded)
+			for _, part := range strings.Split(decoded, "|") {
+				if nested := decodeBase64Loose(part); nested != "" {
+					variants = append(variants, nested)
+				}
+			}
+		}
+		collectNewAPIUserIDsFromJSON(text, push)
+		if isLikelyNewAPIUserEvidenceText(text) {
+			for _, match := range newAPIUnderscoreIDPattern.FindAllStringSubmatch(text, -1) {
+				if len(match) > 1 {
+					push(match[1])
+				}
+			}
+			for _, match := range newAPIContextIDPattern.FindAllStringSubmatch(text, -1) {
+				if len(match) > 1 {
+					push(match[1])
+				}
+			}
+			collectNewAPIGobUserIDs([]byte(text), push)
+		}
+	}
+}
+
+func isLikelyNewAPIUserEvidenceText(value string) bool {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return false
+	}
+	lower := strings.ToLower(text)
+	return strings.ContainsAny(text, "{}[]\":_|;") ||
+		strings.Contains(lower, "user") ||
+		strings.Contains(lower, "uid") ||
+		strings.Contains(text, "\x03int\x04")
+}
+
+func decodeJWTPayload(value string) string {
+	token := strings.TrimSpace(value)
+	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		token = strings.TrimSpace(token[7:])
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		payload, err = base64.URLEncoding.DecodeString(parts[1])
+	}
+	if err != nil {
+		return ""
+	}
+	return string(payload)
+}
+
+func decodeBase64Loose(value string) string {
+	raw := strings.TrimSpace(value)
+	if raw == "" || len(raw) > 8192 {
+		return ""
+	}
+	encodings := []*base64.Encoding{
+		base64.RawStdEncoding,
+		base64.StdEncoding,
+		base64.RawURLEncoding,
+		base64.URLEncoding,
+	}
+	for _, encoding := range encodings {
+		decoded, err := encoding.DecodeString(raw)
+		if err == nil && len(decoded) > 0 {
+			return string(decoded)
+		}
+	}
+	return ""
+}
+
+func collectNewAPIUserIDsFromJSON(text string, push func(string)) {
+	raw := strings.TrimSpace(text)
+	if raw == "" || (!strings.HasPrefix(raw, "{") && !strings.HasPrefix(raw, "[")) {
+		return
+	}
+	var value any
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return
+	}
+	collectNewAPIUserIDsFromValue(value, push, 0)
+}
+
+func collectNewAPIUserIDsFromValue(value any, push func(string), depth int) {
+	if value == nil || depth > 5 {
+		return
+	}
+	switch v := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"id", "sub", "user_id", "userId", "uid"} {
+			push(stringFromAny(v[key]))
+		}
+		for _, nested := range v {
+			collectNewAPIUserIDsFromValue(nested, push, depth+1)
+		}
+	case []any:
+		for _, nested := range v {
+			collectNewAPIUserIDsFromValue(nested, push, depth+1)
+		}
+	}
+}
+
+func collectNewAPIGobUserIDs(payload []byte, push func(string)) {
+	if len(payload) == 0 {
+		return
+	}
+	for _, fieldName := range []string{"id", "Id", "uid", "UID", "user_id", "UserID", "UserId"} {
+		for _, id := range extractGobFieldInts(payload, fieldName) {
+			push(strconv.FormatInt(id, 10))
+		}
+	}
+}
+
+func extractGobFieldInts(payload []byte, fieldName string) []int64 {
+	marker := append([]byte(fieldName), 0x03)
+	marker = append(marker, []byte("int")...)
+	marker = append(marker, 0x04)
+	values := []int64{}
+	start := 0
+	for start < len(payload) {
+		position := bytes.Index(payload[start:], marker)
+		if position < 0 {
+			break
+		}
+		position += start
+		if position+len(marker)+2 <= len(payload) {
+			encodedLength := int(payload[position+len(marker)])
+			delimiter := payload[position+len(marker)+1]
+			byteLength := encodedLength - 1
+			valueStart := position + len(marker) + 2
+			valueEnd := valueStart + byteLength
+			if delimiter == 0x00 && byteLength > 0 && valueEnd <= len(payload) {
+				if decoded := decodeGobSignedInt(payload[valueStart:valueEnd]); decoded > 0 {
+					values = append(values, decoded)
+				}
+			}
+		}
+		start = position + len(marker)
+	}
+	return values
+}
+
+func decodeGobSignedInt(encoded []byte) int64 {
+	if len(encoded) == 0 {
+		return 0
+	}
+	var unsigned uint64
+	if encoded[0] < 0x80 {
+		unsigned = uint64(encoded[0])
+	} else {
+		width := 0x100 - int(encoded[0])
+		if width <= 0 || width > 8 || len(encoded) != width+1 {
+			return 0
+		}
+		for index := 1; index < len(encoded); index++ {
+			unsigned = (unsigned << 8) | uint64(encoded[index])
+		}
+	}
+	var signed int64
+	if unsigned&1 == 0 {
+		signed = int64(unsigned >> 1)
+	} else {
+		signed = -int64((unsigned >> 1) + 1)
+	}
+	if signed <= 0 || signed > 10000000 {
+		return 0
+	}
+	return signed
+}
+
+func normalizePositiveIntegerText(value string) string {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return ""
+	}
+	n, err := strconv.ParseInt(text, 10, 64)
+	if err != nil || n <= 0 || n > 10000000 {
+		return ""
+	}
+	return strconv.FormatInt(n, 10)
+}
+
+func normalizeSessionProviderType(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "newapi", "new-api":
+		return "new_api"
+	case "subapi", "sub api", "sub-api", "sub_api", "sub2api", "sub2 api", "sub2-api", "sub2_api":
+		return "sub2api"
+	default:
+		return normalized
+	}
+}
+
+func setStringValue(values map[string]any, key string, value string) bool {
+	value = strings.TrimSpace(value)
+	if values == nil || value == "" || stringValue(values, key) == value {
+		return false
+	}
+	values[key] = value
+	return true
 }
 
 func (s *Service) validateSessionScope(ctx context.Context, supplierID int64, origin string, apiBaseURL string, bundle map[string]any) error {
@@ -573,10 +983,46 @@ func stringValueAt(in map[string]any, path ...string) string {
 }
 
 func stringFromAny(value any) string {
-	if s, ok := value.(string); ok {
-		return strings.TrimSpace(s)
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case int:
+		return strconv.Itoa(v)
+	case int8:
+		return strconv.FormatInt(int64(v), 10)
+	case int16:
+		return strconv.FormatInt(int64(v), 10)
+	case int32:
+		return strconv.FormatInt(int64(v), 10)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case uint:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint8:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint16:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint64:
+		return strconv.FormatUint(v, 10)
+	case float64:
+		if math.IsInf(v, 0) || math.IsNaN(v) || math.Trunc(v) != v {
+			return ""
+		}
+		return strconv.FormatFloat(v, 'f', 0, 64)
+	case json.Number:
+		if parsed, err := v.Int64(); err == nil {
+			return strconv.FormatInt(parsed, 10)
+		}
+		parsed, err := v.Float64()
+		if err != nil || math.IsInf(parsed, 0) || math.IsNaN(parsed) || math.Trunc(parsed) != parsed {
+			return ""
+		}
+		return strconv.FormatFloat(parsed, 'f', 0, 64)
+	default:
+		return ""
 	}
-	return ""
 }
 
 func firstNonEmpty(values ...string) string {

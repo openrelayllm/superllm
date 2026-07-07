@@ -104,6 +104,79 @@ export interface BackupStatus {
   cleanup: HistoryCleanupSettings
 }
 
+export interface ImportExportTableSummary {
+  name: string
+  rows: number
+  sensitive?: boolean
+  description?: string
+}
+
+export interface ImportExportArchiveSummary {
+  tables: number
+  rows: number
+  items: ImportExportTableSummary[]
+}
+
+export interface ImportExportArchive {
+  version: number
+  product: string
+  exported_at: string
+  tables: Record<string, Array<Record<string, unknown>>>
+  summary: ImportExportArchiveSummary
+}
+
+export interface ImportExportIgnoredTable {
+  name: string
+  rows: number
+  reason: string
+}
+
+export interface ImportExportPreview {
+  valid: boolean
+  product: string
+  version: number
+  exported_at?: string
+  summary: ImportExportArchiveSummary
+  included_tables: ImportExportTableSummary[]
+  ignored_tables?: ImportExportIgnoredTable[]
+  warnings?: string[]
+}
+
+export interface ImportExportScopeTable {
+  name: string
+  sensitive?: boolean
+  description?: string
+  reason?: string
+}
+
+export interface ImportExportScope {
+  product: string
+  version: number
+  included_tables: ImportExportScopeTable[]
+  excluded_tables: ImportExportScopeTable[]
+  notes: string[]
+  summary: {
+    included: number
+    excluded: number
+    sensitive: number
+  }
+}
+
+export interface ImportExportTableResult {
+  name: string
+  rows: number
+  imported: number
+  skipped?: boolean
+  reason?: string
+}
+
+export interface ImportExportResult {
+  summary: ImportExportArchiveSummary
+  tables: ImportExportTableResult[]
+  ignored_tables?: ImportExportIgnoredTable[]
+  warnings?: string[]
+}
+
 export type ProxySubscriptionType = 'clash' | 'shadowrocket' | 'v2ray_ss'
 export type ProxyRefreshStatus = 'never' | 'succeeded' | 'failed' | 'invalid'
 export type ProxyNodeHealthStatus = 'unknown' | 'healthy' | 'degraded' | 'suspect' | 'unhealthy' | 'disabled'
@@ -276,6 +349,8 @@ export type SupplierKind = 'source_account' | 'relay' | 'browser_only' | 'custom
 export type SupplierType = 'openai' | 'anthropic' | 'gemini' | 'sub2api' | 'new_api' | 'browser_only' | 'custom'
 export type SupplierRuntimeStatus = 'monitor_only' | 'candidate' | 'active' | 'disabled'
 export type SupplierHealthStatus = 'normal' | 'unavailable' | 'credential_invalid' | 'paused'
+export type SupplierCapabilityStatus = 'available' | 'needs_session' | 'needs_readonly_db' | 'unsupported' | 'planned'
+export type SupplierIntegrationProtocol = 'openai' | 'claude' | 'gemini'
 export type SupplierGroupStatus = 'active' | 'missing' | 'disabled'
 export type SupplierKeyStatus = 'provisioning' | 'bound' | 'manual_secret_required' | 'failed' | 'disabled'
 export type SupplierSessionSource = 'direct_login' | 'browser_extension' | 'manual_import'
@@ -304,6 +379,64 @@ export interface SupplierCredentialStatus {
   masked_browser_login_username?: string
 }
 
+export interface SupplierCapability {
+  key: string
+  label: string
+  status: SupplierCapabilityStatus
+  source: string
+  description?: string
+}
+
+export interface SupplierIntegrationHint {
+  id: string
+  label: string
+  provider_label: string
+  protocol: string
+  description?: string
+  docs_url?: string
+  recommended_skip_model_fetch: boolean
+  recommended_models?: string[]
+  source_url?: string
+}
+
+export interface SupplierPlatformHint {
+  id: string
+  label: string
+  family: string
+  source: string
+  description?: string
+}
+
+export interface SupplierAPIEndpointCandidate {
+  id: string
+  label: string
+  url: string
+  protocol?: string
+  source: string
+  recommended: boolean
+  description?: string
+}
+
+export interface SupplierURLHint {
+  key: string
+  label: string
+  url: string
+  source: string
+  action: string
+  severity: 'info' | 'warning' | 'success' | string
+  matched_path?: string
+  suggested_url?: string
+  description?: string
+}
+
+export interface SupplierOperationHint {
+  key: string
+  label: string
+  severity: 'info' | 'warning' | 'action' | string
+  source: string
+  description?: string
+}
+
 export interface Supplier {
   id: number
   name: string
@@ -318,6 +451,12 @@ export interface Supplier {
   contact?: string
   notes?: string
   credential: SupplierCredentialStatus
+  capabilities?: SupplierCapability[]
+  integration_hint?: SupplierIntegrationHint
+  platform_hint?: SupplierPlatformHint
+  api_endpoint_candidates?: SupplierAPIEndpointCandidate[]
+  url_hints?: SupplierURLHint[]
+  operation_hints?: SupplierOperationHint[]
   balance_cents: number
   balance_currency: string
   balance_updated_at?: string | null
@@ -2641,7 +2780,7 @@ export interface ListAdminPlusSystemLogsParams extends AdminPlusPaginationParams
   end_time?: string
 }
 
-export async function listSuppliers(params?: Partial<Record<'kind' | 'type' | 'runtime_status' | 'health_status' | 'q', string>> & AdminPlusPaginationParams): Promise<AdminPlusListResponse<Supplier>> {
+export async function listSuppliers(params?: Partial<Record<'kind' | 'type' | 'runtime_status' | 'health_status' | 'capability_status' | 'integration_protocol' | 'q', string>> & AdminPlusPaginationParams): Promise<AdminPlusListResponse<Supplier>> {
   const { data } = await apiClient.get<AdminPlusListResponse<Supplier>>('/admin-plus/suppliers', { params })
   return data
 }
@@ -3945,6 +4084,26 @@ export async function deleteBackup(id: string): Promise<{ deleted: boolean }> {
   return data
 }
 
+export async function getMigrationScope(): Promise<ImportExportScope> {
+  const { data } = await apiClient.get<ImportExportScope>('/admin-plus/import-export/scope')
+  return data
+}
+
+export async function exportMigrationArchive(): Promise<ImportExportArchive> {
+  const { data } = await apiClient.get<ImportExportArchive>('/admin-plus/import-export/export')
+  return data
+}
+
+export async function previewMigrationArchive(archive: ImportExportArchive): Promise<ImportExportPreview> {
+  const { data } = await apiClient.post<ImportExportPreview>('/admin-plus/import-export/preview', archive)
+  return data
+}
+
+export async function importMigrationArchive(archive: ImportExportArchive): Promise<ImportExportResult> {
+  const { data } = await apiClient.post<ImportExportResult>('/admin-plus/import-export/import', archive)
+  return data
+}
+
 export async function getServerRenewal(): Promise<ServerRenewalStatus> {
   const { data } = await apiClient.get<ServerRenewalStatus>('/admin-plus/server-renewal')
   return data
@@ -4128,6 +4287,10 @@ export const adminPlusAPI = {
   restoreBackup,
   getBackupDownloadURL,
   deleteBackup,
+  getMigrationScope,
+  exportMigrationArchive,
+  previewMigrationArchive,
+  importMigrationArchive,
   getServerRenewal,
   updateServerRenewal,
   listAdminPlusSystemLogs

@@ -110,6 +110,52 @@ func TestSupplierHandlerList(t *testing.T) {
 	require.Equal(t, "OpenAI Source", body.Data.Items[0].Name)
 }
 
+func TestSupplierHandlerListFiltersByCapabilityStatus(t *testing.T) {
+	router := newSupplierHandlerTestRouter()
+	createSupplier(t, router, `{"name":"OpenAI Source","kind":"source_account","type":"openai"}`)
+	createSupplier(t, router, `{"name":"New API Relay","kind":"relay","type":"new_api"}`)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/suppliers?capability_status=planned", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body supplierListResponseEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, 1, body.Data.Total)
+	require.Equal(t, "New API Relay", body.Data.Items[0].Name)
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/suppliers?capability_status=unknown", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "invalid supplier capability status")
+}
+
+func TestSupplierHandlerListFiltersByIntegrationProtocol(t *testing.T) {
+	router := newSupplierHandlerTestRouter()
+	createSupplier(t, router, `{"name":"DeepSeek OpenAI","kind":"source_account","type":"openai","api_base_url":"https://api.deepseek.com/v1"}`)
+	createSupplier(t, router, `{"name":"Relay A","kind":"relay","type":"sub2api","api_base_url":"https://relay.example.com"}`)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/suppliers?integration_protocol=openai", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body supplierListResponseEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, 1, body.Data.Total)
+	require.Equal(t, "DeepSeek OpenAI", body.Data.Items[0].Name)
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/suppliers?integration_protocol=codex", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "invalid supplier integration protocol")
+}
+
 func TestSupplierHandlerRejectsCandidateWithoutBalance(t *testing.T) {
 	router := newSupplierHandlerTestRouter()
 

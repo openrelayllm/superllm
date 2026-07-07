@@ -560,7 +560,7 @@ function buildNotes() {
 function normalizeProviderType(value) {
   const normalized = String(value || '').trim().toLowerCase()
   if (normalized === 'newapi' || normalized === 'new-api') return 'new_api'
-  if (normalized === 'sub2api' || normalized === 'sub2-api') return 'sub2api'
+  if (['subapi', 'sub api', 'sub-api', 'sub_api', 'sub2api', 'sub2 api', 'sub2-api', 'sub2_api'].includes(normalized)) return 'sub2api'
   return normalized
 }
 

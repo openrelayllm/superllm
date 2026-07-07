@@ -12,6 +12,7 @@ import (
 	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
+	importexportapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/importexport"
 	kanbanapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/kanban"
 	mailverificationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
 	notificationsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
@@ -87,6 +88,7 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(schedulerapp.BalanceSyncer), new(*balancesapp.Service)),
 	wire.Bind(new(schedulerapp.HealthSyncer), new(*healthapp.Service)),
 	wire.Bind(new(schedulerapp.UsageCostSyncer), new(*usagecostsapp.Service)),
+	wire.Bind(new(schedulerapp.CostSyncer), new(*costsapp.Service)),
 	wire.Bind(new(schedulerapp.ChannelChecker), new(*channelchecksapp.Service)),
 	wire.Bind(new(schedulerapp.PurityChecker), new(*purityapp.Service)),
 	wire.Bind(new(schedulerapp.SessionRefresher), new(*sessionsapp.Service)),
@@ -96,6 +98,7 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(kanbanapp.SiteCatalogReader), new(*sitecatalogapp.Service)),
 	wire.Bind(new(kanbanapp.AcceptanceEvidenceScheduler), new(*schedulerapp.Service)),
 	healthapp.ProviderSet,
+	importexportapp.ProviderSet,
 	kanbanapp.ProviderSet,
 	mailverificationapp.ProviderSet,
 	notificationsapp.ProviderSet,

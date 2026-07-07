@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -113,7 +114,38 @@ func (c *Client) DirectLogin(ctx context.Context, in ports.DirectLoginInput) (*p
 	capturedAt := c.now().UTC()
 	cookies := cookiesFromResponse(resp, apiBaseURL)
 	if len(cookies) == 0 {
-		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_RESPONSE_INVALID", "new api login response did not include session cookie")
+		accessToken := newAPILoginAccessToken(envelope)
+		if accessToken == "" {
+			return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_DIRECT_LOGIN_RESPONSE_INVALID", "new api login response did not include session cookie")
+		}
+		bundle := buildAccessTokenSessionBundle(in.SupplierID, origin, apiBaseURL, strconv.FormatInt(userID, 10), accessToken, capturedAt)
+		probe, err := c.ProbeSub2APIUserProfile(ctx, ports.SessionProbeInput{
+			SupplierID: in.SupplierID,
+			Origin:     origin,
+			APIBaseURL: apiBaseURL,
+			Bundle:     bundle,
+		})
+		if err != nil {
+			return nil, err
+		}
+		applyProfileToSessionBundle(bundle, probe)
+		if err := requireAdminSessionForDirectLogin(in.LoginContext, bundle); err != nil {
+			return nil, err
+		}
+		return &ports.DirectLoginResult{
+			SupplierID:    in.SupplierID,
+			Origin:        origin,
+			APIBaseURL:    apiBaseURL,
+			SessionBundle: bundle,
+			CapturedAt:    capturedAt,
+			Diagnostics: map[string]any{
+				"login_endpoint":       loginEndpoint,
+				"login_method":         "access_token_from_login_response",
+				"profile_status":       stringFromProbeStatus(probe),
+				"auth_header_required": "New-Api-User",
+				"login_response_keys":  rawKeys(envelope.Data),
+			},
+		}, nil
 	}
 	expiresAt := expiresAtFromCookies(resp.Cookies(), capturedAt)
 	bundle := buildSessionBundle(in.SupplierID, origin, apiBaseURL, userID, envelope.Data, cookies, capturedAt, expiresAt)
@@ -144,6 +176,32 @@ func (c *Client) DirectLogin(ctx context.Context, in ports.DirectLoginInput) (*p
 			"login_response_keys":  rawKeys(envelope.Data),
 		},
 	}, nil
+}
+
+func newAPILoginAccessToken(envelope *apiEnvelope) string {
+	if envelope == nil {
+		return ""
+	}
+	token := firstNonEmpty(
+		stringFromAny(envelope.Data["access_token"]),
+		stringFromAny(envelope.Data["accessToken"]),
+		stringFromAny(envelope.Data["auth_token"]),
+		stringFromAny(envelope.Data["authToken"]),
+		stringFromAny(envelope.Data["token"]),
+		stringFromAny(envelope.Data["authorization"]),
+		stringFromAny(envelope.Raw["access_token"]),
+		stringFromAny(envelope.Raw["accessToken"]),
+		stringFromAny(envelope.Raw["auth_token"]),
+		stringFromAny(envelope.Raw["authToken"]),
+		stringFromAny(envelope.Raw["token"]),
+		stringFromAny(envelope.Raw["authorization"]),
+	)
+	if token == "" {
+		if data, ok := envelope.Raw["data"].(string); ok {
+			token = data
+		}
+	}
+	return normalizeAccessTokenValue(token)
 }
 
 func (c *Client) directLoginFromToken(ctx context.Context, in ports.DirectLoginInput) (*ports.DirectLoginResult, error) {
@@ -206,6 +264,7 @@ func parseNewAPIAccessTokenCredential(rawToken string, username string, loginCon
 		userID = firstNonEmpty(userID, candidateUserID)
 	}
 	token = normalizeAccessTokenValue(token)
+	userID = firstNonEmpty(userID, newAPIUserIDFromAccessToken(token))
 	if token == "" {
 		return "", "", infraerrors.New(http.StatusConflict, "SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED", "new api access token is required")
 	}
@@ -231,7 +290,7 @@ func parseNewAPITokenHeaderBlock(raw string, userID string) (string, string) {
 			if strings.TrimSpace(value) != "" {
 				token = strings.TrimSpace(value)
 			}
-		case "new-api-user", "new_api_user", "newapiuser":
+		case "new-api-user", "new_api_user", "newapiuser", "veloera-user", "voapi-user", "user-id", "x-user-id", "rix-api-user", "neo-api-user":
 			userID = firstNonEmpty(userID, numericText(value))
 		}
 	}
@@ -270,11 +329,34 @@ func parseNewAPITokenJSON(raw string) (string, string) {
 		newAPIIntLikeText(root["new_api_user"]),
 		newAPIIntLikeText(root["newApiUser"]),
 		newAPIIntLikeText(root["New-Api-User"]),
+		newAPIIntLikeText(root["New-API-User"]),
 		newAPIIntLikeText(root["new-api-user"]),
+		newAPIIntLikeText(root["Veloera-User"]),
+		newAPIIntLikeText(root["voapi-user"]),
+		newAPIIntLikeText(root["User-id"]),
+		newAPIIntLikeText(root["X-User-Id"]),
+		newAPIIntLikeText(root["Rix-Api-User"]),
+		newAPIIntLikeText(root["neo-api-user"]),
 	)
 	if userID == "" {
 		if user, ok := root["user"].(map[string]any); ok {
 			userID = firstNonEmpty(newAPIIntLikeText(user["id"]), newAPIIntLikeText(user["user_id"]), newAPIIntLikeText(user["uid"]))
+		}
+	}
+	if userID == "" {
+		if data, ok := root["data"].(map[string]any); ok {
+			userID = firstNonEmpty(
+				newAPIIntLikeText(data["id"]),
+				newAPIIntLikeText(data["sub"]),
+				newAPIIntLikeText(data["user_id"]),
+				newAPIIntLikeText(data["userID"]),
+				newAPIIntLikeText(data["uid"]),
+			)
+			if userID == "" {
+				if user, ok := data["user"].(map[string]any); ok {
+					userID = firstNonEmpty(newAPIIntLikeText(user["id"]), newAPIIntLikeText(user["user_id"]), newAPIIntLikeText(user["uid"]))
+				}
+			}
 		}
 	}
 	return token, userID
@@ -299,6 +381,33 @@ func normalizeAccessTokenValue(value string) string {
 	return token
 }
 
+func newAPIUserIDFromAccessToken(token string) string {
+	parts := strings.Split(strings.TrimSpace(token), ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		payload, err = base64.URLEncoding.DecodeString(parts[1])
+	}
+	if err != nil {
+		return ""
+	}
+	var body map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	if err := decoder.Decode(&body); err != nil {
+		return ""
+	}
+	return firstNonEmpty(
+		newAPIIntLikeText(body["id"]),
+		newAPIIntLikeText(body["sub"]),
+		newAPIIntLikeText(body["user_id"]),
+		newAPIIntLikeText(body["userID"]),
+		newAPIIntLikeText(body["uid"]),
+	)
+}
+
 func newAPIUserIDFromContext(context map[string]any) string {
 	return firstNonEmpty(
 		newAPIIntLikeText(context["user_id"]),
@@ -306,6 +415,14 @@ func newAPIUserIDFromContext(context map[string]any) string {
 		newAPIIntLikeText(context["new_api_user"]),
 		newAPIIntLikeText(context["newApiUser"]),
 		newAPIIntLikeText(context["New-Api-User"]),
+		newAPIIntLikeText(context["New-API-User"]),
+		newAPIIntLikeText(context["new-api-user"]),
+		newAPIIntLikeText(context["Veloera-User"]),
+		newAPIIntLikeText(context["voapi-user"]),
+		newAPIIntLikeText(context["User-id"]),
+		newAPIIntLikeText(context["X-User-Id"]),
+		newAPIIntLikeText(context["Rix-Api-User"]),
+		newAPIIntLikeText(context["neo-api-user"]),
 	)
 }
 
@@ -332,27 +449,59 @@ func numericText(value string) string {
 }
 
 func (c *Client) doSessionJSON(ctx context.Context, method string, endpoint string, bundle map[string]any) ([]byte, error) {
+	data, statusCode, _, err := c.doSessionJSONOnce(ctx, method, endpoint, bundle, "")
+	if err == nil {
+		return data, nil
+	}
+	if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+		if bearer := bearerAuthorizationValue(sessionAccessToken(bundle)); bearer != "" {
+			retryData, _, _, retryErr := c.doSessionJSONOnce(ctx, method, endpoint, bundle, bearer)
+			if retryErr == nil {
+				return retryData, nil
+			}
+			return nil, retryErr
+		}
+	}
+	return nil, err
+}
+
+func (c *Client) doSessionJSONOnce(ctx context.Context, method string, endpoint string, bundle map[string]any, authorizationOverride string) ([]byte, int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, "", err
 	}
 	applySessionHeaders(req, bundle)
+	if authorizationOverride != "" {
+		req.Header.Set("Authorization", authorizationOverride)
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, withRequestDiagnostics(err, endpoint, "SUPPLIER_SESSION_REQUEST_FAILED", "new api session endpoint is unreachable")
+		return nil, 0, "", withRequestDiagnostics(err, endpoint, "SUPPLIER_SESSION_REQUEST_FAILED", "new api session endpoint is unreachable")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, err
+		return nil, resp.StatusCode, resp.Header.Get("Content-Type"), err
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, withHTTPDiagnostics(infraerrors.New(resp.StatusCode, "SUPPLIER_SESSION_PERMISSION_DENIED", "new api session cannot access requested endpoint"), endpoint, resp.StatusCode, resp.Header.Get("Content-Type"), data)
+		return nil, resp.StatusCode, resp.Header.Get("Content-Type"), withHTTPDiagnostics(infraerrors.New(resp.StatusCode, "SUPPLIER_SESSION_PERMISSION_DENIED", "new api session cannot access requested endpoint"), endpoint, resp.StatusCode, resp.Header.Get("Content-Type"), data)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, withHTTPDiagnostics(infraerrors.New(http.StatusBadGateway, "SUPPLIER_SESSION_BAD_STATUS", "new api session endpoint returned non-success status"), endpoint, resp.StatusCode, resp.Header.Get("Content-Type"), data)
+		return nil, resp.StatusCode, resp.Header.Get("Content-Type"), withHTTPDiagnostics(infraerrors.New(http.StatusBadGateway, "SUPPLIER_SESSION_BAD_STATUS", "new api session endpoint returned non-success status"), endpoint, resp.StatusCode, resp.Header.Get("Content-Type"), data)
 	}
-	return data, nil
+	return data, resp.StatusCode, resp.Header.Get("Content-Type"), nil
+}
+
+func sessionAccessToken(bundle map[string]any) string {
+	return firstNonEmpty(stringValue(bundle, "access_token"), stringValueAt(bundle, "tokens", "access_token"))
+}
+
+func bearerAuthorizationValue(accessToken string) string {
+	token := strings.TrimSpace(accessToken)
+	if token == "" || strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		return ""
+	}
+	return "Bearer " + token
 }
 
 func withHTTPDiagnostics(err error, endpoint string, statusCode int, contentType string, body []byte) error {
