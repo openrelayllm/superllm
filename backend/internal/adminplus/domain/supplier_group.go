@@ -11,6 +11,12 @@ const (
 	SupplierGroupStatusActive   SupplierGroupStatus = "active"
 	SupplierGroupStatusMissing  SupplierGroupStatus = "missing"
 	SupplierGroupStatusDisabled SupplierGroupStatus = "disabled"
+
+	SupplierGroupKeyLimitPolicyInherit     = "inherit"
+	SupplierGroupKeyLimitPolicyUnknown     = "unknown"
+	SupplierGroupKeyLimitPolicyUnlimited   = "unlimited"
+	SupplierGroupKeyLimitPolicyLimited     = "limited"
+	SupplierGroupKeyLimitPolicyUnsupported = "unsupported"
 )
 
 type SupplierGroup struct {
@@ -33,6 +39,10 @@ type SupplierGroup struct {
 	MonthlyLimitUSD         *float64            `json:"monthly_limit_usd,omitempty"`
 	AllowImageGeneration    bool                `json:"allow_image_generation"`
 	IsPrivate               bool                `json:"is_private"`
+	KeyLimitPolicy          string              `json:"key_limit_policy"`
+	KeyLimitValue           int                 `json:"key_limit_value"`
+	ActiveKeyCount          int                 `json:"active_key_count"`
+	KeyCapacityStatus       string              `json:"key_capacity_status"`
 	Status                  SupplierGroupStatus `json:"status"`
 	RawPayload              map[string]any      `json:"raw_payload,omitempty"`
 	LastSeenAt              time.Time           `json:"last_seen_at"`

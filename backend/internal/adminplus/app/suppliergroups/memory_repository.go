@@ -2,6 +2,7 @@ package suppliergroups
 
 import (
 	"context"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 type MemoryRepository struct {
@@ -55,10 +57,15 @@ func (r *MemoryRepository) UpsertMany(_ context.Context, supplierID int64, group
 			existing := r.items[existingID]
 			cp.ID = existingID
 			cp.CreatedAt = existing.CreatedAt
+			cp.KeyLimitPolicy = existing.KeyLimitPolicy
+			cp.KeyLimitValue = existing.KeyLimitValue
 		} else {
 			cp.ID = r.nextID
 			r.nextID++
+			cp.KeyLimitPolicy = adminplusdomain.SupplierGroupKeyLimitPolicyInherit
+			cp.KeyLimitValue = 0
 		}
+		cp.KeyCapacityStatus = groupKeyCapacityStatus(cp.KeyLimitPolicy, cp.KeyLimitValue, cp.ActiveKeyCount)
 		r.items[cp.ID] = cp
 		out = append(out, cloneSupplierGroup(cp))
 	}
@@ -81,7 +88,7 @@ func (r *MemoryRepository) List(_ context.Context, filter ListFilter) ([]*adminp
 	items := make([]*adminplusdomain.SupplierGroup, 0)
 	query := strings.ToLower(strings.TrimSpace(filter.Query))
 	for _, group := range r.items {
-		if group.SupplierID != filter.SupplierID {
+		if filter.SupplierID > 0 && group.SupplierID != filter.SupplierID {
 			continue
 		}
 		if filter.Status != "" && group.Status != filter.Status {
@@ -100,6 +107,21 @@ func (r *MemoryRepository) List(_ context.Context, filter ListFilter) ([]*adminp
 		items = items[:filter.Limit]
 	}
 	return items, nil
+}
+
+func (r *MemoryRepository) UpdateKeyCapacity(_ context.Context, in UpdateKeyCapacityInput) (*adminplusdomain.SupplierGroup, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	group, ok := r.items[in.SupplierGroupID]
+	if !ok || group.SupplierID != in.SupplierID {
+		return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_GROUP_NOT_FOUND", "supplier group not found")
+	}
+	group.KeyLimitPolicy = normalizeGroupKeyLimitPolicy(in.KeyLimitPolicy)
+	group.KeyLimitValue = in.KeyLimitValue
+	group.KeyCapacityStatus = groupKeyCapacityStatus(group.KeyLimitPolicy, group.KeyLimitValue, group.ActiveKeyCount)
+	group.UpdatedAt = time.Now().UTC()
+	return cloneSupplierGroup(group), nil
 }
 
 func (r *MemoryRepository) CreateChangeEvents(_ context.Context, events []*adminplusdomain.SupplierGroupChangeEvent) ([]*adminplusdomain.SupplierGroupChangeEvent, error) {
@@ -163,6 +185,8 @@ func cloneSupplierGroup(in *adminplusdomain.SupplierGroup) *adminplusdomain.Supp
 		return nil
 	}
 	out := *in
+	out.KeyLimitPolicy = normalizeGroupKeyLimitPolicy(out.KeyLimitPolicy)
+	out.KeyCapacityStatus = groupKeyCapacityStatus(out.KeyLimitPolicy, out.KeyLimitValue, out.ActiveKeyCount)
 	if in.UserRateMultiplier != nil {
 		value := *in.UserRateMultiplier
 		out.UserRateMultiplier = &value

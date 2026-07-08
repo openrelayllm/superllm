@@ -149,23 +149,36 @@ type SchedulerStepRecord struct {
 }
 
 type SchedulerSupplierStatus struct {
-	SupplierID        int64  `json:"supplier_id"`
-	SupplierName      string `json:"supplier_name"`
-	SupplierType      string `json:"supplier_type"`
-	RuntimeStatus     string `json:"runtime_status"`
-	HealthStatus      string `json:"health_status"`
-	BalanceCents      int64  `json:"balance_cents"`
-	BalanceCurrency   string `json:"balance_currency"`
-	CompletionPercent int    `json:"completion_percent"`
-	SessionStatus     string `json:"session_status"`
-	BalanceStatus     string `json:"balance_status"`
-	GroupStatus       string `json:"group_status"`
-	RateStatus        string `json:"rate_status"`
-	BillingStatus     string `json:"billing_status"`
-	ChannelStatus     string `json:"channel_status"`
-	ScheduleStatus    string `json:"schedule_status"`
-	LastError         string `json:"last_error,omitempty"`
-	RecommendedAction string `json:"recommended_action,omitempty"`
+	SupplierID        int64                      `json:"supplier_id"`
+	SupplierName      string                     `json:"supplier_name"`
+	SupplierType      string                     `json:"supplier_type"`
+	RuntimeStatus     string                     `json:"runtime_status"`
+	HealthStatus      string                     `json:"health_status"`
+	BalanceCents      int64                      `json:"balance_cents"`
+	BalanceCurrency   string                     `json:"balance_currency"`
+	CompletionPercent int                        `json:"completion_percent"`
+	SessionStatus     string                     `json:"session_status"`
+	BalanceStatus     string                     `json:"balance_status"`
+	GroupStatus       string                     `json:"group_status"`
+	RateStatus        string                     `json:"rate_status"`
+	BillingStatus     string                     `json:"billing_status"`
+	ChannelStatus     string                     `json:"channel_status"`
+	ScheduleStatus    string                     `json:"schedule_status"`
+	LastError         string                     `json:"last_error,omitempty"`
+	RecommendedAction string                     `json:"recommended_action,omitempty"`
+	CandidateSummary  *SchedulerCandidateSummary `json:"candidate_summary,omitempty"`
+}
+
+type SchedulerCandidateSummary struct {
+	CandidateStatus               string  `json:"candidate_status"`
+	BlockedReason                 string  `json:"blocked_reason,omitempty"`
+	CheckSource                   string  `json:"check_source,omitempty"`
+	AvailableCount                int     `json:"available_count"`
+	BlockedCount                  int     `json:"blocked_count"`
+	BalanceBlockedCount           int     `json:"balance_blocked_count"`
+	CapacityBlockedCount          int     `json:"capacity_blocked_count"`
+	UnknownCount                  int     `json:"unknown_count"`
+	LowestEffectiveRateMultiplier float64 `json:"lowest_effective_rate_multiplier,omitempty"`
 }
 
 type SchedulerSupplierChecklist struct {
@@ -174,6 +187,7 @@ type SchedulerSupplierChecklist struct {
 	SupplierType      string                           `json:"supplier_type"`
 	CompletionPercent int                              `json:"completion_percent"`
 	RecommendedAction string                           `json:"recommended_action,omitempty"`
+	CandidateSummary  *SchedulerCandidateSummary       `json:"candidate_summary,omitempty"`
 	Items             []SchedulerSupplierChecklistItem `json:"items"`
 }
 
@@ -203,14 +217,19 @@ type SchedulerAction struct {
 }
 
 type SchedulerSettings struct {
-	Enabled                       bool     `json:"enabled"`
-	DefaultSupplierConcurrency    int      `json:"default_supplier_concurrency"`
-	ChannelChecksEnabled          bool     `json:"channel_checks_enabled"`
-	ChannelCheckDailyBudgetTokens int      `json:"channel_check_daily_budget_tokens"`
-	FirstTokenSlowThresholdMS     int64    `json:"first_token_slow_threshold_ms"`
-	TotalLatencySlowThresholdMS   int64    `json:"total_latency_slow_threshold_ms"`
-	DefaultEnabledTaskTypes       []string `json:"default_enabled_task_types"`
-	HighCostTaskTypes             []string `json:"high_cost_task_types"`
+	Enabled                           bool     `json:"enabled"`
+	DefaultSupplierConcurrency        int      `json:"default_supplier_concurrency"`
+	ChannelChecksEnabled              bool     `json:"channel_checks_enabled"`
+	ChannelCheckDailyBudgetTokens     int      `json:"channel_check_daily_budget_tokens"`
+	FirstTokenSlowThresholdMS         int64    `json:"first_token_slow_threshold_ms"`
+	TotalLatencySlowThresholdMS       int64    `json:"total_latency_slow_threshold_ms"`
+	RoutingRefillAutoExecuteEnabled   bool     `json:"routing_refill_auto_execute_enabled"`
+	RoutingRefillLowCapacityThreshold int64    `json:"routing_refill_low_capacity_threshold"`
+	RoutingRefillCooldownSeconds      int      `json:"routing_refill_cooldown_seconds"`
+	RoutingRefillConfirmWindowSeconds int      `json:"routing_refill_confirm_window_seconds"`
+	RoutingRefillMaxRateMultiplier    float64  `json:"routing_refill_max_rate_multiplier"`
+	DefaultEnabledTaskTypes           []string `json:"default_enabled_task_types"`
+	HighCostTaskTypes                 []string `json:"high_cost_task_types"`
 }
 
 type ScheduledTask struct {

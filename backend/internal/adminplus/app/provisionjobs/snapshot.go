@@ -44,17 +44,19 @@ func provisionInputFromSnapshot(supplierID int64, step *adminplusdomain.Supplier
 
 func ensureAllInputFromSnapshot(supplierID int64, snapshot map[string]any) supplierkeys.EnsureAllInput {
 	return supplierkeys.EnsureAllInput{
-		SupplierID:              supplierID,
-		SyncProviderName:        boolValue(snapshot["sync_provider_name"], false),
-		LocalAccountBaseURL:     stringValue(snapshot["local_account_base_url"]),
-		LocalAccountConcurrency: intValue(snapshot["local_account_concurrency"]),
-		LocalAccountPriority:    intValue(snapshot["local_account_priority"]),
-		LocalAccountGroupIDs:    int64SliceValue(snapshot["local_account_group_ids"]),
-		RuntimeStatus:           adminplusdomain.NormalizeSupplierRuntimeStatus(stringValue(snapshot["runtime_status"])),
-		HealthStatus:            adminplusdomain.NormalizeSupplierHealthStatus(stringValue(snapshot["health_status"])),
-		BalanceThresholdCents:   int64Value(snapshot["balance_threshold_cents"]),
-		BalanceCents:            int64Value(snapshot["balance_cents"]),
-		BalanceCurrency:         stringValue(snapshot["balance_currency"]),
+		SupplierID:               supplierID,
+		SyncProviderName:         boolValue(snapshot["sync_provider_name"], false),
+		AllowPartial:             boolValue(snapshot["allow_partial"], false),
+		SupplierGroupPriorityIDs: int64SliceValue(snapshot["supplier_group_priority_ids"]),
+		LocalAccountBaseURL:      stringValue(snapshot["local_account_base_url"]),
+		LocalAccountConcurrency:  intValue(snapshot["local_account_concurrency"]),
+		LocalAccountPriority:     intValue(snapshot["local_account_priority"]),
+		LocalAccountGroupIDs:     int64SliceValue(snapshot["local_account_group_ids"]),
+		RuntimeStatus:            adminplusdomain.NormalizeSupplierRuntimeStatus(stringValue(snapshot["runtime_status"])),
+		HealthStatus:             adminplusdomain.NormalizeSupplierHealthStatus(stringValue(snapshot["health_status"])),
+		BalanceThresholdCents:    int64Value(snapshot["balance_threshold_cents"]),
+		BalanceCents:             int64Value(snapshot["balance_cents"]),
+		BalanceCurrency:          stringValue(snapshot["balance_currency"]),
 	}
 }
 

@@ -142,6 +142,111 @@ func TestServiceSyncMarksOpenAISuperLowRateEvent(t *testing.T) {
 	require.True(t, result.Events[0].LowRate)
 }
 
+func TestServiceListAllowsGlobalSupplierGroupLookup(t *testing.T) {
+	repo := NewMemoryRepository()
+	now := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
+	_, err := repo.UpsertMany(context.Background(), 7, []*adminplusdomain.SupplierGroup{
+		{
+			SupplierID:              7,
+			ExternalGroupID:         "gpt-low",
+			Name:                    "GPT Low",
+			ProviderFamily:          "openai",
+			RateMultiplier:          1,
+			EffectiveRateMultiplier: 0.05,
+			Status:                  adminplusdomain.SupplierGroupStatusActive,
+			LastSeenAt:              now,
+			CreatedAt:               now,
+			UpdatedAt:               now,
+		},
+	}, now)
+	require.NoError(t, err)
+	_, err = repo.UpsertMany(context.Background(), 8, []*adminplusdomain.SupplierGroup{
+		{
+			SupplierID:              8,
+			ExternalGroupID:         "claude-low",
+			Name:                    "Claude Low",
+			ProviderFamily:          "anthropic",
+			RateMultiplier:          1,
+			EffectiveRateMultiplier: 0.08,
+			Status:                  adminplusdomain.SupplierGroupStatusActive,
+			LastSeenAt:              now.Add(time.Minute),
+			CreatedAt:               now,
+			UpdatedAt:               now,
+		},
+	}, now)
+	require.NoError(t, err)
+	svc := NewService(repo, nil, nil)
+
+	all, err := svc.List(context.Background(), ListFilter{Status: adminplusdomain.SupplierGroupStatusActive})
+
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+	require.Equal(t, int64(8), all[0].SupplierID)
+	require.Equal(t, int64(7), all[1].SupplierID)
+
+	_, err = svc.List(context.Background(), ListFilter{SupplierID: -1})
+	require.Error(t, err)
+}
+
+func TestServiceUpdateKeyCapacityPreservedBySync(t *testing.T) {
+	repo := NewMemoryRepository()
+	session := &stubSessionReader{input: ports.SessionProbeInput{SupplierID: 7}}
+	reader := &stubSessionGroupReader{
+		results: []*ports.ReadGroupsResult{
+			{
+				SupplierID: 7,
+				CapturedAt: time.Date(2026, 7, 9, 10, 0, 0, 0, time.UTC),
+				Groups: []*ports.ProviderGroup{
+					{
+						ExternalGroupID:         "gpt-low",
+						Name:                    "GPT Low",
+						ProviderFamily:          "openai",
+						RateMultiplier:          1,
+						EffectiveRateMultiplier: 0.05,
+						Status:                  "active",
+					},
+				},
+			},
+			{
+				SupplierID: 7,
+				CapturedAt: time.Date(2026, 7, 9, 11, 0, 0, 0, time.UTC),
+				Groups: []*ports.ProviderGroup{
+					{
+						ExternalGroupID:         "gpt-low",
+						Name:                    "GPT Low Renamed",
+						ProviderFamily:          "openai",
+						RateMultiplier:          1,
+						EffectiveRateMultiplier: 0.05,
+						Status:                  "active",
+					},
+				},
+			},
+		},
+	}
+	svc := NewService(repo, session, reader)
+
+	first, err := svc.Sync(context.Background(), 7)
+	require.NoError(t, err)
+	require.Len(t, first.Groups, 1)
+
+	updated, err := svc.UpdateKeyCapacity(context.Background(), UpdateKeyCapacityInput{
+		SupplierID:      7,
+		SupplierGroupID: first.Groups[0].ID,
+		KeyLimitPolicy:  adminplusdomain.SupplierGroupKeyLimitPolicyLimited,
+		KeyLimitValue:   1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, adminplusdomain.SupplierGroupKeyLimitPolicyLimited, updated.KeyLimitPolicy)
+	require.Equal(t, 1, updated.KeyLimitValue)
+
+	second, err := svc.Sync(context.Background(), 7)
+	require.NoError(t, err)
+	require.Len(t, second.Groups, 1)
+	require.Equal(t, "GPT Low Renamed", second.Groups[0].Name)
+	require.Equal(t, adminplusdomain.SupplierGroupKeyLimitPolicyLimited, second.Groups[0].KeyLimitPolicy)
+	require.Equal(t, 1, second.Groups[0].KeyLimitValue)
+}
+
 type stubSessionReader struct {
 	input ports.SessionProbeInput
 }

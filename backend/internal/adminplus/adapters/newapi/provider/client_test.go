@@ -95,7 +95,7 @@ func TestClientDirectLoginStoresCookieAndProbesSelfWithUserHeader(t *testing.T) 
 	require.Equal(t, "signed-session", cookie["value"])
 }
 
-func TestClientDirectLoginRequiresAdminSessionWhenRequested(t *testing.T) {
+func TestClientDirectLoginAcceptsRegisteredUserSession(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -113,23 +113,23 @@ func TestClientDirectLoginRequiresAdminSessionWhenRequested(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.Client())
-	_, err := client.DirectLogin(context.Background(), ports.DirectLoginInput{
+	result, err := client.DirectLogin(context.Background(), ports.DirectLoginInput{
 		SupplierID: 7,
 		Origin:     server.URL,
 		APIBaseURL: server.URL,
 		Username:   "wutongci",
 		Password:   "secret",
 		LoginContext: map[string]any{
-			"require_admin_session": true,
-			"required_role":         "10",
+			"source": "supplier_manual_login",
 		},
 	})
 
-	require.Error(t, err)
-	require.Equal(t, "SUPPLIER_DIRECT_LOGIN_ADMIN_REQUIRED", infraerrors.Reason(err))
-	appErr := infraerrors.FromError(err)
-	require.Equal(t, "1", appErr.Metadata["current_role"])
-	require.Equal(t, "10", appErr.Metadata["required_role"])
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	contextValue, ok := result.SessionBundle["context"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "1", contextValue["role"])
+	require.Equal(t, "4111", contextValue["user_id"])
 }
 
 func TestClientDirectLoginKeepsCookieSessionWhenProfileProbeDenied(t *testing.T) {
@@ -539,6 +539,138 @@ func TestClientCreateKeyCreatesTokenSearchesAndReadsSecret(t *testing.T) {
 	require.NotContains(t, result.RawPayload, "key")
 }
 
+func TestClientListKeysReadsNewAPITokenList(t *testing.T) {
+	var sawList bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		require.Equal(t, "/api/token/", r.URL.Path)
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "9", r.Header.Get("New-Api-User"))
+		require.Equal(t, "session=abc", r.Header.Get("Cookie"))
+		require.Equal(t, "1", r.URL.Query().Get("p"))
+		require.Equal(t, "50", r.URL.Query().Get("page_size"))
+		sawList = true
+		_, _ = w.Write([]byte(`{
+			"success": true,
+			"data": {
+				"total": 2,
+				"items": [
+					{"id":701,"name":"ops-low","group":"g10","status":1,"key":"sk-secret","token":"hidden-token"},
+					{"id":702,"name":"ops-disabled","group":"g20","status":2,"key":"sk-disabled"}
+				]
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.ListKeys(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Bundle: map[string]any{
+			"provider_type": "new_api",
+			"cookies": []any{
+				map[string]any{"name": "session", "value": "abc"},
+			},
+			"required_headers": map[string]any{"New-Api-User": "9"},
+		},
+	}, ports.ListProviderKeysInput{
+		SupplierID: 7,
+		Limit:      50,
+	})
+
+	require.NoError(t, err)
+	require.True(t, sawList)
+	require.Equal(t, int64(7), result.SupplierID)
+	require.Equal(t, "new_api", result.SystemType)
+	require.Equal(t, 2, result.Total)
+	require.Len(t, result.Keys, 2)
+	require.Equal(t, "701", result.Keys[0].ExternalKeyID)
+	require.Equal(t, "g10", result.Keys[0].ExternalGroupID)
+	require.Equal(t, "active", result.Keys[0].Status)
+	require.NotContains(t, result.Keys[0].RawPayload, "key")
+	require.NotContains(t, result.Keys[0].RawPayload, "token")
+	require.Equal(t, "702", result.Keys[1].ExternalKeyID)
+	require.Equal(t, "disabled", result.Keys[1].Status)
+	require.NotContains(t, result.Keys[1].RawPayload, "key")
+}
+
+func TestClientReadKeyCapacityReadsPaginatedNewAPITokens(t *testing.T) {
+	pages := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		require.Equal(t, "/api/token/", r.URL.Path)
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "9", r.Header.Get("New-Api-User"))
+		require.Equal(t, "session=abc", r.Header.Get("Cookie"))
+		require.Equal(t, "2", r.URL.Query().Get("page_size"))
+		page := r.URL.Query().Get("p")
+		pages = append(pages, page)
+		switch page {
+		case "1":
+			_, _ = w.Write([]byte(`{
+				"success": true,
+				"data": {
+					"total": 3,
+					"items": [
+						{"id":701,"name":"ops-low","group":"g10","status":1,"key":"sk-secret","token":"hidden-token"},
+						{"id":702,"name":"ops-disabled","group":"g20","status":2,"key":"sk-disabled"}
+					]
+				}
+			}`))
+		case "2":
+			_, _ = w.Write([]byte(`{
+				"success": true,
+				"data": {
+					"total": 3,
+					"items": [
+						{"id":703,"name":"ops-mid","group":"g30","status":1,"key":"sk-mid"}
+					]
+				}
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.ReadKeyCapacity(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		Origin:     server.URL,
+		APIBaseURL: server.URL,
+		Bundle: map[string]any{
+			"provider_type": "new_api",
+			"cookies": []any{
+				map[string]any{"name": "session", "value": "abc"},
+			},
+			"required_headers": map[string]any{"New-Api-User": "9"},
+		},
+	}, ports.ReadProviderKeyCapacityInput{
+		SupplierID: 7,
+		Limit:      2,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"1", "2"}, pages)
+	require.Equal(t, int64(7), result.SupplierID)
+	require.Equal(t, "new_api", result.SystemType)
+	require.Equal(t, "unknown", result.KeyLimitPolicy)
+	require.False(t, result.LimitKnown)
+	require.Equal(t, 2, result.ActiveKeyCount)
+	require.Equal(t, "unknown", result.KeyCapacityStatus)
+	require.Len(t, result.Keys, 3)
+	require.Equal(t, "g30", result.Keys[2].ExternalGroupID)
+	require.NotContains(t, result.Keys[0].RawPayload, "key")
+	require.NotContains(t, result.Keys[0].RawPayload, "token")
+	require.Equal(t, "list_keys", result.Diagnostics["capacity_source"])
+	require.Equal(t, "not_exposed_by_provider", result.Diagnostics["limit_source"])
+	require.Equal(t, 2, result.Diagnostics["pages_read"])
+	require.Equal(t, 3, result.Diagnostics["provider_total"])
+	require.NotEqual(t, true, result.Diagnostics["truncated"])
+}
+
 func TestParseNewAPITokenListSupportsResponseVariants(t *testing.T) {
 	tests := []map[string]any{
 		{"data": map[string]any{"items": []any{map[string]any{"id": float64(701), "name": "AdminPlus", "group": "default"}}}},
@@ -552,6 +684,71 @@ func TestParseNewAPITokenListSupportsResponseVariants(t *testing.T) {
 		require.Len(t, tokens, 1)
 		require.Equal(t, "AdminPlus", tokens[0].Name)
 	}
+}
+
+func TestClientDisableKeyUsesNewAPIStatusOnlyTokenUpdate(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		require.Equal(t, "/api/token/", r.URL.Path)
+		require.Equal(t, "true", r.URL.Query().Get("status_only"))
+		require.Equal(t, http.MethodPut, r.Method)
+		require.Equal(t, "9", r.Header.Get("New-Api-User"))
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		_, _ = w.Write([]byte(`{"success":true,"data":{"id":701,"name":"AdminPlus-kiro","group":"kiro","status":2}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.DisableKey(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		APIBaseURL: server.URL,
+		Bundle: map[string]any{
+			"provider_type":    "new_api",
+			"required_headers": map[string]any{"New-Api-User": "9"},
+		},
+	}, ports.DisableProviderKeyInput{
+		SupplierID:      7,
+		ExternalGroupID: "kiro",
+		ExternalKeyID:   "701",
+		Name:            "AdminPlus-kiro",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, float64(701), payload["id"])
+	require.Equal(t, float64(2), payload["status"])
+	require.Equal(t, "701", result.ExternalKeyID)
+	require.Equal(t, "disabled", result.Status)
+}
+
+func TestClientDeleteKeyUsesNewAPITokenDelete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		require.Equal(t, "/api/token/701", r.URL.Path)
+		require.Equal(t, http.MethodDelete, r.Method)
+		require.Equal(t, "9", r.Header.Get("New-Api-User"))
+		_, _ = w.Write([]byte(`{"success":true,"message":""}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	result, err := client.DeleteKey(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		APIBaseURL: server.URL,
+		Bundle: map[string]any{
+			"provider_type":    "new_api",
+			"required_headers": map[string]any{"New-Api-User": "9"},
+		},
+	}, ports.DeleteProviderKeyInput{
+		SupplierID:      7,
+		ExternalGroupID: "kiro",
+		ExternalKeyID:   "701",
+		Name:            "AdminPlus-kiro",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "701", result.ExternalKeyID)
+	require.Equal(t, "deleted", result.Status)
 }
 
 func TestClientCreateKeyConvertsQuotaUSDToNewAPIUnits(t *testing.T) {
@@ -749,20 +946,27 @@ func TestClientReadUsageCostsReadsConsumeLogsByPage(t *testing.T) {
 	require.Equal(t, int64(1500), result.Lines[1].DurationMS)
 }
 
-func TestClientReadUsageCostsRequiresAdminSessionForNewAPIHistory(t *testing.T) {
+func TestClientReadUsageCostsDoesNotPreflightFailForRegisteredUserRole(t *testing.T) {
+	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("non-admin role should fail before requesting upstream, got %s", r.URL.Path)
+		requests++
+		require.Equal(t, "/api/log", r.URL.Path)
+		require.Equal(t, "2", r.URL.Query().Get("type"))
+		require.Equal(t, "9", r.Header.Get("New-Api-User"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"page":1,"page_size":100,"total":0,"items":[]}}`))
 	}))
 	defer server.Close()
 
 	client := NewClient(server.Client())
-	_, err := client.ReadUsageCosts(context.Background(), ports.SessionProbeInput{
+	result, err := client.ReadUsageCosts(context.Background(), ports.SessionProbeInput{
 		SupplierID: 7,
 		Origin:     server.URL,
 		APIBaseURL: server.URL,
 		Bundle: map[string]any{
-			"provider_type": "new_api",
-			"context":       map[string]any{"role": "1"},
+			"provider_type":    "new_api",
+			"required_headers": map[string]any{"New-Api-User": "9"},
+			"context":          map[string]any{"role": "1"},
 		},
 	}, ports.ReadUsageCostsInput{
 		SupplierID: 7,
@@ -770,8 +974,9 @@ func TestClientReadUsageCostsRequiresAdminSessionForNewAPIHistory(t *testing.T) 
 		EndedAt:    time.Unix(1782126000, 0).UTC(),
 	})
 
-	require.Error(t, err)
-	require.Equal(t, "SUPPLIER_NEW_API_ADMIN_SESSION_REQUIRED", infraerrors.Reason(err))
+	require.NoError(t, err)
+	require.Equal(t, 1, requests)
+	require.Empty(t, result.Lines)
 }
 
 func TestClientReadEntitlementTransactionsReadsRedemptions(t *testing.T) {

@@ -81,6 +81,9 @@ func (r *SQLRepository) ListRecommendations(ctx context.Context, filter ActionFi
 		args = append(args, value)
 		return fmt.Sprintf("$%d", len(args))
 	}
+	if filter.ID > 0 {
+		where = append(where, "id = "+addArg(filter.ID))
+	}
 	if filter.SupplierID > 0 {
 		where = append(where, "supplier_id = "+addArg(filter.SupplierID))
 	}
@@ -92,6 +95,9 @@ func (r *SQLRepository) ListRecommendations(ctx context.Context, filter ActionFi
 	}
 	if filter.Type != "" {
 		where = append(where, "type = "+addArg(string(filter.Type)))
+	}
+	if strings.TrimSpace(filter.Signal) != "" {
+		where = append(where, "signals @> ARRAY["+addArg(strings.TrimSpace(filter.Signal))+"]::text[]")
 	}
 	limit := filter.Limit
 	if limit <= 0 {
@@ -161,16 +167,26 @@ func (r *SQLRepository) CreateExecution(ctx context.Context, execution *adminplu
 	if err != nil {
 		return nil, err
 	}
+	beforeSnapshot, err := json.Marshal(nonNilPayload(execution.BeforeSnapshot))
+	if err != nil {
+		return nil, err
+	}
+	afterSnapshot, err := json.Marshal(nonNilPayload(execution.AfterSnapshot))
+	if err != nil {
+		return nil, err
+	}
 	row := r.db.QueryRowContext(ctx, `
 		INSERT INTO admin_plus_action_executions (
 			recommendation_id, action_type, supplier_id, target_supplier_id, status,
 			request_payload, response_payload, error_message, operator_user_id,
-			created_at, updated_at
+			scheduler_run_id, scheduler_step_id, idempotency_key_hash, idempotency_replayed,
+			before_snapshot, after_snapshot, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, $17)
 		RETURNING id, recommendation_id, action_type, supplier_id, target_supplier_id,
 			status, request_payload, response_payload, error_message, operator_user_id,
-			created_at, updated_at
+			scheduler_run_id, scheduler_step_id, idempotency_key_hash, idempotency_replayed,
+			before_snapshot, after_snapshot, created_at, updated_at
 	`,
 		execution.RecommendationID,
 		string(execution.ActionType),
@@ -181,10 +197,35 @@ func (r *SQLRepository) CreateExecution(ctx context.Context, execution *adminplu
 		string(responsePayload),
 		execution.ErrorMessage,
 		execution.OperatorUserID,
+		execution.SchedulerRunID,
+		execution.SchedulerStepID,
+		execution.IdempotencyKeyHash,
+		execution.IdempotencyReplayed,
+		string(beforeSnapshot),
+		string(afterSnapshot),
 		execution.CreatedAt,
 		execution.UpdatedAt,
 	)
 	return scanActionExecution(row)
+}
+
+func (r *SQLRepository) GetExecution(ctx context.Context, id int64) (*adminplusdomain.ActionExecution, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, recommendation_id, action_type, supplier_id, target_supplier_id,
+			status, request_payload, response_payload, error_message, operator_user_id,
+			scheduler_run_id, scheduler_step_id, idempotency_key_hash, idempotency_replayed,
+			before_snapshot, after_snapshot, created_at, updated_at
+		FROM admin_plus_action_executions
+		WHERE id = $1
+	`, id)
+	execution, err := scanActionExecution(row)
+	if err == sql.ErrNoRows {
+		return nil, infraerrors.New(http.StatusNotFound, "ACTION_EXECUTION_NOT_FOUND", "action execution not found")
+	}
+	return execution, err
 }
 
 func (r *SQLRepository) ListExecutions(ctx context.Context, recommendationID int64, limit int) ([]*adminplusdomain.ActionExecution, error) {
@@ -200,7 +241,8 @@ func (r *SQLRepository) ListExecutions(ctx context.Context, recommendationID int
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, recommendation_id, action_type, supplier_id, target_supplier_id,
 			status, request_payload, response_payload, error_message, operator_user_id,
-			created_at, updated_at
+			scheduler_run_id, scheduler_step_id, idempotency_key_hash, idempotency_replayed,
+			before_snapshot, after_snapshot, created_at, updated_at
 		FROM admin_plus_action_executions
 		WHERE recommendation_id = $1
 		ORDER BY created_at DESC, id DESC
@@ -222,6 +264,62 @@ func (r *SQLRepository) ListExecutions(ctx context.Context, recommendationID int
 		return nil, err
 	}
 	return items, nil
+}
+
+func (r *SQLRepository) MarkExecutionIdempotencyReplayed(ctx context.Context, recommendationID int64, idempotencyKeyHash string) (*adminplusdomain.ActionExecution, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	row := r.db.QueryRowContext(ctx, `
+		WITH target AS (
+			SELECT id
+			FROM admin_plus_action_executions
+			WHERE recommendation_id = $1 AND idempotency_key_hash = $2
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1
+		)
+		UPDATE admin_plus_action_executions AS e
+		SET idempotency_replayed = TRUE, updated_at = NOW()
+		FROM target
+		WHERE e.id = target.id
+		RETURNING e.id, e.recommendation_id, e.action_type, e.supplier_id, e.target_supplier_id,
+			e.status, e.request_payload, e.response_payload, e.error_message, e.operator_user_id,
+			e.scheduler_run_id, e.scheduler_step_id, e.idempotency_key_hash, e.idempotency_replayed,
+			e.before_snapshot, e.after_snapshot, e.created_at, e.updated_at
+	`, recommendationID, idempotencyKeyHash)
+	execution, err := scanActionExecution(row)
+	if err == sql.ErrNoRows {
+		return nil, infraerrors.New(http.StatusNotFound, "ACTION_EXECUTION_IDEMPOTENCY_RECORD_NOT_FOUND", "action execution idempotency record not found")
+	}
+	return execution, err
+}
+
+func (r *SQLRepository) MarkLatestExecutionIdempotencyReplayed(ctx context.Context, actionType adminplusdomain.ActionType, idempotencyKeyHash string) (*adminplusdomain.ActionExecution, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	row := r.db.QueryRowContext(ctx, `
+		WITH target AS (
+			SELECT id
+			FROM admin_plus_action_executions
+			WHERE action_type = $1 AND idempotency_key_hash = $2
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1
+		)
+		UPDATE admin_plus_action_executions AS e
+		SET idempotency_replayed = TRUE, updated_at = NOW()
+		FROM target
+		WHERE e.id = target.id
+		RETURNING e.id, e.recommendation_id, e.action_type, e.supplier_id, e.target_supplier_id,
+			e.status, e.request_payload, e.response_payload, e.error_message, e.operator_user_id,
+			e.scheduler_run_id, e.scheduler_step_id, e.idempotency_key_hash, e.idempotency_replayed,
+			e.before_snapshot, e.after_snapshot, e.created_at, e.updated_at
+	`, string(actionType), idempotencyKeyHash)
+	execution, err := scanActionExecution(row)
+	if err == sql.ErrNoRows {
+		return nil, infraerrors.New(http.StatusNotFound, "ACTION_EXECUTION_IDEMPOTENCY_RECORD_NOT_FOUND", "action execution idempotency record not found")
+	}
+	return execution, err
 }
 
 type actionScanner interface {
@@ -268,6 +366,8 @@ func scanActionExecution(scanner actionScanner) (*adminplusdomain.ActionExecutio
 	var actionType, status string
 	var requestPayload []byte
 	var responsePayload []byte
+	var beforeSnapshot []byte
+	var afterSnapshot []byte
 	err := scanner.Scan(
 		&execution.ID,
 		&execution.RecommendationID,
@@ -279,6 +379,12 @@ func scanActionExecution(scanner actionScanner) (*adminplusdomain.ActionExecutio
 		&responsePayload,
 		&execution.ErrorMessage,
 		&execution.OperatorUserID,
+		&execution.SchedulerRunID,
+		&execution.SchedulerStepID,
+		&execution.IdempotencyKeyHash,
+		&execution.IdempotencyReplayed,
+		&beforeSnapshot,
+		&afterSnapshot,
 		&execution.CreatedAt,
 		&execution.UpdatedAt,
 	)
@@ -293,6 +399,8 @@ func scanActionExecution(scanner actionScanner) (*adminplusdomain.ActionExecutio
 	execution.Status = adminplusdomain.ActionExecutionStatus(status)
 	execution.RequestPayload = decodePayload(requestPayload)
 	execution.ResponsePayload = decodePayload(responsePayload)
+	execution.BeforeSnapshot = decodePayload(beforeSnapshot)
+	execution.AfterSnapshot = decodePayload(afterSnapshot)
 	return &execution, nil
 }
 

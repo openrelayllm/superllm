@@ -5,6 +5,7 @@
     <SupplierEditorDialogs :vm="vm" />
     <SupplierSessionDialog :vm="vm" />
     <SupplierChannelStatusDialog :vm="vm" />
+    <SupplierDetailDialog :vm="vm" />
     <SupplierGroupsDialog :vm="vm" />
     <SupplierChannelProbeDialog :vm="vm" />
     <SupplierProvisionDialog :vm="vm" />
@@ -21,6 +22,7 @@ import SupplierEditorDialogs from './suppliers/SupplierEditorDialogs.vue'
 import SupplierSessionDialog from './suppliers/SupplierSessionDialog.vue'
 import SupplierChannelStatusDialog from './suppliers/SupplierChannelStatusDialog.vue'
 import SupplierChannelProbeDialog from './suppliers/SupplierChannelProbeDialog.vue'
+import SupplierDetailDialog from './suppliers/SupplierDetailDialog.vue'
 import SupplierGroupsDialog from './suppliers/SupplierGroupsDialog.vue'
 import SupplierProvisionDialog from './suppliers/SupplierProvisionDialog.vue'
 import SupplierScheduleDialogs from './suppliers/SupplierScheduleDialogs.vue'

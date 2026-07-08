@@ -18,6 +18,8 @@ export function attachSupplierDialogs(ctx: any) {
   const supplierGroups = ctxValue(ctx, 'supplierGroups')
   const supplierGroupEvents = ctxValue(ctx, 'supplierGroupEvents')
   const supplierKeys = ctxValue(ctx, 'supplierKeys')
+  const ensureKeysPlan = ctxValue(ctx, 'ensureKeysPlan')
+  const ensureKeysPriorityGroupIDs = ctxValue(ctx, 'ensureKeysPriorityGroupIDs')
   const supplierChannelChecks = ctxValue(ctx, 'supplierChannelChecks')
   const activeProvisionJob = ctxValue(ctx, 'activeProvisionJob')
   const channelMonitorItems = ctxValue(ctx, 'channelMonitorItems')
@@ -36,6 +38,7 @@ export function attachSupplierDialogs(ctx: any) {
   const channelStatusCountdown = ctxValue(ctx, 'channelStatusCountdown')
   const groupsError = ctxValue(ctx, 'groupsError')
   const provisionJobError = ctxValue(ctx, 'provisionJobError')
+  const ensureKeysPlanError = ctxValue(ctx, 'ensureKeysPlanError')
   const channelCheckError = ctxValue(ctx, 'channelCheckError')
   const lastProbe = ctxValue(ctx, 'lastProbe')
   const rowLoginSupplierID = ctxValue(ctx, 'rowLoginSupplierID')
@@ -91,6 +94,8 @@ export function attachSupplierDialogs(ctx: any) {
     form.balance_yuan = 0
     form.balance_currency = 'USD'
     form.recharge_multiplier = 1
+    form.key_limit_policy = 'unknown'
+    form.key_limit_value = 0
     form.browser_login_enabled = true
     form.notes = ''
   }
@@ -112,6 +117,8 @@ export function attachSupplierDialogs(ctx: any) {
     form.balance_yuan = yuanFromCents(supplier.balance_cents)
     form.balance_currency = supplier.balance_currency || 'USD'
     form.recharge_multiplier = normalizeRechargeMultiplierForForm(supplier.recharge_multiplier)
+    form.key_limit_policy = supplier.key_limit_policy || 'unknown'
+    form.key_limit_value = supplier.key_limit_value || 0
     form.browser_login_enabled = supplier.credential.browser_login_enabled
     form.notes = supplier.notes || ''
   }
@@ -151,6 +158,8 @@ export function attachSupplierDialogs(ctx: any) {
       balance_cents: centsFromYuan(form.balance_yuan),
       balance_currency: form.balance_currency || 'USD',
       recharge_multiplier: normalizeRechargeMultiplierForForm(form.recharge_multiplier),
+      key_limit_policy: form.key_limit_policy,
+      key_limit_value: form.key_limit_policy === 'limited' ? Math.max(0, Number(form.key_limit_value) || 0) : 0,
       browser_login_enabled: form.browser_login_enabled,
       notes: form.notes || undefined
     }
@@ -248,10 +257,13 @@ export function attachSupplierDialogs(ctx: any) {
     supplierGroups.value = []
     supplierGroupEvents.value = []
     supplierKeys.value = []
+    ensureKeysPlan.value = null
+    ensureKeysPriorityGroupIDs.value = []
     supplierChannelChecks.value = {}
     activeProvisionJob.value = null
     groupsError.value = ''
     provisionJobError.value = ''
+    ensureKeysPlanError.value = ''
     channelCheckError.value = ''
     groupPagination.page = 1
     groupFilters.q = ''
@@ -341,9 +353,7 @@ export function attachSupplierDialogs(ctx: any) {
   async function directLoginSupplier(supplier: Supplier, options: { updateLastProbe: boolean; successMessage: string }) {
     const result = await loginSupplierSession(supplier.id, {
       login_context: supplier.type === 'new_api' ? {
-        source: 'supplier_manual_login',
-        require_admin_session: true,
-        required_role: '10'
+        source: 'supplier_manual_login'
       } : undefined,
       record_balance_snapshot: true
     })

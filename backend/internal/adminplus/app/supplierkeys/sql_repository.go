@@ -22,6 +22,13 @@ func NewSQLRepository(db *sql.DB) *SQLRepository {
 	return &SQLRepository{db: db}
 }
 
+func supplierGroupActiveKeyCountSQL(groupIDExpr string) string {
+	return `(SELECT COUNT(*)::int
+		FROM admin_plus_supplier_keys sk
+		WHERE sk.supplier_group_id = ` + groupIDExpr + `
+			AND sk.status IN ('provisioning', 'bound', 'manual_secret_required'))`
+}
+
 func (r *SQLRepository) GetSupplier(ctx context.Context, supplierID int64) (*adminplusdomain.Supplier, error) {
 	if r == nil || r.db == nil {
 		return nil, dbNotConfigured()
@@ -31,7 +38,15 @@ func (r *SQLRepository) GetSupplier(ctx context.Context, supplierID int64) (*adm
 			dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
 			postgres_configured, redis_configured, browser_login_enabled,
 			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
-			balance_cents, balance_currency, balance_updated_at, created_at, updated_at
+			balance_cents, balance_currency, balance_updated_at,
+			COALESCE(key_limit_policy, 'unknown'), COALESCE(key_limit_value, 0),
+			(
+				SELECT COUNT(*)
+				FROM admin_plus_supplier_keys sk
+				WHERE sk.supplier_id = admin_plus_suppliers.id
+					AND sk.status IN ('provisioning', 'bound', 'manual_secret_required')
+			) AS active_key_count,
+			created_at, updated_at
 		FROM admin_plus_suppliers
 		WHERE id = $1
 	`, supplierID)
@@ -47,7 +62,10 @@ func (r *SQLRepository) GetGroup(ctx context.Context, supplierID int64, groupID 
 			official_name, model_family, model_spec, standard_key_name,
 			rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
 			rpm_limit, daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
-			allow_image_generation, is_private, status, raw_payload,
+			allow_image_generation, is_private,
+			COALESCE(key_limit_policy, 'inherit'), COALESCE(key_limit_value, 0),
+			`+supplierGroupActiveKeyCountSQL("admin_plus_supplier_groups.id")+`,
+			status, raw_payload,
 			last_seen_at, naming_updated_at, created_at, updated_at
 		FROM admin_plus_supplier_groups
 		WHERE supplier_id = $1 AND id = $2
@@ -80,7 +98,10 @@ func (r *SQLRepository) ListGroups(ctx context.Context, supplierID int64) ([]*ad
 			official_name, model_family, model_spec, standard_key_name,
 			rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
 			rpm_limit, daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
-			allow_image_generation, is_private, status, raw_payload,
+			allow_image_generation, is_private,
+			COALESCE(key_limit_policy, 'inherit'), COALESCE(key_limit_value, 0),
+			`+supplierGroupActiveKeyCountSQL("admin_plus_supplier_groups.id")+`,
+			status, raw_payload,
 			last_seen_at, naming_updated_at, created_at, updated_at
 		FROM admin_plus_supplier_groups
 		WHERE supplier_id = $1 AND status = 'active'
@@ -223,6 +244,35 @@ func (r *SQLRepository) UpdateKeyAfterLocalBind(ctx context.Context, keyID int64
 	return item, nil
 }
 
+func (r *SQLRepository) UpdateKeyManualSecret(ctx context.Context, keyID int64, fingerprint string, last4 string) (*adminplusdomain.SupplierKey, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	row := r.db.QueryRowContext(ctx, `
+		UPDATE admin_plus_supplier_keys
+		SET key_fingerprint = $2,
+			key_last4 = $3,
+			error_code = '',
+			error_message = '',
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, supplier_id, supplier_group_id, external_group_id, external_key_id,
+			name, key_fingerprint, key_last4, status, provider_family,
+			local_sub2api_account_id, local_account_name, local_account_platform, local_account_type,
+			provision_request, provision_response, error_code, error_message,
+			created_at, updated_at
+	`,
+		keyID,
+		strings.TrimSpace(fingerprint),
+		strings.TrimSpace(last4),
+	)
+	item, err := scanSupplierKey(row)
+	if err != nil {
+		return nil, translateKeyCreateError(err)
+	}
+	return item, nil
+}
+
 func (r *SQLRepository) UpdateKeyName(ctx context.Context, supplierID int64, keyID int64, name string) (*adminplusdomain.SupplierKey, error) {
 	if r == nil || r.db == nil {
 		return nil, dbNotConfigured()
@@ -270,6 +320,46 @@ func (r *SQLRepository) UpdateKeyName(ctx context.Context, supplierID int64, key
 	}
 	committed = true
 	return key, nil
+}
+
+func (r *SQLRepository) DisableLocalProjection(ctx context.Context, supplierID int64, keyID int64, reason string) (*adminplusdomain.SupplierKey, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	row := r.db.QueryRowContext(ctx, `
+		UPDATE admin_plus_supplier_keys
+		SET status = 'disabled',
+			error_code = 'LOCAL_PROJECTION_RELEASED',
+			error_message = $3,
+			updated_at = NOW()
+		WHERE supplier_id = $1 AND id = $2
+		RETURNING id, supplier_id, supplier_group_id, external_group_id, external_key_id,
+			name, key_fingerprint, key_last4, status, provider_family,
+			local_sub2api_account_id, local_account_name, local_account_platform, local_account_type,
+			provision_request, provision_response, error_code, error_message,
+			created_at, updated_at
+	`, supplierID, keyID, strings.TrimSpace(reason))
+	return scanSupplierKey(row)
+}
+
+func (r *SQLRepository) MarkKeyDisabled(ctx context.Context, supplierID int64, keyID int64, errorCode string, errorMessage string) (*adminplusdomain.SupplierKey, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	row := r.db.QueryRowContext(ctx, `
+		UPDATE admin_plus_supplier_keys
+		SET status = 'disabled',
+			error_code = $3,
+			error_message = $4,
+			updated_at = NOW()
+		WHERE supplier_id = $1 AND id = $2
+		RETURNING id, supplier_id, supplier_group_id, external_group_id, external_key_id,
+			name, key_fingerprint, key_last4, status, provider_family,
+			local_sub2api_account_id, local_account_name, local_account_platform, local_account_type,
+			provision_request, provision_response, error_code, error_message,
+			created_at, updated_at
+	`, supplierID, keyID, strings.TrimSpace(errorCode), strings.TrimSpace(errorMessage))
+	return scanSupplierKey(row)
 }
 
 func (r *SQLRepository) CreateBinding(ctx context.Context, account *adminplusdomain.SupplierAccount) (*adminplusdomain.SupplierAccount, error) {
@@ -497,6 +587,9 @@ func scanSupplier(scanner scanner) (*adminplusdomain.Supplier, error) {
 		&supplier.BalanceCents,
 		&supplier.BalanceCurrency,
 		&balanceUpdatedAt,
+		&supplier.KeyLimitPolicy,
+		&supplier.KeyLimitValue,
+		&supplier.ActiveKeyCount,
 		&supplier.CreatedAt,
 		&supplier.UpdatedAt,
 	)
@@ -514,6 +607,8 @@ func scanSupplier(scanner scanner) (*adminplusdomain.Supplier, error) {
 		t := balanceUpdatedAt.Time
 		supplier.BalanceUpdatedAt = &t
 	}
+	supplier.KeyLimitPolicy = normalizeKeyLimitPolicy(supplier.KeyLimitPolicy)
+	supplier.KeyCapacityStatus = keyCapacityStatus(supplier.KeyLimitPolicy, supplier.KeyLimitValue, supplier.ActiveKeyCount)
 	return &supplier, nil
 }
 
@@ -547,6 +642,9 @@ func scanSupplierGroup(scanner scanner) (*adminplusdomain.SupplierGroup, error) 
 		&monthlyLimit,
 		&group.AllowImageGeneration,
 		&group.IsPrivate,
+		&group.KeyLimitPolicy,
+		&group.KeyLimitValue,
+		&group.ActiveKeyCount,
 		&status,
 		&rawPayload,
 		&group.LastSeenAt,
@@ -561,6 +659,8 @@ func scanSupplierGroup(scanner scanner) (*adminplusdomain.SupplierGroup, error) 
 		return nil, err
 	}
 	group.Status = adminplusdomain.SupplierGroupStatus(status)
+	group.KeyLimitPolicy = normalizeGroupKeyLimitPolicy(group.KeyLimitPolicy)
+	group.KeyCapacityStatus = groupKeyCapacityStatus(group.KeyLimitPolicy, group.KeyLimitValue, group.ActiveKeyCount)
 	if userRate.Valid {
 		value := userRate.Float64
 		group.UserRateMultiplier = &value

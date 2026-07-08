@@ -116,6 +116,71 @@ func TestSQLRepositoryListChangeEvents(t *testing.T) {
 	require.Nil(t, items[0].OldEffectiveRateMultiplier)
 }
 
+func TestSQLRepositoryListSupportsGlobalSupplierGroupLookup(t *testing.T) {
+	db, mock := newSupplierGroupSQLMock(t)
+	repo := NewSQLRepository(db)
+	lastSeenAt := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
+	createdAt := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	updatedAt := time.Date(2026, 7, 8, 11, 0, 0, 0, time.UTC)
+
+	mock.ExpectQuery(`FROM admin_plus_supplier_groups\s+WHERE status = \$1 AND \(LOWER\(name\) LIKE \$2`).
+		WithArgs(
+			"active",
+			"%gpt%",
+			"%gpt%",
+			"%gpt%",
+			"%gpt%",
+			"%gpt%",
+			"%gpt%",
+			"%gpt%",
+			"%gpt%",
+			50,
+		).
+		WillReturnRows(newSupplierGroupRows().AddRow(
+			int64(101),
+			int64(7),
+			"gpt-low",
+			"GPT Low",
+			"low rate",
+			"openai",
+			"gpt",
+			"gpt",
+			"gpt-4o",
+			"lime-openai-gpt-low",
+			1.0,
+			nil,
+			0.05,
+			nil,
+			nil,
+			nil,
+			nil,
+			true,
+			false,
+			"limited",
+			2,
+			1,
+			"active",
+			[]byte(`{"id":"gpt-low"}`),
+			lastSeenAt,
+			nil,
+			createdAt,
+			updatedAt,
+		))
+
+	items, err := repo.List(context.Background(), ListFilter{
+		Status: adminplusdomain.SupplierGroupStatusActive,
+		Query:  "gpt",
+		Limit:  50,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, int64(101), items[0].ID)
+	require.Equal(t, int64(7), items[0].SupplierID)
+	require.Equal(t, "GPT Low", items[0].Name)
+	require.Equal(t, 0.05, items[0].EffectiveRateMultiplier)
+}
+
 func newSupplierGroupChangeEventRows() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
 		"id",
@@ -130,5 +195,38 @@ func newSupplierGroupChangeEventRows() *sqlmock.Rows {
 		"change_percent",
 		"low_rate",
 		"created_at",
+	})
+}
+
+func newSupplierGroupRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{
+		"id",
+		"supplier_id",
+		"external_group_id",
+		"name",
+		"description",
+		"provider_family",
+		"official_name",
+		"model_family",
+		"model_spec",
+		"standard_key_name",
+		"rate_multiplier",
+		"user_rate_multiplier",
+		"effective_rate_multiplier",
+		"rpm_limit",
+		"daily_limit_usd",
+		"weekly_limit_usd",
+		"monthly_limit_usd",
+		"allow_image_generation",
+		"is_private",
+		"key_limit_policy",
+		"key_limit_value",
+		"active_key_count",
+		"status",
+		"raw_payload",
+		"last_seen_at",
+		"naming_updated_at",
+		"created_at",
+		"updated_at",
 	})
 }

@@ -1,6 +1,7 @@
 import type {
   ExtensionTaskType,
   SchedulerAttemptRecord,
+  SchedulerCandidateSummary,
   SchedulerPlan,
   SchedulerStepRecord
 } from '@/api/admin/adminPlus'
@@ -38,7 +39,8 @@ export function planTaskTypes(taskType: string): ExtensionTaskType[] {
     'supplier.usage_costs.sync': ['fetch_usage_costs'],
     'supplier.costs.reconcile': ['reconcile_supplier_costs'],
     'supplier.session.probe': ['fetch_health'],
-    'supplier.channels.check': ['check_supplier_channels']
+    'supplier.channels.check': ['check_supplier_channels'],
+    'local.sub2api.routing.capacity_watch': ['routing_capacity_watch']
   }[taskType] as ExtensionTaskType[] || []
 }
 
@@ -54,6 +56,7 @@ export function taskLabel(value: string): string {
     'supplier.session.probe': '会话探测',
     'supplier.channels.check': '渠道检测',
     'supplier.costs.reconcile': '成本对账',
+    'local.sub2api.routing.capacity_watch': '本地容量巡检',
     'local.sub2api.schedule.ensure': '加入本地调度',
     'local.sub2api.schedule.remove_invalid': '移除失效调度',
     fetch_balance: '余额同步',
@@ -63,6 +66,7 @@ export function taskLabel(value: string): string {
     reconcile_supplier_costs: '成本对账',
     fetch_health: '会话探测',
     check_supplier_channels: '渠道检测',
+    routing_capacity_watch: '本地容量巡检',
     capture_supplier_session: '会话直登',
     mixed: '混合任务'
   }[value] || value
@@ -155,6 +159,84 @@ export function statusValueLabel(value: string): string {
     not_checked: '未检测',
     paused: '暂停'
   }[value] || value
+}
+
+export function candidateStatusLabel(value?: string): string {
+  return {
+    available: '可调度候选',
+    unknown: '待确认',
+    degraded: '质量降级',
+    needs_provisioning: '待开通',
+    balance_blocked: '余额阻断',
+    blocked: '不可用',
+    local_blocked: '本地阻断',
+    capacity_blocked: '配额阻断'
+  }[value || ''] || value || '-'
+}
+
+export function candidateStatusClass(value?: string): string {
+  if (value === 'available') return 'badge-success'
+  if (value === 'balance_blocked' || value === 'capacity_blocked' || value === 'blocked' || value === 'local_blocked') return 'badge-danger'
+  if (value === 'needs_provisioning' || value === 'unknown' || value === 'degraded') return 'badge-warning'
+  return 'badge-gray'
+}
+
+export function candidateCheckSourceLabel(value?: string): string {
+  return {
+    supplier: '供应商',
+    supplier_group: '第三方分组',
+    supplier_key: '第三方 Key',
+    key_capacity: 'Key 配额',
+    balance: '余额',
+    local_state: '本地状态',
+    channel_monitor: '通道监控',
+    active_probe: '实测',
+    candidate_evaluator: '候选评估'
+  }[value || ''] || value || '-'
+}
+
+export function candidateReasonLabel(value?: string): string {
+  return {
+    recharge_required: '余额不足，充值后重测',
+    balance_unknown: '余额未知，需确认',
+    channel_monitor_failed: '通道监控不可用',
+    channel_active_probe_failed: '实测失败',
+    channel_untested: '尚未检测通道',
+    supplier_binding_missing: '缺少供应商绑定',
+    supplier_disabled: '供应商已禁用',
+    supplier_unavailable: '供应商不可用',
+    supplier_credential_invalid: '供应商凭据失效',
+    supplier_paused: '供应商已暂停',
+    supplier_account_disabled: '供应商账号禁用',
+    supplier_group_missing: '第三方分组缺失',
+    supplier_group_disabled: '第三方分组禁用',
+    supplier_key_missing: '缺少第三方 Key',
+    supplier_key_failed: '第三方 Key 失败',
+    supplier_key_disabled: '第三方 Key 禁用',
+    supplier_key_manual_secret_required: '第三方 Key 需补密钥',
+    supplier_key_provisioning: '第三方 Key 创建中',
+    key_capacity_exhausted: 'Key 配额已满',
+    local_account_missing: '缺少本地账号',
+    local_account_unschedulable: '本地账号已关调度',
+    local_account_temp_unschedulable: '本地账号临时不可调度',
+    local_account_state_drift: '原后台变更待处理',
+    local_account_metadata_drift: '本地账号元数据漂移',
+    key_local_account_mismatch: 'Key 绑定账号不一致',
+    rate_missing: '倍率缺失',
+    candidate_unavailable: '候选池暂无可用账号',
+    candidate_missing: '候选池未同步'
+  }[value || ''] || value || '-'
+}
+
+export function candidateCountsLabel(summary?: SchedulerCandidateSummary | null): string {
+  if (!summary) return '-'
+  const blocked = (summary.blocked_count || 0) + (summary.balance_blocked_count || 0) + (summary.capacity_blocked_count || 0)
+  return `可用 ${summary.available_count || 0} / 阻断 ${blocked} / 未知 ${summary.unknown_count || 0}`
+}
+
+export function candidateRateLabel(value?: number | null): string {
+  if (value === undefined || value === null || !Number.isFinite(Number(value)) || Number(value) <= 0) return '-'
+  return `${Number(value).toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}x`
 }
 
 export function moneyLabel(cents: number, currency: string): string {
@@ -275,6 +357,7 @@ export function codeFromReasonText(reason: string): string {
     'SUPPLIER_SESSION_EXPIRED',
     'SUPPLIER_SESSION_DECRYPT_FAILED',
     'SUPPLIER_SESSION_PERMISSION_DENIED',
+    'SUPPLIER_NEW_API_ADMIN_SESSION_REQUIRED',
     'SUPPLIER_SESSION_PROBE_FAILED',
     'SUPPLIER_SESSION_PROBE_HTML',
     'SUPPLIER_SESSION_PROBE_BAD_STATUS',
@@ -350,14 +433,15 @@ export function suggestionFromCode(code?: string): string {
     SUPPLIER_SESSION_NOT_FOUND: '当前没有可用会话，请配置登录凭据后重试，或使用插件采集会话。',
     SUPPLIER_SESSION_EXPIRED: '当前会话已过期，请重新登录或使用插件刷新会话。',
     SUPPLIER_SESSION_DECRYPT_FAILED: '会话解密失败，请重新一键登录或使用插件采集会话。',
-    SUPPLIER_SESSION_PERMISSION_DENIED: '当前会话权限不足，请重新登录或换用有权限的管理员账号。',
+    SUPPLIER_SESSION_PERMISSION_DENIED: '当前注册用户会话权限不足，请确认账号权限或换用具备该接口权限的账号。',
+    SUPPLIER_NEW_API_ADMIN_SESSION_REQUIRED: 'new-api 历史接口需要更高数据权限，请确认注册用户具备该接口权限，或换用可读取该数据的账号/token。',
     SUPPLIER_SESSION_PROBE_FAILED: '供应商接口超时或不可达，请检查供应商地址、网络出口和前置防护后重试。',
     SUPPLIER_SESSION_PROBE_HTML: '供应商 profile 接口返回 HTML，通常是 Cloudflare/Nginx/风控页面，请检查前置层策略。',
     SUPPLIER_SESSION_PROBE_BAD_STATUS: '供应商 profile 接口返回非成功状态，请检查会话权限和供应商接口。',
     SUPPLIER_SESSION_PROFILE_INVALID: '供应商 profile 返回结构异常，请检查供应商程序版本和接口兼容性。',
     SUPPLIER_DIRECT_LOGIN_API_BASE_URL_REQUIRED: '补充供应商 API 地址后重试。',
     SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED: '补充供应商登录账号密码或 access token 后重试。',
-    SUPPLIER_DIRECT_LOGIN_ADMIN_REQUIRED: '供应商后台模式需要管理员账号，请换用管理员凭据后重试。',
+    SUPPLIER_DIRECT_LOGIN_ADMIN_REQUIRED: '当前账号无权完成供应商后台直登，请换用具备对应接口权限的账号/token 后重试。',
     SUPPLIER_DIRECT_LOGIN_UPSTREAM_HTML: '供应商登录接口返回 HTML，通常是前置层或风控页面，请改用浏览器会话或调整防护策略。',
     SUPPLIER_DIRECT_LOGIN_UPSTREAM_ORIGIN_ERROR: '供应商前置层或源站返回异常，请检查 Cloudflare/Nginx/源站健康。',
     SUPPLIER_DIRECT_LOGIN_BAD_STATUS: '供应商登录接口返回非成功状态，请检查登录地址和凭据。',

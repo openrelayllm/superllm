@@ -57,6 +57,8 @@ func TestSQLRepositoryCreatePersistsSupplier(t *testing.T) {
 			"USD",
 			&balanceUpdatedAt,
 			float64(1),
+			"limited",
+			10,
 			now,
 			now,
 		).
@@ -84,6 +86,10 @@ func TestSQLRepositoryCreatePersistsSupplier(t *testing.T) {
 			"USD",
 			balanceUpdatedAt,
 			float64(1),
+			"limited",
+			10,
+			0,
+			"available",
 			now,
 			now,
 		))
@@ -114,6 +120,8 @@ func TestSQLRepositoryCreatePersistsSupplier(t *testing.T) {
 		BalanceCurrency:    "USD",
 		BalanceUpdatedAt:   &balanceUpdatedAt,
 		RechargeMultiplier: 1,
+		KeyLimitPolicy:     "limited",
+		KeyLimitValue:      10,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	})
@@ -123,6 +131,9 @@ func TestSQLRepositoryCreatePersistsSupplier(t *testing.T) {
 	require.Equal(t, adminplusdomain.SupplierRuntimeStatusCandidate, got.RuntimeStatus)
 	require.Equal(t, "https://relay.example.com/custom/topup", got.ThirdPartyRechargeURL)
 	require.Equal(t, "https://sub2apiplus.example.com/custom/topup", got.LocalRechargeURL)
+	require.Equal(t, "limited", got.KeyLimitPolicy)
+	require.Equal(t, 10, got.KeyLimitValue)
+	require.Equal(t, "available", got.KeyCapacityStatus)
 	require.True(t, got.Credential.PostgresConfigured)
 }
 
@@ -198,6 +209,10 @@ func TestSQLRepositoryListFiltersWithParameterizedQuery(t *testing.T) {
 			"USD",
 			nil,
 			float64(1),
+			"unknown",
+			0,
+			0,
+			"unknown",
 			now,
 			now,
 		))
@@ -246,6 +261,10 @@ func TestSQLRepositoryUpdateStatus(t *testing.T) {
 			"USD",
 			nil,
 			float64(1),
+			"unknown",
+			0,
+			0,
+			"unknown",
 			now,
 			now,
 		))
@@ -451,6 +470,10 @@ func newSupplierRows() *sqlmock.Rows {
 		"balance_currency",
 		"balance_updated_at",
 		"recharge_multiplier",
+		"key_limit_policy",
+		"key_limit_value",
+		"active_key_count",
+		"key_capacity_status",
 		"created_at",
 		"updated_at",
 	})

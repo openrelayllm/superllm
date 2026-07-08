@@ -23,6 +23,8 @@ type supplierInput struct {
 	BalanceCents          int64
 	BalanceCurrency       string
 	RechargeMultiplier    float64
+	KeyLimitPolicy        string
+	KeyLimitValue         int
 }
 
 func normalizeSupplierInput(in supplierInput) (supplierInput, error) {
@@ -61,6 +63,10 @@ func normalizeSupplierInput(in supplierInput) (supplierInput, error) {
 	if err != nil {
 		return supplierInput{}, err
 	}
+	keyLimitPolicy, keyLimitValue, err := normalizeKeyLimit(in.KeyLimitPolicy, in.KeyLimitValue)
+	if err != nil {
+		return supplierInput{}, err
+	}
 	if runtimeStatus == adminplusdomain.SupplierRuntimeStatusCandidate && balanceCents <= 0 {
 		return supplierInput{}, badRequest("SUPPLIER_BALANCE_REQUIRED_FOR_CANDIDATE", "candidate supplier must have positive balance")
 	}
@@ -96,6 +102,8 @@ func normalizeSupplierInput(in supplierInput) (supplierInput, error) {
 		BalanceCents:          balanceCents,
 		BalanceCurrency:       balanceCurrency,
 		RechargeMultiplier:    rechargeMultiplier,
+		KeyLimitPolicy:        keyLimitPolicy,
+		KeyLimitValue:         keyLimitValue,
 	}, nil
 }
 
@@ -306,6 +314,53 @@ func normalizeRechargeMultiplier(value float64) (float64, error) {
 	return value, nil
 }
 
+func normalizeKeyLimit(policy string, value int) (string, int, error) {
+	normalized := strings.ToLower(strings.TrimSpace(policy))
+	if normalized == "" {
+		normalized = adminplusdomain.SupplierKeyLimitPolicyUnknown
+	}
+	switch normalized {
+	case adminplusdomain.SupplierKeyLimitPolicyUnknown, adminplusdomain.SupplierKeyLimitPolicyUnlimited, adminplusdomain.SupplierKeyLimitPolicyUnsupported:
+		if value < 0 {
+			return "", 0, badRequest("SUPPLIER_KEY_LIMIT_VALUE_INVALID", "key limit value cannot be negative")
+		}
+		return normalized, 0, nil
+	case adminplusdomain.SupplierKeyLimitPolicyLimited:
+		if value <= 0 {
+			return "", 0, badRequest("SUPPLIER_KEY_LIMIT_VALUE_REQUIRED", "limited key policy requires a positive value")
+		}
+		return normalized, value, nil
+	default:
+		return "", 0, badRequest("SUPPLIER_KEY_LIMIT_POLICY_INVALID", "invalid key limit policy")
+	}
+}
+
+func supplierKeyCapacityStatus(policy string, limit int, activeCount int) string {
+	policy, limit, err := normalizeKeyLimit(policy, limit)
+	if err != nil {
+		return adminplusdomain.SupplierKeyCapacityUnknown
+	}
+	if activeCount < 0 {
+		activeCount = 0
+	}
+	switch policy {
+	case adminplusdomain.SupplierKeyLimitPolicyUnlimited:
+		return adminplusdomain.SupplierKeyCapacityAvailable
+	case adminplusdomain.SupplierKeyLimitPolicyUnsupported:
+		return adminplusdomain.SupplierKeyCapacityUnsupported
+	case adminplusdomain.SupplierKeyLimitPolicyLimited:
+		if activeCount >= limit {
+			return adminplusdomain.SupplierKeyCapacityExhausted
+		}
+		if activeCount >= limit-1 {
+			return adminplusdomain.SupplierKeyCapacityLimited
+		}
+		return adminplusdomain.SupplierKeyCapacityAvailable
+	default:
+		return adminplusdomain.SupplierKeyCapacityUnknown
+	}
+}
+
 func normalizeSupplierForRead(in *adminplusdomain.Supplier) *adminplusdomain.Supplier {
 	if in == nil {
 		return nil
@@ -321,6 +376,14 @@ func normalizeSupplierForRead(in *adminplusdomain.Supplier) *adminplusdomain.Sup
 		t := *in.BalanceUpdatedAt
 		out.BalanceUpdatedAt = &t
 	}
+	if policy, limit, err := normalizeKeyLimit(in.KeyLimitPolicy, in.KeyLimitValue); err == nil {
+		out.KeyLimitPolicy = policy
+		out.KeyLimitValue = limit
+	} else {
+		out.KeyLimitPolicy = adminplusdomain.SupplierKeyLimitPolicyUnknown
+		out.KeyLimitValue = 0
+	}
+	out.KeyCapacityStatus = supplierKeyCapacityStatus(out.KeyLimitPolicy, out.KeyLimitValue, out.ActiveKeyCount)
 	out.Capabilities = buildSupplierCapabilities(&out)
 	out.IntegrationHint = buildSupplierIntegrationHint(&out)
 	out.PlatformHint = buildSupplierPlatformHint(&out)

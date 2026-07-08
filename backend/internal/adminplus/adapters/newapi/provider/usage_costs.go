@@ -27,9 +27,6 @@ func (c *Client) ReadUsageCosts(ctx context.Context, in ports.SessionProbeInput,
 		return nil, err
 	}
 	role, roleKnown := newAPIRoleFromBundle(in.Bundle)
-	if roleKnown && role < newAPIAdminRole {
-		return nil, newAPIAdminSessionRequired(role, true)
-	}
 	baseEndpoint, err := buildEndpointURL(apiBaseURL, "/api/log")
 	if err != nil {
 		return nil, err
@@ -48,8 +45,8 @@ func (c *Client) ReadUsageCosts(ctx context.Context, in ports.SessionProbeInput,
 		})
 		raw, err := c.doSessionJSON(ctx, http.MethodGet, endpoint, in.Bundle)
 		if err != nil {
-			if isNewAPIAdminPermissionError(err) {
-				return nil, newAPIAdminSessionRequired(role, roleKnown)
+			if isNewAPISessionPermissionError(err) {
+				return nil, newAPISessionPermissionRequired(role, roleKnown, err)
 			}
 			return nil, err
 		}
@@ -59,8 +56,8 @@ func (c *Client) ReadUsageCosts(ctx context.Context, in ports.SessionProbeInput,
 		}
 		if !envelope.Success {
 			err := classifySessionBusinessFailure(envelope.Message)
-			if isNewAPIAdminPermissionError(err) {
-				return nil, newAPIAdminSessionRequired(role, roleKnown)
+			if isNewAPISessionPermissionError(err) {
+				return nil, newAPISessionPermissionRequired(role, roleKnown, err)
 			}
 			return nil, err
 		}

@@ -13,7 +13,7 @@
       </div>
     </div>
     <div class="overflow-x-auto">
-      <table class="w-full min-w-[1240px] divide-y divide-gray-200 dark:divide-dark-700">
+      <table class="w-full min-w-[1480px] divide-y divide-gray-200 dark:divide-dark-700">
         <thead class="bg-gray-50 dark:bg-dark-800">
           <tr>
             <th class="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500 dark:text-dark-400">供应商</th>
@@ -62,6 +62,20 @@
               <StatusPill :value="supplier.channel_status" />
               <span class="mx-1">/</span>
               <StatusPill :value="supplier.schedule_status" />
+              <div v-if="supplier.candidate_summary" class="mt-2 max-w-[260px] space-y-1 text-xs">
+                <div class="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span class="badge" :class="candidateStatusClass(supplier.candidate_summary.candidate_status)">
+                    {{ candidateStatusLabel(supplier.candidate_summary.candidate_status) }}
+                  </span>
+                  <span class="text-gray-500 dark:text-dark-400">{{ candidateCountsLabel(supplier.candidate_summary) }}</span>
+                </div>
+                <p class="truncate text-gray-500 dark:text-dark-400" :title="candidateSummaryMeta(supplier)">
+                  最低倍率 {{ candidateRateLabel(supplier.candidate_summary.lowest_effective_rate_multiplier) }} · {{ candidateCheckSourceLabel(supplier.candidate_summary.check_source) }}
+                </p>
+                <p v-if="supplier.candidate_summary.blocked_reason" class="truncate text-amber-700 dark:text-amber-300" :title="candidateReasonLabel(supplier.candidate_summary.blocked_reason)">
+                  {{ candidateReasonLabel(supplier.candidate_summary.blocked_reason) }}
+                </p>
+              </div>
             </td>
             <td class="max-w-[220px] px-4 py-4 text-sm text-gray-500 dark:text-dark-400">
               <span class="block truncate" :title="supplier.recommended_action || supplier.last_error || ''">{{ supplier.recommended_action || supplier.last_error || '-' }}</span>
@@ -89,7 +103,15 @@
 import { computed, ref } from 'vue'
 import type { SchedulerSupplierStatus } from '@/api/admin/adminPlus'
 import SchedulerStatusPill from './SchedulerStatusPill.vue'
-import { moneyLabel } from './presentation'
+import {
+  candidateCheckSourceLabel,
+  candidateCountsLabel,
+  candidateRateLabel,
+  candidateReasonLabel,
+  candidateStatusClass,
+  candidateStatusLabel,
+  moneyLabel
+} from './presentation'
 import { supplierActionKey, type SupplierAutomationAction } from './supplierAutomation'
 
 const props = defineProps<{
@@ -112,5 +134,11 @@ const visibleSuppliers = computed(() => {
 
 function isRunning(supplier: SchedulerSupplierStatus, action: SupplierAutomationAction): boolean {
   return props.runningActionKey === supplierActionKey(supplier.supplier_id, action)
+}
+
+function candidateSummaryMeta(supplier: SchedulerSupplierStatus): string {
+  const summary = supplier.candidate_summary
+  if (!summary) return ''
+  return `最低倍率 ${candidateRateLabel(summary.lowest_effective_rate_multiplier)} · ${candidateCheckSourceLabel(summary.check_source)}`
 }
 </script>

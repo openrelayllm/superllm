@@ -6,7 +6,7 @@ import { useAppStore } from '@/stores/app'
 import { supplierDisplayUsageCents, supplierRechargeTotalCents } from '../supplierCostPresentation'
 import type { Column } from '@/components/common/types'
 import type { AdminGroup } from '@/types'
-import type { LocalSub2APIAccount, Supplier, SupplierAccount, SupplierBrowserSession, SupplierCapabilityStatus, SupplierChannelCheckOverviewRow, SupplierChannelCheckSnapshot, SupplierChannelMonitorView, SupplierCostSnapshot, SupplierCurrentBalance, SupplierGroup, SupplierGroupChangeEvent, SupplierGroupStatus, SupplierHealthStatus, SupplierIntegrationProtocol, SupplierKey, SupplierProvisionJob, SupplierSessionProbeResult, SupplierKind, SupplierRuntimeStatus, SupplierType } from '@/api/admin/adminPlus'
+import type { EnsureSupplierKeysPlan, LocalAccountOpsRow, LocalSub2APIAccount, Supplier, SupplierAccount, SupplierBrowserSession, SupplierCapabilityStatus, SupplierChannelCheckOverviewRow, SupplierChannelCheckSnapshot, SupplierChannelMonitorView, SupplierCostSnapshot, SupplierCurrentBalance, SupplierGroup, SupplierGroupChangeEvent, SupplierGroupStatus, SupplierHealthStatus, SupplierIntegrationProtocol, SupplierKey, SupplierProvisionJob, SupplierSessionProbeResult, SupplierKind, SupplierRuntimeStatus, SupplierType } from '@/api/admin/adminPlus'
 import type { ChannelStatusWindow, ScheduleListStatusFilter, ScheduleListLocalGroupFilter, ChannelProtocol, RateCheckMode, RateCheckProtocol } from './types'
 
 export function createSuppliersState() {
@@ -24,6 +24,7 @@ export function createSuppliersState() {
   const sessionDialogOpen = ref(false)
   const channelStatusDialogOpen = ref(false)
   const groupsDialogOpen = ref(false)
+  const supplierDetailDialogOpen = ref(false)
   const channelProbeDialogOpen = ref(false)
   const provisionDialogOpen = ref(false)
   const repairDialogOpen = ref(false)
@@ -39,6 +40,7 @@ export function createSuppliersState() {
   const sessionSupplier = ref<Supplier | null>(null)
   const channelStatusSupplier = ref<Supplier | null>(null)
   const groupsSupplier = ref<Supplier | null>(null)
+  const supplierDetailSupplier = ref<Supplier | null>(null)
   const channelProbeSupplier = ref<Supplier | null>(null)
   const channelProbeSnapshot = ref<SupplierChannelCheckSnapshot | null>(null)
   const provisionGroup = ref<SupplierGroup | null>(null)
@@ -51,11 +53,18 @@ export function createSuppliersState() {
   const supplierGroups = ref<SupplierGroup[]>([])
   const supplierGroupEvents = ref<SupplierGroupChangeEvent[]>([])
   const supplierKeys = ref<SupplierKey[]>([])
+  const ensureKeysPlan = ref<EnsureSupplierKeysPlan | null>(null)
   const supplierCostSnapshots = ref<Record<number, SupplierCostSnapshot | undefined>>({})
   const supplierBestChannels = ref<Record<number, SupplierChannelCheckSnapshot[] | undefined>>({})
   const supplierChannelChecks = ref<Record<number, SupplierChannelCheckSnapshot | undefined>>({})
   const activeProvisionJob = ref<SupplierProvisionJob | null>(null)
   const localAccounts = ref<LocalSub2APIAccount[]>([])
+  const supplierDetailGroups = ref<SupplierGroup[]>([])
+  const supplierDetailKeys = ref<SupplierKey[]>([])
+  const supplierDetailAccounts = ref<SupplierAccount[]>([])
+  const supplierDetailLocalAccounts = ref<LocalSub2APIAccount[]>([])
+  const supplierDetailLocalOpsRows = ref<LocalAccountOpsRow[]>([])
+  const supplierDetailChannelChecks = ref<SupplierChannelCheckSnapshot[]>([])
   const channelMonitorItems = ref<SupplierChannelMonitorView[]>([])
   const sessionStore = reactive<Record<number, SupplierBrowserSession | undefined>>({})
   const currentBalanceStore = reactive<Record<number, SupplierCurrentBalance | undefined>>({})
@@ -66,9 +75,14 @@ export function createSuppliersState() {
   const currentBalanceError = ref('')
   const channelStatusLoading = ref(false)
   const groupsLoading = ref(false)
+  const supplierDetailLoading = ref(false)
   const groupsSyncing = ref(false)
   const keysEnsuring = ref(false)
+  const ensureKeysPlanning = ref(false)
   const keyNamesStandardizing = ref(false)
+  const keyProjectionDisabling = ref<number | null>(null)
+  const providerKeyImportingGroupID = ref<number | null>(null)
+  const providerKeyBatchImporting = ref(false)
   const channelChecksSyncing = ref(false)
   const channelScheduleSubmitting = ref(false)
   const scheduleListLoading = ref(false)
@@ -86,8 +100,10 @@ export function createSuppliersState() {
   const channelStatusAutoRefresh = ref(true)
   const channelStatusCountdown = ref(16)
   const groupsError = ref('')
+  const supplierDetailError = ref('')
   const provisionError = ref('')
   const provisionJobError = ref('')
+  const ensureKeysPlanError = ref('')
   const channelCheckError = ref('')
   const scheduleListError = ref('')
   const rateCheckError = ref('')
@@ -157,6 +173,8 @@ export function createSuppliersState() {
     balance_yuan: 0,
     balance_currency: 'USD',
     recharge_multiplier: 1,
+    key_limit_policy: 'unknown',
+    key_limit_value: 0,
     browser_login_enabled: true,
     notes: ''
   })
@@ -189,9 +207,17 @@ export function createSuppliersState() {
   const keyNamingForm = reactive({
     sync_provider_name: false
   })
+  const ensureKeysPriorityGroupIDs = ref<number[]>([])
 
   const repairForm = reactive({
+    mode: 'bind_existing' as 'bind_existing' | 'manual_secret',
     local_sub2api_account_id: 0,
+    manual_secret: '',
+    local_account_platform: 'openai',
+    local_account_name: '',
+    local_account_base_url: '',
+    local_account_priority: 100,
+    local_account_rate_multiplier: 1,
     runtime_status: 'monitor_only' as SupplierRuntimeStatus,
     health_status: 'normal' as SupplierHealthStatus,
     configured_concurrency: 0,
@@ -228,11 +254,12 @@ export function createSuppliersState() {
     { key: 'provider_family', label: '平台', class: 'w-[96px] max-w-[96px]' },
     { key: 'rate', label: '倍率', class: 'w-[110px] max-w-[110px] text-right' },
     { key: 'limits', label: '限制', class: 'w-[106px] max-w-[106px]' },
+    { key: 'key_capacity', label: '分组配额', class: 'w-[132px] max-w-[132px]' },
     { key: 'account', label: 'Key / 本地账号', class: 'w-[274px] max-w-[274px]' },
     { key: 'channel_check', label: '检测', class: 'w-[214px] max-w-[214px]' },
     { key: 'status', label: '状态', class: 'w-[88px] max-w-[88px]' },
     { key: 'last_seen_at', label: '最后同步', sortable: true, class: 'w-[142px] max-w-[142px]' },
-    { key: 'group_actions', label: '操作', class: 'w-[114px] max-w-[114px] text-right' }
+    { key: 'group_actions', label: '操作', class: 'w-[126px] max-w-[126px] text-right' }
   ]
 
   const scheduleListColumns: Column[] = [
@@ -277,6 +304,7 @@ export function createSuppliersState() {
     sessionDialogOpen,
     channelStatusDialogOpen,
     groupsDialogOpen,
+    supplierDetailDialogOpen,
     channelProbeDialogOpen,
     provisionDialogOpen,
     repairDialogOpen,
@@ -292,6 +320,7 @@ export function createSuppliersState() {
     sessionSupplier,
     channelStatusSupplier,
     groupsSupplier,
+    supplierDetailSupplier,
     channelProbeSupplier,
     channelProbeSnapshot,
     provisionGroup,
@@ -304,11 +333,18 @@ export function createSuppliersState() {
     supplierGroups,
     supplierGroupEvents,
     supplierKeys,
+    ensureKeysPlan,
     supplierCostSnapshots,
     supplierBestChannels,
     supplierChannelChecks,
     activeProvisionJob,
     localAccounts,
+    supplierDetailGroups,
+    supplierDetailKeys,
+    supplierDetailAccounts,
+    supplierDetailLocalAccounts,
+    supplierDetailLocalOpsRows,
+    supplierDetailChannelChecks,
     channelMonitorItems,
     sessionStore,
     currentBalanceStore,
@@ -319,9 +355,14 @@ export function createSuppliersState() {
     currentBalanceError,
     channelStatusLoading,
     groupsLoading,
+    supplierDetailLoading,
     groupsSyncing,
     keysEnsuring,
+    ensureKeysPlanning,
     keyNamesStandardizing,
+    keyProjectionDisabling,
+    providerKeyImportingGroupID,
+    providerKeyBatchImporting,
     channelChecksSyncing,
     channelScheduleSubmitting,
     scheduleListLoading,
@@ -339,8 +380,10 @@ export function createSuppliersState() {
     channelStatusAutoRefresh,
     channelStatusCountdown,
     groupsError,
+    supplierDetailError,
     provisionError,
     provisionJobError,
+    ensureKeysPlanError,
     channelCheckError,
     scheduleListError,
     rateCheckError,
@@ -371,6 +414,7 @@ export function createSuppliersState() {
     statusForm,
     provisionForm,
     keyNamingForm,
+    ensureKeysPriorityGroupIDs,
     repairForm,
     scheduleListFilters,
     scheduleListSuppliers,

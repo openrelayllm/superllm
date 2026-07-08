@@ -211,6 +211,34 @@ func TestExtensionHandlerCreateCaptureSessionTask(t *testing.T) {
 	}`)
 	require.Equal(t, http.StatusBadRequest, missingSupplier.Code, missingSupplier.Body.String())
 	require.Contains(t, missingSupplier.Body.String(), "SUPPLIER_ID_REQUIRED")
+
+	autoCreated := performJSON(t, router, http.MethodPost, "/extension/session/capture-task", `{
+		"device_id": "chrome-1",
+		"lease_ttl_seconds": 60,
+		"auto_create_supplier": true,
+		"url": "https://capture-newapi.example.com/console",
+		"provider_type": "new_api",
+		"dashboard_url": "https://capture-newapi.example.com/console",
+		"api_base_url": "https://capture-newapi.example.com",
+		"payload": {
+			"page_context": {
+				"title": "Capture New API"
+			}
+		}
+	}`)
+	require.Equal(t, http.StatusCreated, autoCreated.Code, autoCreated.Body.String())
+	var autoCreatedBody struct {
+		Data struct {
+			SupplierID int64          `json:"supplier_id"`
+			Payload    map[string]any `json:"payload"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(autoCreated.Body.Bytes(), &autoCreatedBody))
+	require.Greater(t, autoCreatedBody.Data.SupplierID, int64(1))
+	require.Equal(t, "capture-newapi.example.com", autoCreatedBody.Data.Payload["source_host"])
+	require.Equal(t, "new_api", autoCreatedBody.Data.Payload["supplier_type"])
+	require.Equal(t, true, autoCreatedBody.Data.Payload["supplier_auto_created"])
+	require.Equal(t, float64(autoCreatedBody.Data.SupplierID), autoCreatedBody.Data.Payload["supplier_id"])
 }
 
 func TestExtensionHandlerReportSupplierCandidateCreatesSupplierWithCredential(t *testing.T) {
@@ -1163,6 +1191,57 @@ func TestSupplierKeyRepairBindingBindsFailedKeyWithoutProviderCall(t *testing.T)
 	require.NotContains(t, repaired.Body.String(), "secret-cookie")
 }
 
+func TestSupplierKeyDisableLocalProjectionDoesNotCallProvider(t *testing.T) {
+	var providerCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if req.Method == http.MethodGet {
+			writeOperationsSub2APICapabilityFixture(t, w, req)
+			return
+		}
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "/api/v1/keys", req.URL.Path)
+		providerCalls++
+		_, _ = w.Write([]byte(`{"data":{"id":99,"name":"ops-key","key":"sk-provider-secret","group_id":10,"status":"active"}}`))
+	}))
+	defer server.Close()
+
+	router := newOperationsHandlerTestRouterWithDependencies(server.URL, server.URL, &operationsLocalAccountCreator{}, false)
+	created := performJSON(t, router, http.MethodPost, "/suppliers/1/browser-sessions", `{
+		"origin": "`+server.URL+`",
+		"session_bundle": {
+			"origin": "`+server.URL+`",
+			"tokens": {"access_token": "secret-token"},
+			"required_headers": {"cookie": "sid=secret-cookie"},
+			"context": {"api_base_url": "`+server.URL+`"}
+		}
+	}`)
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+
+	provisioned := performJSON(t, router, http.MethodPost, "/suppliers/1/keys/provision", `{
+		"supplier_group_id": 10,
+		"name": "ops-key",
+		"local_account_platform": "openai",
+		"local_account_name": "local-upstream",
+		"local_account_base_url": "`+server.URL+`/v1",
+		"balance_currency": "USD"
+	}`)
+	require.Equal(t, http.StatusCreated, provisioned.Code, provisioned.Body.String())
+	require.Equal(t, 1, providerCalls)
+
+	disabled := performJSON(t, router, http.MethodPost, "/suppliers/1/keys/1/disable-local-projection", `{
+		"reason": "释放测试配额投影"
+	}`)
+	require.Equal(t, http.StatusOK, disabled.Code, disabled.Body.String())
+	require.Equal(t, 1, providerCalls)
+	require.Contains(t, disabled.Body.String(), `"status":"disabled"`)
+	require.Contains(t, disabled.Body.String(), `"error_code":"LOCAL_PROJECTION_RELEASED"`)
+	require.Contains(t, disabled.Body.String(), "释放测试配额投影")
+	require.NotContains(t, disabled.Body.String(), "sk-provider-secret")
+	require.NotContains(t, disabled.Body.String(), "secret-token")
+	require.NotContains(t, disabled.Body.String(), "secret-cookie")
+}
+
 func TestExtensionHandlerManifestAndPackage(t *testing.T) {
 	router := newOperationsHandlerTestRouter()
 
@@ -1299,6 +1378,114 @@ func TestActionHandlerGenerateDoesNotExecuteActions(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"type":"switch_supplier"`)
 }
 
+func TestActionHandlerGenerateAcceptsCandidateEvaluations(t *testing.T) {
+	router := newOperationsHandlerTestRouter()
+
+	rec := performJSON(t, router, http.MethodPost, "/actions/generate", `{
+		"candidate_evaluations": [
+			{
+				"supplier_id": 7,
+				"supplier_group_id": 1001,
+				"local_sub2api_account_id": 42,
+				"candidate_status": "balance_blocked",
+				"blocked_reason": "recharge_required",
+				"check_source": "balance",
+				"balance_status": "recharge_required",
+				"key_capacity_status": "unknown",
+				"effective_rate_multiplier": 0.2
+			}
+		]
+	}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "candidate_balance_recharge_required")
+	require.Contains(t, rec.Body.String(), "local_sub2api_account_id=42")
+}
+
+func TestActionHandlerGenerateAcceptsCostSnapshots(t *testing.T) {
+	router := newOperationsHandlerTestRouter()
+
+	rec := performJSON(t, router, http.MethodPost, "/actions/generate", `{
+		"cost_snapshots": [
+			{
+				"id": 41,
+				"supplier_id": 7,
+				"currency": "USD",
+				"completed_funding_amount_cents": 10000,
+				"entitlement_amount_cents": 2000,
+				"usage_cost_cents": 5500,
+				"expected_balance_cents": 6500,
+				"actual_balance_cents": 5000,
+				"balance_delta_cents": -1500
+			}
+		]
+	}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "supplier_cost_balance_reconcile_anomaly")
+	require.Contains(t, rec.Body.String(), "balance_delta_cents=-1500")
+}
+
+func TestActionHandlerGenerateAcceptsLocalGroupCapacity(t *testing.T) {
+	router := newOperationsHandlerTestRouter()
+
+	rec := performJSON(t, router, http.MethodPost, "/actions/generate", `{
+		"local_group_capacity": [
+			{
+				"local_group_id": 9,
+				"local_group_name": "Lime",
+				"platform": "openai",
+				"total_accounts": 2,
+				"schedulable_accounts": 0,
+				"active_api_key_count": 3,
+				"low_capacity_threshold": 1,
+				"best_candidate_supplier_id": 7,
+				"best_candidate_supplier_group_id": 1001,
+				"best_candidate_local_account_id": 42,
+				"best_candidate_rate_multiplier": 0.2,
+				"best_candidate_check_source": "channel_monitor"
+			}
+		]
+	}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"type":"routing_refill"`)
+	require.Contains(t, rec.Body.String(), "local_group_routing_refill_required")
+	require.Contains(t, rec.Body.String(), "local_group_id=9")
+	require.Contains(t, rec.Body.String(), "candidate_local_account_id=42")
+}
+
+func TestActionHandlerGenerateAcceptsLocalAccountSchedule(t *testing.T) {
+	router := newOperationsHandlerTestRouter()
+
+	rec := performJSON(t, router, http.MethodPost, "/actions/generate", `{
+		"local_account_schedule": [
+			{
+				"supplier_id": 7,
+				"supplier_group_id": 1001,
+				"local_sub2api_account_id": 42,
+				"local_account_name": "lime-account",
+				"supplier_name": "supplier-a",
+				"supplier_group_name": "group-a",
+				"local_group_ids": [9],
+				"local_group_names": ["Lime"],
+				"local_account_schedulable": true,
+				"candidate_status": "blocked",
+				"blocked_reason": "channel_monitor_failed",
+				"check_source": "channel_monitor",
+				"channel_check_status": "request_error",
+				"effective_rate_multiplier": 0.2
+			}
+		]
+	}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"type":"local_account_schedule_disable"`)
+	require.Contains(t, rec.Body.String(), "local_account_schedule_disable_required")
+	require.Contains(t, rec.Body.String(), "local_sub2api_account_id=42")
+	require.Contains(t, rec.Body.String(), "blocked_reason=channel_monitor_failed")
+}
+
 func TestNotificationHandlerListDeliveries(t *testing.T) {
 	router := newOperationsHandlerTestRouter()
 
@@ -1329,7 +1516,7 @@ func writeOperationsSub2APICapabilityFixture(t *testing.T, w http.ResponseWriter
 		_, _ = w.Write([]byte(`{"data":{"items":[]}}`))
 	case "/api/v1/keys":
 		require.Equal(t, "1", req.URL.Query().Get("page"))
-		require.Contains(t, []string{"1", "100"}, req.URL.Query().Get("page_size"))
+		require.Contains(t, []string{"1", "100", "1000"}, req.URL.Query().Get("page_size"))
 		_, _ = w.Write([]byte(`{"data":[]}`))
 	default:
 		http.NotFound(w, req)
@@ -1465,6 +1652,7 @@ func newOperationsHandlerTestRouterWithDependencies(dashboardURL string, apiBase
 	router.POST("/suppliers/:id/keys/ensure-all", supplierKeyHandler.EnsureAll)
 	router.POST("/suppliers/:id/keys/provision", supplierKeyHandler.Provision)
 	router.POST("/suppliers/:id/keys/:keyID/repair-binding", supplierKeyHandler.RepairBinding)
+	router.POST("/suppliers/:id/keys/:keyID/disable-local-projection", supplierKeyHandler.DisableLocalProjection)
 	router.POST("/suppliers/:id/rates/sync", rateHandler.SyncSupplierRates)
 	router.POST("/suppliers/:id/usage-costs/sync", usageCostHandler.SyncSupplierUsageCosts)
 	router.POST("/suppliers/:id/costs/sync", costHandler.SyncSupplierCosts)

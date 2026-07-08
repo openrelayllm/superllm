@@ -25,6 +25,7 @@ describe('adminPlusRoutes', () => {
       '/admin/ops',
       '/admin/suppliers',
       '/admin/supplier-bindings',
+      '/admin/local-account-ops',
       '/admin/supplier-rate-checks',
       '/admin/kanban',
       '/admin/kanban/market-prices',
@@ -36,7 +37,10 @@ describe('adminPlusRoutes', () => {
       '/admin/account-rate-sync',
       '/admin/scheduler',
       '/admin/scheduler/notifications',
+      '/admin/scheduler/routing-refill-history',
+      '/admin/actions',
       '/admin/system-logs',
+      '/admin/action-audits',
       '/admin/server-renewal',
       '/admin/backup',
       '/admin/import-export',
@@ -117,6 +121,7 @@ describe('adminPlusRoutes', () => {
         '/admin/dashboard',
         '/admin/suppliers',
         '/admin/supplier-bindings',
+        '/admin/local-account-ops',
         '/admin/supplier-rate-checks',
         '/admin/kanban/market-prices',
         '/admin/kanban/supply-quality',
@@ -127,7 +132,10 @@ describe('adminPlusRoutes', () => {
         '/admin/account-rate-sync',
         '/admin/scheduler',
         '/admin/scheduler/notifications',
+        '/admin/scheduler/routing-refill-history',
+        '/admin/actions',
         '/admin/system-logs',
+        '/admin/action-audits',
         '/admin/server-renewal',
         '/admin/backup',
         '/admin/import-export',
@@ -142,7 +150,7 @@ describe('adminPlusRoutes', () => {
       ].includes(route.path)
     )
 
-    expect(adminRoutes).toHaveLength(25)
+    expect(adminRoutes).toHaveLength(29)
     for (const route of adminRoutes) {
       expect(route.meta?.requiresAuth).toBe(true)
       expect(route.meta?.requiresAdmin).toBe(true)
@@ -159,8 +167,8 @@ describe('adminPlusRoutes', () => {
         ['/admin/ops', '/admin/suppliers'],
         ['/admin/monitoring/rates', '/admin/supplier-rate-checks'],
         ['/admin/monitoring/health', '/admin/suppliers'],
-        ['/admin/monitoring/account-runtime', '/admin/suppliers'],
-        ['/admin/operations/account-runtime', '/admin/suppliers'],
+        ['/admin/monitoring/account-runtime', '/admin/local-account-ops'],
+        ['/admin/operations/account-runtime', '/admin/local-account-ops'],
         ['/admin/operations/rates', '/admin/supplier-rate-checks'],
         ['/admin/kanban', '/admin/kanban/profit'],
         ['/admin/operations/kanban', '/admin/kanban/profit'],
@@ -175,12 +183,12 @@ describe('adminPlusRoutes', () => {
         ['/admin/collection/plugin-tasks', '/admin/collection/sessions'],
         ['/admin/operations/extension-tasks', '/admin/collection/sessions'],
         ['/admin/operations/billing', '/admin/finance/costs'],
-        ['/admin/automation/actions', '/admin/suppliers'],
+        ['/admin/automation/actions', '/admin/actions'],
         ['/admin/automation/notifications', '/admin/scheduler/notifications'],
-        ['/admin/automation/audits', '/admin/system-logs'],
-        ['/admin/operations/actions', '/admin/suppliers'],
+        ['/admin/automation/audits', '/admin/action-audits'],
+        ['/admin/operations/actions', '/admin/actions'],
         ['/admin/operations/notifications', '/admin/scheduler/notifications'],
-        ['/admin/operations/audits', '/admin/system-logs']
+        ['/admin/operations/audits', '/admin/action-audits']
       ]
     )
 

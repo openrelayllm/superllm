@@ -195,6 +195,12 @@ func (r *MemoryRepository) RefreshSnapshot(_ context.Context, supplierID int64, 
 	return cloneSnapshot(snapshot), nil
 }
 
+func (r *MemoryRepository) GetSnapshot(_ context.Context, id int64) (*adminplusdomain.SupplierCostSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return cloneSnapshot(r.snapshots[id]), nil
+}
+
 func (r *MemoryRepository) ListSnapshots(_ context.Context, filter SummaryFilter) ([]*adminplusdomain.SupplierCostSnapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -627,6 +627,160 @@ func TestSessionProfileClientCreateKey(t *testing.T) {
 	require.True(t, createCalled)
 }
 
+func TestSessionProfileClientListKeysReadsUserKeys(t *testing.T) {
+	var sawList bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "Bearer browser-access-token", r.Header.Get("Authorization"))
+		require.Equal(t, "sid=abc", r.Header.Get("Cookie"))
+		require.Equal(t, "/api/v1/keys", r.URL.Path)
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "1", r.URL.Query().Get("page"))
+		require.Equal(t, "1000", r.URL.Query().Get("page_size"))
+		sawList = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": {
+				"total": 2,
+				"items": [
+					{
+						"id": 99,
+						"name": "ops-low",
+						"key": "sk-secret",
+						"group_routes": [{"group_id": 10}],
+						"status": "active"
+					},
+					{
+						"id": 100,
+						"name": "ops-disabled",
+						"api_key": "sk-disabled",
+						"group_id": 20,
+						"status": "inactive"
+					}
+				]
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewSessionProfileClient(server.Client())
+	result, err := client.ListKeys(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		APIBaseURL: server.URL,
+		Bundle: map[string]any{
+			"access_token": "browser-access-token",
+			"required_headers": map[string]any{
+				"cookie": "sid=abc",
+			},
+		},
+	}, ports.ListProviderKeysInput{
+		SupplierID: 7,
+	})
+
+	require.NoError(t, err)
+	require.True(t, sawList)
+	require.Equal(t, int64(7), result.SupplierID)
+	require.Equal(t, "sub2api", result.SystemType)
+	require.Equal(t, 2, result.Total)
+	require.Len(t, result.Keys, 2)
+	require.Equal(t, "99", result.Keys[0].ExternalKeyID)
+	require.Equal(t, "10", result.Keys[0].ExternalGroupID)
+	require.Equal(t, "active", result.Keys[0].Status)
+	require.NotContains(t, result.Keys[0].RawPayload, "key")
+	require.Equal(t, "100", result.Keys[1].ExternalKeyID)
+	require.Equal(t, "20", result.Keys[1].ExternalGroupID)
+	require.Equal(t, "disabled", result.Keys[1].Status)
+	require.NotContains(t, result.Keys[1].RawPayload, "api_key")
+}
+
+func TestSessionProfileClientReadKeyCapacityReadsPaginatedUserKeys(t *testing.T) {
+	pages := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "Bearer browser-access-token", r.Header.Get("Authorization"))
+		require.Equal(t, "sid=abc", r.Header.Get("Cookie"))
+		require.Equal(t, "/api/v1/keys", r.URL.Path)
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "2", r.URL.Query().Get("page_size"))
+		page := r.URL.Query().Get("page")
+		pages = append(pages, page)
+		w.Header().Set("Content-Type", "application/json")
+		switch page {
+		case "1":
+			_, _ = w.Write([]byte(`{
+				"data": {
+					"total": 3,
+					"items": [
+						{
+							"id": 99,
+							"name": "ops-low",
+							"key": "sk-secret",
+							"group_routes": [{"group_id": 10}],
+							"status": "active"
+						},
+						{
+							"id": 100,
+							"name": "ops-disabled",
+							"api_key": "sk-disabled",
+							"group_id": 20,
+							"status": "inactive"
+						}
+					]
+				}
+			}`))
+		case "2":
+			_, _ = w.Write([]byte(`{
+				"data": {
+					"total": 3,
+					"items": [
+						{
+							"id": 101,
+							"name": "ops-mid",
+							"key": "sk-mid",
+							"group_routes": [{"group_id": 30}],
+							"status": "active"
+						}
+					]
+				}
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSessionProfileClient(server.Client())
+	result, err := client.ReadKeyCapacity(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		APIBaseURL: server.URL,
+		Bundle: map[string]any{
+			"access_token": "browser-access-token",
+			"required_headers": map[string]any{
+				"cookie": "sid=abc",
+			},
+		},
+	}, ports.ReadProviderKeyCapacityInput{
+		SupplierID: 7,
+		Limit:      2,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"1", "2"}, pages)
+	require.Equal(t, int64(7), result.SupplierID)
+	require.Equal(t, "sub2api", result.SystemType)
+	require.Equal(t, "unknown", result.KeyLimitPolicy)
+	require.False(t, result.LimitKnown)
+	require.Equal(t, 2, result.ActiveKeyCount)
+	require.Equal(t, "unknown", result.KeyCapacityStatus)
+	require.Len(t, result.Keys, 3)
+	require.Equal(t, "30", result.Keys[2].ExternalGroupID)
+	require.NotContains(t, result.Keys[0].RawPayload, "key")
+	require.NotContains(t, result.Keys[1].RawPayload, "api_key")
+	require.Equal(t, "list_keys", result.Diagnostics["capacity_source"])
+	require.Equal(t, "not_exposed_by_provider", result.Diagnostics["limit_source"])
+	require.Equal(t, 2, result.Diagnostics["pages_read"])
+	require.Equal(t, 3, result.Diagnostics["provider_total"])
+	require.NotEqual(t, true, result.Diagnostics["truncated"])
+}
+
 func TestSessionProfileClientCreateKeyReusesExistingProviderKey(t *testing.T) {
 	var createCalled bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -679,6 +833,94 @@ func TestSessionProfileClientCreateKeyReusesExistingProviderKey(t *testing.T) {
 	require.Equal(t, "10", result.ExternalGroupID)
 	require.Equal(t, "ops-key", result.Name)
 	require.Equal(t, "sk-existing-secret", result.Secret)
+}
+
+func TestSessionProfileClientDisableKeyPreservesKeyFields(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "Bearer browser-access-token", r.Header.Get("Authorization"))
+		require.Equal(t, "/api/v1/keys/99", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{
+				"data": {
+					"id": 99,
+					"name": "ops-key",
+					"group_id": 10,
+					"status": "active",
+					"ip_whitelist": ["10.0.0.1"],
+					"ip_blacklist": ["192.168.0.0/16"]
+				}
+			}`))
+		case http.MethodPut:
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			_, _ = w.Write([]byte(`{
+				"data": {
+					"id": 99,
+					"name": "ops-key",
+					"group_id": 10,
+					"status": "inactive"
+				}
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSessionProfileClient(server.Client())
+	result, err := client.DisableKey(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		APIBaseURL: server.URL,
+		Bundle: map[string]any{
+			"access_token": "browser-access-token",
+		},
+	}, ports.DisableProviderKeyInput{
+		SupplierID:      7,
+		ExternalGroupID: "10",
+		ExternalKeyID:   "99",
+		Name:            "ops-key",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "ops-key", payload["name"])
+	require.Equal(t, "inactive", payload["status"])
+	require.Equal(t, []any{"10.0.0.1"}, payload["ip_whitelist"])
+	require.Equal(t, []any{"192.168.0.0/16"}, payload["ip_blacklist"])
+	require.Equal(t, "99", result.ExternalKeyID)
+	require.Equal(t, "10", result.ExternalGroupID)
+	require.Equal(t, "disabled", result.Status)
+}
+
+func TestSessionProfileClientDeleteKeyUsesUserKeyDelete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "Bearer browser-access-token", r.Header.Get("Authorization"))
+		require.Equal(t, "/api/v1/keys/99", r.URL.Path)
+		require.Equal(t, http.MethodDelete, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"message":"API key deleted successfully"}}`))
+	}))
+	defer server.Close()
+
+	client := NewSessionProfileClient(server.Client())
+	result, err := client.DeleteKey(context.Background(), ports.SessionProbeInput{
+		SupplierID: 7,
+		APIBaseURL: server.URL,
+		Bundle: map[string]any{
+			"access_token": "browser-access-token",
+		},
+	}, ports.DeleteProviderKeyInput{
+		SupplierID:      7,
+		ExternalGroupID: "10",
+		ExternalKeyID:   "99",
+		Name:            "ops-key",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "99", result.ExternalKeyID)
+	require.Equal(t, "10", result.ExternalGroupID)
+	require.Equal(t, "deleted", result.Status)
 }
 
 func TestSessionProfileClientReadGroups(t *testing.T) {

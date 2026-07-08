@@ -178,11 +178,18 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin-plus/suppliers/:id/groups",
 		"GET /api/v1/admin-plus/suppliers/:id/groups/events",
 		"POST /api/v1/admin-plus/suppliers/:id/groups/sync",
+		"PUT /api/v1/admin-plus/suppliers/:id/groups/:groupID/key-capacity",
 		"GET /api/v1/admin-plus/suppliers/:id/keys",
+		"POST /api/v1/admin-plus/suppliers/:id/keys/ensure-all-plan",
 		"POST /api/v1/admin-plus/suppliers/:id/keys/ensure-all",
 		"POST /api/v1/admin-plus/suppliers/:id/keys/provision",
 		"POST /api/v1/admin-plus/suppliers/:id/keys/standardize-names",
+		"POST /api/v1/admin-plus/suppliers/:id/keys/import-provider-projection",
+		"POST /api/v1/admin-plus/suppliers/:id/keys/import-provider-projections",
 		"POST /api/v1/admin-plus/suppliers/:id/keys/:keyID/repair-binding",
+		"POST /api/v1/admin-plus/suppliers/:id/keys/:keyID/disable-local-projection",
+		"POST /api/v1/admin-plus/suppliers/:id/keys/:keyID/disable-provider",
+		"POST /api/v1/admin-plus/suppliers/:id/keys/:keyID/delete-provider",
 		"POST /api/v1/admin-plus/suppliers/:id/rates/sync",
 		"GET /api/v1/admin-plus/suppliers/:id/balance/current",
 		"POST /api/v1/admin-plus/suppliers/:id/usage-costs/sync",
@@ -202,6 +209,18 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin-plus/suppliers/:id/channel-monitors",
 		"POST /api/v1/admin-plus/suppliers/:id/browser-sessions",
 		"GET /api/v1/admin-plus/sub2api/accounts",
+		"GET /api/v1/admin-plus/sub2api/groups",
+		"GET /api/v1/admin-plus/sub2api/local-account-ops",
+		"POST /api/v1/admin-plus/sub2api/local-account-ops/sync-local-state",
+		"POST /api/v1/admin-plus/sub2api/local-account-ops/accept-local-state",
+		"POST /api/v1/admin-plus/sub2api/local-account-ops/restore-local-state",
+		"POST /api/v1/admin-plus/sub2api/local-account-ops/preview",
+		"POST /api/v1/admin-plus/sub2api/local-account-ops/apply",
+		"GET /api/v1/admin-plus/sub2api/routing/refill-runs",
+		"GET /api/v1/admin-plus/sub2api/routing/group-impact/api-keys",
+		"GET /api/v1/admin-plus/sub2api/routing/group-impact/failures",
+		"POST /api/v1/admin-plus/sub2api/routing/group-impact/failures/:failureID/sensitive-detail",
+		"POST /api/v1/admin-plus/sub2api/routing/refill-local-group",
 		"GET /api/v1/admin-plus/sub2api/accounts/:accountID/models",
 		"POST /api/v1/admin-plus/sub2api/accounts/:accountID/test",
 		"POST /api/v1/admin-plus/sub2api/accounts/:accountID/purity/checks/stream",
@@ -260,6 +279,7 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin-plus/costs/suppliers",
 		"GET /api/v1/admin-plus/supplier-channel-checks/best",
 		"GET /api/v1/admin-plus/supplier-channel-checks/overview",
+		"GET /api/v1/admin-plus/supplier-groups",
 		"GET /api/v1/admin-plus/kanban/overview",
 		"GET /api/v1/admin-plus/kanban/market-price-sources/discover",
 		"POST /api/v1/admin-plus/kanban/market-prices/parse",
@@ -320,6 +340,10 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"PATCH /api/v1/admin-plus/actions/recommendations/:id/status",
 		"POST /api/v1/admin-plus/actions/recommendations/:id/execute",
 		"GET /api/v1/admin-plus/actions/recommendations/:id/executions",
+		"POST /api/v1/admin-plus/actions/recommendations/:id/cost-reconcile-adjustment",
+		"POST /api/v1/admin-plus/actions/recommendations/:id/cost-reconcile-detail-repair",
+		"POST /api/v1/admin-plus/actions/recommendations/:id/executions/:executionID/retry",
+		"POST /api/v1/admin-plus/actions/recommendations/:id/executions/:executionID/rollback",
 	}
 
 	for _, route := range currentRoutes {
@@ -519,6 +543,26 @@ func (r *routeSurfaceUsageCostReader) ReadUsageCosts(_ context.Context, in ports
 
 type routeSurfaceKeyAdapter struct{}
 
+func (r *routeSurfaceKeyAdapter) ListKeys(_ context.Context, in ports.SessionProbeInput, _ ports.ListProviderKeysInput) (*ports.ListProviderKeysResult, error) {
+	return &ports.ListProviderKeysResult{
+		SupplierID: in.SupplierID,
+		SystemType: "sub2api",
+		Keys:       []ports.ProviderKeySnapshot{},
+	}, nil
+}
+
+func (r *routeSurfaceKeyAdapter) ReadKeyCapacity(_ context.Context, in ports.SessionProbeInput, _ ports.ReadProviderKeyCapacityInput) (*ports.ProviderKeyCapacityResult, error) {
+	return &ports.ProviderKeyCapacityResult{
+		SupplierID:        in.SupplierID,
+		SystemType:        "sub2api",
+		KeyLimitPolicy:    "unknown",
+		KeyCapacityStatus: "unknown",
+		Keys:              []ports.ProviderKeySnapshot{},
+		Diagnostics:       map[string]any{"capacity_source": "route_surface"},
+		CapturedAt:        time.Now().UTC(),
+	}, nil
+}
+
 func (r *routeSurfaceKeyAdapter) CreateKey(_ context.Context, in ports.SessionProbeInput, request ports.CreateProviderKeyInput) (*ports.ProviderKeyResult, error) {
 	return &ports.ProviderKeyResult{
 		SupplierID:      in.SupplierID,
@@ -538,6 +582,28 @@ func (r *routeSurfaceKeyAdapter) RenameKey(_ context.Context, in ports.SessionPr
 		ExternalKeyID:   request.ExternalKeyID,
 		Name:            request.Name,
 		Status:          "active",
+		RawPayload:      map[string]any{},
+	}, nil
+}
+
+func (r *routeSurfaceKeyAdapter) DisableKey(_ context.Context, in ports.SessionProbeInput, request ports.DisableProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	return &ports.ProviderKeyResult{
+		SupplierID:      in.SupplierID,
+		ExternalGroupID: request.ExternalGroupID,
+		ExternalKeyID:   request.ExternalKeyID,
+		Name:            request.Name,
+		Status:          "disabled",
+		RawPayload:      map[string]any{},
+	}, nil
+}
+
+func (r *routeSurfaceKeyAdapter) DeleteKey(_ context.Context, in ports.SessionProbeInput, request ports.DeleteProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	return &ports.ProviderKeyResult{
+		SupplierID:      in.SupplierID,
+		ExternalGroupID: request.ExternalGroupID,
+		ExternalKeyID:   request.ExternalKeyID,
+		Name:            request.Name,
+		Status:          "deleted",
 		RawPayload:      map[string]any{},
 	}, nil
 }
@@ -640,6 +706,66 @@ func (r *routeSurfaceSub2APIRepository) ListLocalUsageSummaries(_ context.Contex
 
 func (r *routeSurfaceSub2APIRepository) ListLocalAccountUsageSummaries(_ context.Context, _ sub2apiapp.UsageFilter) ([]*adminplusdomain.LocalAccountUsageSummary, error) {
 	return nil, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) ListLocalGroups(_ context.Context, _ int) ([]*sub2apiapp.LocalSub2APIGroup, error) {
+	return nil, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) ListLocalAccountOps(_ context.Context, _ sub2apiapp.LocalAccountOpsFilter) ([]*adminplusdomain.LocalAccountOpsRow, error) {
+	return nil, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) ListRoutingImpactAPIKeys(_ context.Context, _ sub2apiapp.RoutingImpactFilter) ([]sub2apiapp.RoutingImpactedAPIKey, error) {
+	return nil, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) ListRoutingImpactFailureRequests(_ context.Context, _ sub2apiapp.RoutingImpactFilter) ([]sub2apiapp.RoutingFailureRequest, error) {
+	return nil, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) GetRoutingFailureSensitiveDetail(_ context.Context, input sub2apiapp.RoutingSensitiveFailureDetailInput) (*sub2apiapp.RoutingSensitiveFailureDetail, error) {
+	return &sub2apiapp.RoutingSensitiveFailureDetail{ID: input.FailureID, LocalGroupID: input.LocalGroupID}, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) CreateRoutingRefillRun(_ context.Context, run *sub2apiapp.RoutingRefillRun) (*sub2apiapp.RoutingRefillRun, error) {
+	return run, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) ListRoutingRefillRuns(_ context.Context, _ sub2apiapp.RoutingRefillRunFilter) ([]*sub2apiapp.RoutingRefillRun, error) {
+	return nil, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) GetGroupAvailability(_ context.Context, groupID int64, platform string) (*sub2apiapp.RoutingGroupAvailability, error) {
+	return &sub2apiapp.RoutingGroupAvailability{GroupID: groupID, Platform: platform, SchedulableAccounts: 1}, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) GetAccount(_ context.Context, accountID int64) (*sub2apiapp.Sub2APIAccountSnapshot, error) {
+	return &sub2apiapp.Sub2APIAccountSnapshot{AccountID: accountID, Schedulable: true}, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) EnsureAccountInGroup(_ context.Context, accountID int64, groupID int64) (*sub2apiapp.Sub2APIAccountSnapshot, error) {
+	return &sub2apiapp.Sub2APIAccountSnapshot{AccountID: accountID, GroupIDs: []int64{groupID}}, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) SetAccountSchedulable(_ context.Context, accountID int64, schedulable bool, _ string) (*sub2apiapp.Sub2APIAccountSnapshot, error) {
+	return &sub2apiapp.Sub2APIAccountSnapshot{AccountID: accountID, Schedulable: schedulable}, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) PreviewLocalAccountOpsAction(_ context.Context, in sub2apiapp.LocalAccountOpsActionInput) (*adminplusdomain.LocalAccountOpsActionResult, error) {
+	return &adminplusdomain.LocalAccountOpsActionResult{Action: in.Action, DryRun: true, AccountIDs: in.AccountIDs}, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) ApplyLocalAccountOpsAction(_ context.Context, in sub2apiapp.LocalAccountOpsActionInput) (*adminplusdomain.LocalAccountOpsActionResult, error) {
+	return &adminplusdomain.LocalAccountOpsActionResult{Action: in.Action, AccountIDs: in.AccountIDs}, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) SyncLocalAccountState(_ context.Context, _ sub2apiapp.LocalAccountStateSyncInput) (*adminplusdomain.LocalAccountStateSyncResult, error) {
+	return &adminplusdomain.LocalAccountStateSyncResult{}, nil
+}
+
+func (r *routeSurfaceSub2APIRepository) ResolveLocalAccountState(_ context.Context, in sub2apiapp.LocalAccountStateResolutionInput) (*adminplusdomain.LocalAccountStateResolutionResult, error) {
+	return &adminplusdomain.LocalAccountStateResolutionResult{Action: in.Action, AccountIDs: in.AccountIDs}, nil
 }
 
 type routeSurfaceSub2APIRuntimeReader struct{}

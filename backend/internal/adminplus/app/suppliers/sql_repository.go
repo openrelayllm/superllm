@@ -41,6 +41,39 @@ func NewSQLRepositoryWithCipher(db *sql.DB, sub2apiReadDB sub2apiapp.ReadDB, cip
 	}
 }
 
+func supplierActiveKeyCountSQL(supplierIDExpr string) string {
+	return fmt.Sprintf(`COALESCE((
+		SELECT COUNT(*)::INT
+		FROM admin_plus_supplier_keys sk
+		WHERE sk.supplier_id = %s
+			AND sk.status IN ('provisioning', 'bound', 'manual_secret_required')
+	), 0)`, supplierIDExpr)
+}
+
+func supplierKeyCapacityStatusSQL(policyExpr string, valueExpr string, activeCountExpr string) string {
+	return fmt.Sprintf(`CASE
+		WHEN %s = 'unlimited' THEN 'available'
+		WHEN %s = 'unsupported' THEN 'unsupported'
+		WHEN %s = 'limited' AND %s > 0 AND %s >= %s THEN 'exhausted'
+		WHEN %s = 'limited' AND %s > 0 AND %s >= (%s - 1) THEN 'limited'
+		WHEN %s = 'limited' AND %s > 0 THEN 'available'
+		ELSE 'unknown'
+	END`, policyExpr, policyExpr, policyExpr, valueExpr, activeCountExpr, valueExpr, policyExpr, valueExpr, activeCountExpr, valueExpr, policyExpr, valueExpr)
+}
+
+func supplierSelectColumns(supplierIDExpr string) string {
+	activeCount := supplierActiveKeyCountSQL(supplierIDExpr)
+	return `id, name, kind, type, runtime_status, health_status,
+		dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
+		postgres_configured, redis_configured, browser_login_enabled,
+		browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
+		balance_cents, balance_currency, balance_updated_at, recharge_multiplier,
+		key_limit_policy, key_limit_value,
+		` + activeCount + `,
+		` + supplierKeyCapacityStatusSQL("key_limit_policy", "key_limit_value", activeCount) + `,
+		created_at, updated_at`
+}
+
 func (r *SQLRepository) Create(ctx context.Context, supplier *adminplusdomain.Supplier) (*adminplusdomain.Supplier, error) {
 	if r == nil || r.db == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
@@ -64,14 +97,11 @@ func (r *SQLRepository) Create(ctx context.Context, supplier *adminplusdomain.Su
 			postgres_configured, redis_configured, browser_login_enabled,
 			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
 			browser_login_username_ciphertext, browser_login_password_ciphertext, browser_login_token_ciphertext,
-			balance_cents, balance_currency, balance_updated_at, recharge_multiplier, created_at, updated_at
+			balance_cents, balance_currency, balance_updated_at, recharge_multiplier,
+			key_limit_policy, key_limit_value, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
-		RETURNING id, name, kind, type, runtime_status, health_status,
-			dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
-			postgres_configured, redis_configured, browser_login_enabled,
-			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
-			balance_cents, balance_currency, balance_updated_at, recharge_multiplier, created_at, updated_at
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
+		RETURNING `+supplierSelectColumns("admin_plus_suppliers.id")+`
 	`,
 		supplier.Name,
 		string(supplier.Kind),
@@ -98,6 +128,8 @@ func (r *SQLRepository) Create(ctx context.Context, supplier *adminplusdomain.Su
 		supplier.BalanceCurrency,
 		supplier.BalanceUpdatedAt,
 		supplier.RechargeMultiplier,
+		supplier.KeyLimitPolicy,
+		supplier.KeyLimitValue,
 		supplier.CreatedAt,
 		supplier.UpdatedAt,
 	)
@@ -161,11 +193,7 @@ func (r *SQLRepository) Get(ctx context.Context, id int64) (*adminplusdomain.Sup
 		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_DB_NOT_CONFIGURED", "admin plus database is not configured")
 	}
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, name, kind, type, runtime_status, health_status,
-			dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
-			postgres_configured, redis_configured, browser_login_enabled,
-			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
-			balance_cents, balance_currency, balance_updated_at, recharge_multiplier, created_at, updated_at
+		SELECT `+supplierSelectColumns("admin_plus_suppliers.id")+`
 		FROM admin_plus_suppliers
 		WHERE id = $1
 	`, id)
@@ -200,11 +228,7 @@ func (r *SQLRepository) List(ctx context.Context, filter SupplierFilter) ([]*adm
 	}
 
 	query := `
-		SELECT id, name, kind, type, runtime_status, health_status,
-			dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
-			postgres_configured, redis_configured, browser_login_enabled,
-			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
-			balance_cents, balance_currency, balance_updated_at, recharge_multiplier, created_at, updated_at
+		SELECT ` + supplierSelectColumns("admin_plus_suppliers.id") + `
 		FROM admin_plus_suppliers
 		WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY created_at DESC, id DESC
@@ -274,13 +298,11 @@ func (r *SQLRepository) Update(ctx context.Context, supplier *adminplusdomain.Su
 			balance_currency = $24,
 			balance_updated_at = $25,
 			recharge_multiplier = $26,
-			updated_at = $27
+			key_limit_policy = $27,
+			key_limit_value = $28,
+			updated_at = $29
 		WHERE id = $1
-		RETURNING id, name, kind, type, runtime_status, health_status,
-			dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
-			postgres_configured, redis_configured, browser_login_enabled,
-			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
-			balance_cents, balance_currency, balance_updated_at, recharge_multiplier, created_at, updated_at
+		RETURNING `+supplierSelectColumns("admin_plus_suppliers.id")+`
 	`,
 		supplier.ID,
 		supplier.Name,
@@ -308,6 +330,8 @@ func (r *SQLRepository) Update(ctx context.Context, supplier *adminplusdomain.Su
 		supplier.BalanceCurrency,
 		supplier.BalanceUpdatedAt,
 		supplier.RechargeMultiplier,
+		supplier.KeyLimitPolicy,
+		supplier.KeyLimitValue,
 		supplier.UpdatedAt,
 	)
 	return scanSupplier(row)
@@ -321,11 +345,7 @@ func (r *SQLRepository) UpdateStatus(ctx context.Context, id int64, runtimeStatu
 		UPDATE admin_plus_suppliers
 		SET runtime_status = $2, health_status = $3, updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, name, kind, type, runtime_status, health_status,
-			dashboard_url, api_base_url, third_party_recharge_url, local_recharge_url, contact, notes,
-			postgres_configured, redis_configured, browser_login_enabled,
-			browser_login_username_configured, browser_login_password_configured, browser_login_token_configured, masked_browser_login_username,
-			balance_cents, balance_currency, balance_updated_at, recharge_multiplier, created_at, updated_at
+		RETURNING `+supplierSelectColumns("admin_plus_suppliers.id")+`
 	`, id, string(runtimeStatus), string(healthStatus))
 	return scanSupplier(row)
 }
@@ -734,6 +754,10 @@ func scanSupplier(scanner supplierScanner) (*adminplusdomain.Supplier, error) {
 		&supplier.BalanceCurrency,
 		&balanceUpdatedAt,
 		&supplier.RechargeMultiplier,
+		&supplier.KeyLimitPolicy,
+		&supplier.KeyLimitValue,
+		&supplier.ActiveKeyCount,
+		&supplier.KeyCapacityStatus,
 		&supplier.CreatedAt,
 		&supplier.UpdatedAt,
 	)

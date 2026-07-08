@@ -105,6 +105,12 @@ func defaultTableSpecs() []tableSpec {
 			Description:     "供应商 Key 绑定记录",
 		},
 		{
+			Name:            "admin_plus_local_account_state_snapshots",
+			ConflictColumns: []string{"local_sub2api_account_id"},
+			OrderColumns:    []string{"local_sub2api_account_id"},
+			Description:     "本地账号已采纳状态快照",
+		},
+		{
 			Name:            "admin_plus_scheduler_plans",
 			ConflictColumns: []string{"id"},
 			OrderColumns:    []string{"id"},
@@ -219,6 +225,7 @@ func excludedTableReasons() map[string]string {
 		"admin_plus_scheduler_steps":                   "调度步骤历史属于运行态数据",
 		"admin_plus_scheduler_attempts":                "调度尝试历史属于运行态数据",
 		"admin_plus_scheduler_actions":                 "动作建议可由运行信号重新生成",
+		"admin_plus_routing_refill_runs":               "路由补池运行历史属于运行态数据",
 		"admin_plus_extension_tasks":                   "浏览器插件任务属于运行态数据",
 		"admin_plus_rate_snapshots":                    "倍率快照属于监控历史",
 		"admin_plus_rate_change_events":                "倍率事件属于监控历史",

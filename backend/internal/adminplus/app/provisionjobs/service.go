@@ -106,7 +106,7 @@ type GroupSyncer interface {
 
 type KeyProvisioner interface {
 	Provision(ctx context.Context, in supplierkeys.ProvisionKeyInput) (*supplierkeys.ProvisionKeyResult, error)
-	PlanEnsureAll(ctx context.Context, in supplierkeys.EnsureAllInput) ([]supplierkeys.ProvisionGroupPlan, error)
+	PlanEnsureAll(ctx context.Context, in supplierkeys.EnsureAllInput) (*supplierkeys.EnsureAllPlan, error)
 	EnsureGroup(ctx context.Context, in supplierkeys.EnsureGroupInput) (*supplierkeys.EnsureAllResultItem, error)
 }
 
@@ -248,30 +248,94 @@ func (s *Service) stepsForSubmit(ctx context.Context, in SubmitInput, now time.T
 	if s.keyProvisioner == nil {
 		return nil, internalError("supplier key provisioner is not configured")
 	}
-	plans, err := s.keyProvisioner.PlanEnsureAll(ctx, ensureAllInputFromSnapshot(in.SupplierID, in.Request))
+	ensureInput := ensureAllInputFromSnapshot(in.SupplierID, in.Request)
+	plan, err := s.keyProvisioner.PlanEnsureAll(ctx, ensureInput)
 	if err != nil {
 		return nil, err
 	}
-	steps := make([]*adminplusdomain.SupplierProvisionStep, 0, len(plans))
-	for _, plan := range plans {
-		if plan.SupplierGroupID <= 0 {
+	if err := validateProvisionAllPlan(plan, ensureInput.AllowPartial); err != nil {
+		return nil, err
+	}
+	steps := make([]*adminplusdomain.SupplierProvisionStep, 0, len(plan.Items))
+	for _, item := range plan.Items {
+		if item.SupplierGroupID <= 0 || (item.Action != "create" && item.Action != "skipped_existing") {
 			continue
 		}
 		request := cloneMap(in.Request)
-		request["supplier_group_id"] = plan.SupplierGroupID
-		request["external_group_id"] = plan.ExternalGroupID
-		request["group_name"] = plan.GroupName
-		request["provider_family"] = plan.ProviderFamily
+		request["supplier_group_id"] = item.SupplierGroupID
+		request["external_group_id"] = item.ExternalGroupID
+		request["group_name"] = item.GroupName
+		request["provider_family"] = item.ProviderFamily
+		request["plan_action"] = item.Action
 		steps = append(steps, newSubmitStep(
 			in.SupplierID,
-			plan.SupplierGroupID,
+			item.SupplierGroupID,
 			adminplusdomain.SupplierProvisionStepEnsureThirdPartyKey,
-			stepIdempotencyKey(in.IdempotencyKey, plan.SupplierGroupID),
+			stepIdempotencyKey(in.IdempotencyKey, item.SupplierGroupID),
 			request,
 			now,
 		))
 	}
+	if len(steps) == 0 {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_PLAN_EMPTY", "supplier key provision plan has no actionable groups")
+	}
 	return steps, nil
+}
+
+func validateProvisionAllPlan(plan *supplierkeys.EnsureAllPlan, allowPartial bool) error {
+	if plan == nil {
+		return badRequest("SUPPLIER_KEY_PLAN_INVALID", "supplier key provision plan is required")
+	}
+	if plan.Blocked == 0 {
+		return nil
+	}
+	if allowPartial && provisionPlanHasOnlyCapacityExhaustedBlocks(plan) && provisionPlanHasActionableItems(plan) {
+		return nil
+	}
+	reason := "SUPPLIER_KEY_PLAN_BLOCKED"
+	message := "supplier key provision plan has blocked groups"
+	for _, item := range plan.Items {
+		if item.Action != "blocked" {
+			continue
+		}
+		switch item.BlockedReason {
+		case "key_capacity_unknown":
+			reason = "SUPPLIER_KEY_CAPACITY_UNKNOWN"
+			message = "supplier key capacity is unknown; configure key limit policy before provisioning all groups"
+		case "key_capacity_exhausted":
+			reason = "SUPPLIER_KEY_CAPACITY_EXHAUSTED"
+			message = "supplier key capacity is exhausted; provisioning all groups would be incomplete"
+		case "key_provisioning_unsupported":
+			reason = "SUPPLIER_KEY_PROVIDER_UNSUPPORTED"
+			message = "supplier does not support automatic key provisioning"
+		}
+		break
+	}
+	return infraerrors.New(http.StatusConflict, reason, message)
+}
+
+func provisionPlanHasOnlyCapacityExhaustedBlocks(plan *supplierkeys.EnsureAllPlan) bool {
+	if plan == nil || plan.Blocked == 0 {
+		return false
+	}
+	for _, item := range plan.Items {
+		if item.Action == "blocked" && item.BlockedReason != "key_capacity_exhausted" {
+			return false
+		}
+	}
+	return true
+}
+
+func provisionPlanHasActionableItems(plan *supplierkeys.EnsureAllPlan) bool {
+	if plan == nil {
+		return false
+	}
+	for _, item := range plan.Items {
+		if item.Action == "create" || item.Action == "skipped_existing" {
+			return true
+		}
+	}
+	return false
 }
 
 func newSubmitStep(supplierID int64, supplierGroupID int64, stepType adminplusdomain.SupplierProvisionStepType, idempotencyKey string, request map[string]any, now time.Time) *adminplusdomain.SupplierProvisionStep {

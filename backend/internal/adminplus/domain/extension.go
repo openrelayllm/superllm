@@ -5,23 +5,24 @@ import "time"
 type ExtensionTaskType string
 
 const (
-	ExtensionTaskTypeFetchRates         ExtensionTaskType = "fetch_rates"
-	ExtensionTaskTypeFetchGroups        ExtensionTaskType = "fetch_groups"
-	ExtensionTaskTypeFetchBalance       ExtensionTaskType = "fetch_balance"
-	ExtensionTaskTypeFetchAnnouncements ExtensionTaskType = "fetch_announcements"
-	ExtensionTaskTypeExportBills        ExtensionTaskType = "export_bills"
-	ExtensionTaskTypeFetchUsageCosts    ExtensionTaskType = "fetch_usage_costs"
-	ExtensionTaskTypeReconcileCosts     ExtensionTaskType = "reconcile_supplier_costs"
-	ExtensionTaskTypeFetchHealth        ExtensionTaskType = "fetch_health"
-	ExtensionTaskTypeCheckChannels      ExtensionTaskType = "check_supplier_channels"
-	ExtensionTaskTypeRunPurityCheck     ExtensionTaskType = "run_purity_check"
-	ExtensionTaskTypeCaptureSession     ExtensionTaskType = "capture_supplier_session"
-	ExtensionTaskTypeRegisterSupplier   ExtensionTaskType = "register_supplier_account"
+	ExtensionTaskTypeFetchRates           ExtensionTaskType = "fetch_rates"
+	ExtensionTaskTypeFetchGroups          ExtensionTaskType = "fetch_groups"
+	ExtensionTaskTypeFetchBalance         ExtensionTaskType = "fetch_balance"
+	ExtensionTaskTypeFetchAnnouncements   ExtensionTaskType = "fetch_announcements"
+	ExtensionTaskTypeExportBills          ExtensionTaskType = "export_bills"
+	ExtensionTaskTypeFetchUsageCosts      ExtensionTaskType = "fetch_usage_costs"
+	ExtensionTaskTypeReconcileCosts       ExtensionTaskType = "reconcile_supplier_costs"
+	ExtensionTaskTypeFetchHealth          ExtensionTaskType = "fetch_health"
+	ExtensionTaskTypeCheckChannels        ExtensionTaskType = "check_supplier_channels"
+	ExtensionTaskTypeRunPurityCheck       ExtensionTaskType = "run_purity_check"
+	ExtensionTaskTypeCaptureSession       ExtensionTaskType = "capture_supplier_session"
+	ExtensionTaskTypeRegisterSupplier     ExtensionTaskType = "register_supplier_account"
+	ExtensionTaskTypeRoutingCapacityWatch ExtensionTaskType = "routing_capacity_watch"
 )
 
 func (t ExtensionTaskType) Valid() bool {
 	switch t {
-	case ExtensionTaskTypeFetchRates, ExtensionTaskTypeFetchGroups, ExtensionTaskTypeFetchBalance, ExtensionTaskTypeFetchAnnouncements, ExtensionTaskTypeExportBills, ExtensionTaskTypeFetchUsageCosts, ExtensionTaskTypeReconcileCosts, ExtensionTaskTypeFetchHealth, ExtensionTaskTypeCheckChannels, ExtensionTaskTypeRunPurityCheck, ExtensionTaskTypeCaptureSession, ExtensionTaskTypeRegisterSupplier:
+	case ExtensionTaskTypeFetchRates, ExtensionTaskTypeFetchGroups, ExtensionTaskTypeFetchBalance, ExtensionTaskTypeFetchAnnouncements, ExtensionTaskTypeExportBills, ExtensionTaskTypeFetchUsageCosts, ExtensionTaskTypeReconcileCosts, ExtensionTaskTypeFetchHealth, ExtensionTaskTypeCheckChannels, ExtensionTaskTypeRunPurityCheck, ExtensionTaskTypeCaptureSession, ExtensionTaskTypeRegisterSupplier, ExtensionTaskTypeRoutingCapacityWatch:
 		return true
 	default:
 		return false

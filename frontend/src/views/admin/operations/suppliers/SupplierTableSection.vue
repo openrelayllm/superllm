@@ -505,6 +505,7 @@
           </div>
           <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">余额更新 {{ supplierBalanceUpdatedLabel(row) }}</div>
           <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">充值倍率 {{ formatMultiplier(supplierRechargeMultiplier(row.id)) }}</div>
+          <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">Key 配额 {{ keyCapacitySummary(row) }}</div>
 
           <template v-if="supplierCostSnapshot(row.id)">
             <div class="mt-1 space-y-0.5 text-xs">
@@ -630,7 +631,11 @@
       </template>
 
       <template #cell-actions="{ row }">
-        <div class="flex min-w-[280px] justify-end gap-2">
+        <div class="flex min-w-[360px] justify-end gap-2">
+          <button type="button" class="btn btn-primary btn-sm" title="查看供应商详情" @click="openSupplierDetailDialog(row)">
+            <Icon name="eye" size="sm" />
+            详情
+          </button>
           <button type="button" class="btn btn-secondary btn-sm" title="编辑" @click="openEditDialog(row)">
             <Icon name="edit" size="sm" />
             编辑
@@ -797,6 +802,7 @@ const {
   resetFilters,
   openCreateDialog,
   openEditDialog,
+  openSupplierDetailDialog,
   openGroupsDialog,
   loginSupplierFromRow,
   openBestChannelProbeDialog,
@@ -815,6 +821,33 @@ const {
   supplierDisplayUsageCents,
   supplierRechargeTotalCents
 } = props.vm
+
+function keyCapacitySummary(row: any): string {
+  const status = keyCapacityStatusLabel(row.key_capacity_status)
+  if (row.key_limit_policy === 'limited') {
+    return `${status} · ${row.active_key_count || 0}/${row.key_limit_value || 0}`
+  }
+  return `${status} · ${keyLimitPolicyLabel(row.key_limit_policy)}`
+}
+
+function keyLimitPolicyLabel(value?: string): string {
+  return {
+    unknown: '未知',
+    unlimited: '无限制',
+    limited: '限制数量',
+    unsupported: '不支持自动创建'
+  }[value || ''] || value || '-'
+}
+
+function keyCapacityStatusLabel(value?: string): string {
+  return {
+    available: '可创建',
+    limited: '接近上限',
+    exhausted: '配额已满',
+    unknown: '未知',
+    unsupported: '不支持'
+  }[value || ''] || value || '-'
+}
 </script>
 
 <style scoped>

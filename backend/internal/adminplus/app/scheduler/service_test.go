@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	actionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
 	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
@@ -15,6 +16,7 @@ import (
 	purityapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/purity"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
+	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	suppliergroupsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	usagecostsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
@@ -341,6 +343,435 @@ func TestServiceCenterSurfacesPlansSupplierStatusesAndActions(t *testing.T) {
 	require.Equal(t, "critical", actions[0].Severity)
 }
 
+func TestServiceSupplierStatusesIncludeCandidateSummary(t *testing.T) {
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	candidateReader := &stubCandidateSummaryReader{}
+	service := NewService(supplierService, extensionService).WithCandidateSummaryReader(candidateReader)
+
+	supplier := createSchedulerSupplier(t, supplierService, suppliersapp.CreateSupplierInput{
+		Name:          "lime",
+		Kind:          adminplusdomain.SupplierKindRelay,
+		Type:          adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus: adminplusdomain.SupplierRuntimeStatusActive,
+		HealthStatus:  adminplusdomain.SupplierHealthStatusNormal,
+		DashboardURL:  "https://lime.example.com",
+		BalanceCents:  100_00,
+	})
+	candidateReader.rows = []*adminplusdomain.LocalAccountOpsRow{{
+		SupplierID:              supplier.ID,
+		LocalSub2APIAccountID:   42,
+		CandidateStatus:         "balance_blocked",
+		BlockedReason:           "recharge_required",
+		CheckSource:             "balance",
+		EffectiveRateMultiplier: 0.2,
+	}}
+
+	statuses, err := service.ListSupplierStatuses(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, statuses, 1)
+	require.Equal(t, supplier.ID, statuses[0].SupplierID)
+	require.NotNil(t, statuses[0].CandidateSummary)
+	require.Equal(t, "balance_blocked", statuses[0].CandidateSummary.CandidateStatus)
+	require.Equal(t, "recharge_required", statuses[0].CandidateSummary.BlockedReason)
+	require.Equal(t, 1, statuses[0].CandidateSummary.BalanceBlockedCount)
+	require.Equal(t, "blocked", statuses[0].ScheduleStatus)
+	require.Equal(t, "充值后重跑候选评估", statuses[0].RecommendedAction)
+
+	checklist, err := service.GetSupplierChecklist(context.Background(), supplier.ID)
+	require.NoError(t, err)
+	require.NotNil(t, checklist.CandidateSummary)
+	require.Equal(t, "blocked", checklistItemStatus(checklist.Items, "candidate_pool"))
+}
+
+func TestServiceListActionsIncludesLocalGroupCapacityWatch(t *testing.T) {
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	candidateReader := &stubCandidateSummaryReader{
+		groups: []*sub2apiapp.LocalSub2APIGroup{{
+			ID:                  1001,
+			Name:                "Lime",
+			Platform:            "openai",
+			ActiveAPIKeyCount:   2,
+			SchedulableAccounts: 0,
+			TotalAccounts:       1,
+		}},
+		rows: []*adminplusdomain.LocalAccountOpsRow{{
+			LocalSub2APIAccountID:   42,
+			LocalAccountPlatform:    "openai",
+			LocalAccountGroupIDs:    []int64{2002},
+			SupplierName:            "cheap",
+			CandidateStatus:         "available",
+			EffectiveRateMultiplier: 0.12,
+		}},
+	}
+	service := NewService(supplierService, extensionService).WithCandidateSummaryReader(candidateReader)
+
+	actions := service.ListActions(context.Background())
+
+	require.Len(t, actions, 1)
+	require.Equal(t, "local_group.routing.refill", actions[0].Type)
+	require.Equal(t, "critical", actions[0].Severity)
+	require.Equal(t, "Lime", actions[0].SupplierName)
+	require.Contains(t, actions[0].Reason, "账号 #42")
+	require.Equal(t, "预览补池", actions[0].RecommendedOperation)
+}
+
+func TestServiceListActionsUsesConfiguredRoutingLowCapacityThreshold(t *testing.T) {
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	repo := newFakeSchedulerRepository()
+	candidateReader := &stubCandidateSummaryReader{
+		groups: []*sub2apiapp.LocalSub2APIGroup{{
+			ID:                  1001,
+			Name:                "Lime",
+			Platform:            "openai",
+			ActiveAPIKeyCount:   3,
+			SchedulableAccounts: 2,
+			TotalAccounts:       2,
+		}},
+		rows: []*adminplusdomain.LocalAccountOpsRow{{
+			LocalSub2APIAccountID:   42,
+			LocalAccountPlatform:    "openai",
+			LocalAccountGroupIDs:    []int64{2002},
+			SupplierName:            "cheap",
+			CandidateStatus:         "available",
+			EffectiveRateMultiplier: 0.12,
+		}},
+	}
+	service := NewServiceWithDependenciesAndRepository(repo, supplierService, extensionService, nil, nil, nil, nil, nil, nil).
+		WithCandidateSummaryReader(candidateReader)
+	_, err := service.UpdateSettings(context.Background(), adminplusdomain.SchedulerSettings{
+		Enabled:                           true,
+		RoutingRefillLowCapacityThreshold: 2,
+		RoutingRefillCooldownSeconds:      180,
+	})
+	require.NoError(t, err)
+
+	actions := service.ListActions(context.Background())
+
+	require.Len(t, actions, 1)
+	require.Equal(t, "local_group.routing.low_capacity", actions[0].Type)
+	require.Equal(t, "warning", actions[0].Severity)
+	require.Contains(t, actions[0].Reason, "可调度账号数为 2")
+}
+
+func TestServiceProcessNextRoutingCapacityWatchGeneratesActionsWhenAutoDisabled(t *testing.T) {
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	repo := newFakeSchedulerRepository()
+	candidateReader := &stubCandidateSummaryReader{
+		groups: []*sub2apiapp.LocalSub2APIGroup{{
+			ID:                  1001,
+			Name:                "Lime",
+			Platform:            "openai",
+			ActiveAPIKeyCount:   2,
+			SchedulableAccounts: 0,
+		}},
+		rows: []*adminplusdomain.LocalAccountOpsRow{{
+			LocalSub2APIAccountID:   42,
+			LocalAccountPlatform:    "openai",
+			SupplierName:            "cheap",
+			CandidateStatus:         "available",
+			EffectiveRateMultiplier: 0.12,
+		}},
+	}
+	refiller := &stubRoutingRefiller{}
+	actionSyncer := &stubActionRecommendationSyncer{}
+	service := NewServiceWithDependenciesAndRepository(repo, supplierService, extensionService, nil, nil, nil, nil, nil, nil).
+		WithCandidateSummaryReader(candidateReader).
+		WithRoutingRefiller(refiller).
+		WithActionRecommendationSyncer(actionSyncer)
+	service.now = func() time.Time {
+		return time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	}
+
+	summary, err := service.EnqueueRun(context.Background(), RunInput{
+		Mode:      "manual",
+		TaskTypes: []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeRoutingCapacityWatch},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "queued", summary.Status)
+	require.Len(t, repo.steps, 1)
+	require.Equal(t, int64(0), repo.steps[0].SupplierID)
+	require.Equal(t, "本地调度", repo.steps[0].SupplierName)
+	require.Equal(t, adminplusdomain.ExtensionTaskTypeRoutingCapacityWatch, repo.steps[0].TaskType)
+	require.Equal(t, actionDirectSync, repo.steps[0].Action)
+
+	processed, err := service.ProcessNext(context.Background(), "worker-test")
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Empty(t, refiller.calls)
+	require.Equal(t, "succeeded", repo.steps[0].Status)
+	require.Equal(t, 1, repo.steps[0].ResultCount)
+	require.Equal(t, false, repo.steps[0].ResultSnapshot["auto_execute_enabled"])
+	require.Equal(t, 1, repo.steps[0].ResultSnapshot["actions_generated"])
+	actionLinks, ok := repo.steps[0].ResultSnapshot["actions"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, actionLinks, 1)
+	require.Equal(t, "local_group.routing.refill", actionLinks[0]["type"])
+	require.Equal(t, "routing_refill", actionLinks[0]["recommendation_type"])
+	require.Equal(t, int64(1001), actionLinks[0]["local_group_id"])
+	require.Len(t, repo.actions, 1)
+	require.Equal(t, "local_group.routing.refill", repo.actions[0].Type)
+	require.Len(t, actionSyncer.inputs, 1)
+	require.Len(t, actionSyncer.inputs[0].LocalGroupCapacity, 1)
+	require.Equal(t, int64(1001), actionSyncer.inputs[0].LocalGroupCapacity[0].LocalGroupID)
+}
+
+func TestServiceProcessNextRoutingCapacityWatchAutoRefillsEmptyGroupsOnly(t *testing.T) {
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	repo := newFakeSchedulerRepository()
+	candidateReader := &stubCandidateSummaryReader{
+		groups: []*sub2apiapp.LocalSub2APIGroup{
+			{
+				ID:                  1001,
+				Name:                "Lime Empty",
+				Platform:            "openai",
+				ActiveAPIKeyCount:   2,
+				SchedulableAccounts: 0,
+			},
+			{
+				ID:                  1002,
+				Name:                "Lime Low",
+				Platform:            "openai",
+				ActiveAPIKeyCount:   2,
+				SchedulableAccounts: 1,
+			},
+			{
+				ID:                  1003,
+				Name:                "Unused",
+				Platform:            "openai",
+				ActiveAPIKeyCount:   0,
+				SchedulableAccounts: 0,
+			},
+		},
+		rows: []*adminplusdomain.LocalAccountOpsRow{{
+			LocalSub2APIAccountID:   42,
+			LocalAccountPlatform:    "openai",
+			SupplierID:              7,
+			SupplierName:            "cheap",
+			CandidateStatus:         "available",
+			EffectiveRateMultiplier: 0.12,
+		}},
+	}
+	refiller := &stubRoutingRefiller{
+		results: map[int64]*sub2apiapp.RoutingRefillResult{
+			1001: {
+				Action:       "refill_local_group",
+				LocalGroupID: 1001,
+				Platform:     "openai",
+				AvailabilityBefore: &sub2apiapp.RoutingGroupAvailability{
+					GroupID:             1001,
+					GroupName:           "Lime Empty",
+					Platform:            "openai",
+					SchedulableAccounts: 0,
+					ActiveAPIKeyCount:   2,
+				},
+				Candidate: &sub2apiapp.RoutingRefillCandidate{
+					LocalSub2APIAccountID:   42,
+					SupplierID:              7,
+					EffectiveRateMultiplier: 0.12,
+				},
+			},
+		},
+	}
+	service := NewServiceWithDependenciesAndRepository(repo, supplierService, extensionService, nil, nil, nil, nil, nil, nil).
+		WithCandidateSummaryReader(candidateReader).
+		WithRoutingRefiller(refiller)
+	service.now = func() time.Time {
+		return time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	}
+	_, err := service.UpdateSettings(context.Background(), adminplusdomain.SchedulerSettings{
+		Enabled:                           true,
+		RoutingRefillAutoExecuteEnabled:   true,
+		RoutingRefillLowCapacityThreshold: 1,
+		RoutingRefillCooldownSeconds:      240,
+		RoutingRefillConfirmWindowSeconds: 30,
+		RoutingRefillMaxRateMultiplier:    0.5,
+	})
+	require.NoError(t, err)
+
+	summary, err := service.EnqueueRun(context.Background(), RunInput{
+		Mode:      "manual",
+		TaskTypes: []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeRoutingCapacityWatch},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "queued", summary.Status)
+
+	processed, err := service.ProcessNext(context.Background(), "worker-test")
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Len(t, refiller.calls, 1)
+	require.Equal(t, int64(1001), refiller.calls[0].LocalGroupID)
+	require.Equal(t, "openai", refiller.calls[0].Platform)
+	require.Equal(t, 0.5, refiller.calls[0].MaxRateMultiplier)
+	require.Equal(t, 240, refiller.calls[0].CooldownSeconds)
+	require.Equal(t, 30, refiller.calls[0].ConfirmWindowSecs)
+	require.False(t, refiller.calls[0].DryRun)
+	require.Equal(t, "auto_scheduler_capacity_watch", refiller.calls[0].Reason)
+	require.Equal(t, "scheduler:auto", refiller.calls[0].TriggerType)
+	require.Equal(t, "succeeded", repo.steps[0].Status)
+	require.Equal(t, 1, repo.steps[0].ResultCount)
+	require.Equal(t, true, repo.steps[0].ResultSnapshot["auto_execute_enabled"])
+	require.Equal(t, 3, repo.steps[0].ResultSnapshot["groups_scanned"])
+	require.Equal(t, 1, repo.steps[0].ResultSnapshot["eligible_groups"])
+	require.Equal(t, 1, repo.steps[0].ResultSnapshot["attempted"])
+	require.Equal(t, 1, repo.steps[0].ResultSnapshot["succeeded"])
+}
+
+func TestServiceSettingsNormalizeRoutingRefillPolicy(t *testing.T) {
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	repo := newFakeSchedulerRepository()
+	service := NewServiceWithDependenciesAndRepository(repo, supplierService, extensionService, nil, nil, nil, nil, nil, nil)
+
+	defaults := service.Settings(context.Background())
+	require.False(t, defaults.RoutingRefillAutoExecuteEnabled)
+	require.EqualValues(t, 1, defaults.RoutingRefillLowCapacityThreshold)
+	require.Equal(t, 180, defaults.RoutingRefillCooldownSeconds)
+	require.Equal(t, 0, defaults.RoutingRefillConfirmWindowSeconds)
+	require.Zero(t, defaults.RoutingRefillMaxRateMultiplier)
+
+	updated, err := service.UpdateSettings(context.Background(), adminplusdomain.SchedulerSettings{
+		RoutingRefillAutoExecuteEnabled:   true,
+		RoutingRefillLowCapacityThreshold: 0,
+		RoutingRefillCooldownSeconds:      90000,
+		RoutingRefillConfirmWindowSeconds: -1,
+		RoutingRefillMaxRateMultiplier:    -0.25,
+	})
+	require.NoError(t, err)
+	require.True(t, updated.RoutingRefillAutoExecuteEnabled)
+	require.EqualValues(t, 1, updated.RoutingRefillLowCapacityThreshold)
+	require.Equal(t, 86400, updated.RoutingRefillCooldownSeconds)
+	require.Equal(t, 0, updated.RoutingRefillConfirmWindowSeconds)
+	require.Zero(t, updated.RoutingRefillMaxRateMultiplier)
+}
+
+func TestServiceListActionsIncludesBadLocalAccountScheduleDisableSuggestion(t *testing.T) {
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	candidateReader := &stubCandidateSummaryReader{
+		rows: []*adminplusdomain.LocalAccountOpsRow{
+			{
+				LocalSub2APIAccountID:   42,
+				LocalAccountName:        "bad-channel",
+				LocalAccountPlatform:    "openai",
+				LocalAccountStatus:      "active",
+				LocalAccountSchedulable: true,
+				LocalAccountGroupIDs:    []int64{1001},
+				LocalAccountGroupNames:  []string{"Lime"},
+				SupplierID:              7,
+				SupplierName:            "cheap",
+				SupplierRuntimeStatus:   "active",
+				SupplierHealthStatus:    "normal",
+				SupplierAccountID:       7001,
+				SupplierGroupID:         7002,
+				SupplierGroupStatus:     "active",
+				SupplierKeyID:           7003,
+				SupplierKeyStatus:       "bound",
+				HasUsableBalance:        true,
+				BalanceStatus:           "usable",
+				ChannelCheckStatus:      "remote_unavailable",
+				DriftStatus:             "synced",
+				EffectiveRateMultiplier: 0.12,
+			},
+			{
+				LocalSub2APIAccountID:   43,
+				LocalAccountStatus:      "active",
+				LocalAccountSchedulable: true,
+				LocalAccountGroupIDs:    []int64{1001},
+				CandidateStatus:         "balance_blocked",
+				BlockedReason:           "recharge_required",
+			},
+			{
+				LocalSub2APIAccountID:   44,
+				LocalAccountStatus:      "active",
+				LocalAccountSchedulable: false,
+				LocalAccountGroupIDs:    []int64{1001},
+				CandidateStatus:         "blocked",
+				BlockedReason:           "channel_monitor_failed",
+			},
+		},
+	}
+	service := NewService(supplierService, extensionService).WithCandidateSummaryReader(candidateReader)
+
+	actions := service.ListActions(context.Background())
+
+	require.Len(t, actions, 1)
+	require.Equal(t, "local_account.schedule.disable", actions[0].Type)
+	require.Equal(t, "local_account.schedule.disable:42", actions[0].ID)
+	require.Equal(t, "warning", actions[0].Severity)
+	require.Equal(t, int64(7), actions[0].SupplierID)
+	require.Contains(t, actions[0].Reason, "#42")
+	require.Contains(t, actions[0].Reason, "channel_monitor_failed")
+	require.Equal(t, "预览关闭调度", actions[0].RecommendedOperation)
+}
+
+func TestServiceListActionsSyncsLocalRoutingRecommendations(t *testing.T) {
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	actionSyncer := &stubActionRecommendationSyncer{}
+	candidateReader := &stubCandidateSummaryReader{
+		groups: []*sub2apiapp.LocalSub2APIGroup{{
+			ID:                  1001,
+			Name:                "Lime",
+			Platform:            "openai",
+			ActiveAPIKeyCount:   2,
+			SchedulableAccounts: 0,
+			TotalAccounts:       1,
+		}},
+		rows: []*adminplusdomain.LocalAccountOpsRow{
+			{
+				LocalSub2APIAccountID:   42,
+				LocalAccountPlatform:    "openai",
+				LocalAccountGroupIDs:    []int64{2002},
+				SupplierID:              7,
+				SupplierName:            "cheap",
+				SupplierGroupID:         7002,
+				SupplierGroupName:       "cheap-low",
+				CandidateStatus:         "available",
+				CheckSource:             "channel_monitor",
+				EffectiveRateMultiplier: 0.12,
+			},
+			{
+				LocalSub2APIAccountID:   43,
+				LocalAccountName:        "bad-channel",
+				LocalAccountPlatform:    "openai",
+				LocalAccountSchedulable: true,
+				LocalAccountGroupIDs:    []int64{1001},
+				LocalAccountGroupNames:  []string{"Lime"},
+				SupplierID:              8,
+				SupplierName:            "failing",
+				SupplierGroupID:         8002,
+				SupplierGroupName:       "failing-group",
+				CandidateStatus:         "blocked",
+				BlockedReason:           "channel_monitor_failed",
+				CheckSource:             "channel_monitor",
+				ChannelCheckStatus:      "request_error",
+				EffectiveRateMultiplier: 0.2,
+			},
+		},
+	}
+	service := NewService(supplierService, extensionService).
+		WithCandidateSummaryReader(candidateReader).
+		WithActionRecommendationSyncer(actionSyncer)
+
+	actions := service.ListActions(context.Background())
+
+	require.Len(t, actions, 2)
+	require.Len(t, actionSyncer.inputs, 1)
+	require.Len(t, actionSyncer.inputs[0].LocalGroupCapacity, 1)
+	require.Len(t, actionSyncer.inputs[0].LocalAccountSchedule, 1)
+	require.Equal(t, int64(1001), actionSyncer.inputs[0].LocalGroupCapacity[0].LocalGroupID)
+	require.Equal(t, int64(42), actionSyncer.inputs[0].LocalGroupCapacity[0].BestCandidateLocalAccountID)
+	require.Equal(t, int64(43), actionSyncer.inputs[0].LocalAccountSchedule[0].LocalSub2APIAccountID)
+}
+
 func TestServiceUpdatePlanConfigPersistsUserSchedule(t *testing.T) {
 	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
@@ -563,7 +994,7 @@ func TestServiceEnqueueCostHistoryBackfillUsesStepSnapshot(t *testing.T) {
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
 	repo := newFakeSchedulerRepository()
 	costSyncer := &stubCostSyncer{}
-	service := ProvideService(repo, supplierService, extensionService, nil, nil, nil, nil, nil, costSyncer, nil, nil, nil)
+	service := ProvideService(repo, supplierService, extensionService, nil, nil, nil, nil, nil, costSyncer, nil, nil, nil, nil, nil, nil)
 	now := time.Date(2026, 6, 20, 10, 4, 0, 0, time.UTC)
 	service.now = func() time.Time {
 		return now
@@ -660,8 +1091,8 @@ func TestServiceProcessNextRefreshesMissingSessionBeforeCostBackfill(t *testing.
 	require.NoError(t, err)
 	require.True(t, processed)
 	require.Equal(t, 1, sessionRefresher.loginCalls)
-	require.Equal(t, true, sessionRefresher.lastLoginInput.LoginContext["require_admin_session"])
-	require.Equal(t, "10", sessionRefresher.lastLoginInput.LoginContext["required_role"])
+	require.NotContains(t, sessionRefresher.lastLoginInput.LoginContext, "require_admin_session")
+	require.NotContains(t, sessionRefresher.lastLoginInput.LoginContext, "required_role")
 	require.Equal(t, 1, costSyncer.calls)
 	require.Equal(t, "succeeded", repo.steps[0].Status)
 	require.Empty(t, repo.steps[0].Reason)
@@ -860,6 +1291,56 @@ func TestServiceProcessNextRefreshesSessionOnceAfterSyncExpired(t *testing.T) {
 	require.Equal(t, 2, balanceSyncer.calls)
 	require.Equal(t, "succeeded", repo.steps[0].Status)
 	require.Empty(t, repo.steps[0].Reason)
+}
+
+func TestServiceProcessNextDoesNotDirectLoginAfterNewAPIAdminPermissionFailure(t *testing.T) {
+	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
+	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
+	balanceSyncer := &stubBalanceSyncer{
+		total: 1,
+		errors: []error{infraerrors.New(
+			http.StatusForbidden,
+			"SUPPLIER_NEW_API_ADMIN_SESSION_REQUIRED",
+			"new api session cannot access requested endpoint",
+		)},
+	}
+	sessionRefresher := &stubSessionRefresher{}
+	repo := newFakeSchedulerRepository()
+	service := NewServiceWithDependenciesAndRepository(repo, supplierService, extensionService, nil, nil, balanceSyncer, nil, nil, nil).
+		WithSessionRefresher(sessionRefresher)
+	service.now = func() time.Time {
+		return time.Date(2026, 6, 20, 10, 4, 0, 0, time.UTC)
+	}
+
+	createSchedulerSupplier(t, supplierService, suppliersapp.CreateSupplierInput{
+		Name:                 "new-api-user-session",
+		Kind:                 adminplusdomain.SupplierKindRelay,
+		Type:                 adminplusdomain.SupplierTypeNewAPI,
+		RuntimeStatus:        adminplusdomain.SupplierRuntimeStatusActive,
+		HealthStatus:         adminplusdomain.SupplierHealthStatusNormal,
+		DashboardURL:         "https://new-api.example.com",
+		BrowserLoginEnabled:  true,
+		BrowserLoginUsername: "user@example.com",
+		BrowserLoginPassword: "secret",
+		BalanceCents:         500_00,
+		BalanceCurrency:      "USD",
+	})
+	_, err := service.EnqueueRun(context.Background(), RunInput{
+		Mode:      "manual",
+		TaskTypes: []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeFetchBalance},
+	})
+	require.NoError(t, err)
+
+	processed, err := service.ProcessNext(context.Background(), "worker-test")
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Equal(t, 0, sessionRefresher.loginCalls)
+	require.Equal(t, 1, balanceSyncer.calls)
+	require.Equal(t, "manual_required", repo.steps[0].Status)
+	require.Contains(t, repo.steps[0].Reason, "SUPPLIER_NEW_API_ADMIN_SESSION_REQUIRED")
+	require.NotContains(t, repo.steps[0].Reason, "SUPPLIER_DIRECT_LOGIN_ADMIN_REQUIRED")
+	require.NotContains(t, repo.steps[0].Reason, `"login_attempted":"true"`)
 }
 
 func TestServiceRetryStepRequeuesFailedStep(t *testing.T) {
@@ -1111,6 +1592,58 @@ func (s *stubSessionRefresher) Login(_ context.Context, in sessionsapp.LoginInpu
 		return s.loginResult, nil
 	}
 	return &sessionsapp.LoginResult{Session: &adminplusdomain.SupplierBrowserSession{}}, nil
+}
+
+type stubCandidateSummaryReader struct {
+	rows   []*adminplusdomain.LocalAccountOpsRow
+	groups []*sub2apiapp.LocalSub2APIGroup
+}
+
+func (s *stubCandidateSummaryReader) ListLocalGroups(_ context.Context, _ int) ([]*sub2apiapp.LocalSub2APIGroup, error) {
+	return s.groups, nil
+}
+
+func (s *stubCandidateSummaryReader) ListLocalAccountOps(_ context.Context, _ sub2apiapp.LocalAccountOpsFilter) ([]*adminplusdomain.LocalAccountOpsRow, error) {
+	return s.rows, nil
+}
+
+type stubRoutingRefiller struct {
+	calls   []sub2apiapp.RoutingRefillInput
+	results map[int64]*sub2apiapp.RoutingRefillResult
+	errs    map[int64]error
+}
+
+func (s *stubRoutingRefiller) RefillLocalGroup(_ context.Context, in sub2apiapp.RoutingRefillInput) (*sub2apiapp.RoutingRefillResult, error) {
+	s.calls = append(s.calls, in)
+	if s.errs != nil {
+		if err := s.errs[in.LocalGroupID]; err != nil {
+			return nil, err
+		}
+	}
+	if s.results != nil {
+		if result := s.results[in.LocalGroupID]; result != nil {
+			return result, nil
+		}
+	}
+	return &sub2apiapp.RoutingRefillResult{
+		Action:       "refill_local_group",
+		LocalGroupID: in.LocalGroupID,
+		Platform:     in.Platform,
+	}, nil
+}
+
+type stubActionRecommendationSyncer struct {
+	inputs []actionsapp.GenerateInput
+	err    error
+}
+
+func (s *stubActionRecommendationSyncer) Generate(_ context.Context, in actionsapp.GenerateInput) (*actionsapp.GenerateResult, error) {
+	s.inputs = append(s.inputs, in)
+	if s.err != nil {
+		return nil, s.err
+	}
+	total := len(in.LocalGroupCapacity) + len(in.LocalAccountSchedule)
+	return &actionsapp.GenerateResult{Total: total}, nil
 }
 
 type stubHealthSyncer struct {

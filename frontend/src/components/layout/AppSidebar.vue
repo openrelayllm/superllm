@@ -298,6 +298,7 @@ const adminNavItems = computed((): NavItem[] => [
     children: [
       { path: '/admin/suppliers', label: '供应商管理', icon: OperationsIcon },
       { path: '/admin/supplier-bindings', label: '账号/Key 绑定', icon: OperationsIcon },
+      { path: '/admin/local-account-ops', label: '本地账号运营', icon: OperationsIcon },
       { path: '/admin/supplier-rate-checks', label: '倍率检测', icon: OperationsIcon },
       { path: '/admin/account-rate-sync', label: '账号倍率同步', icon: OperationsIcon }
     ]
@@ -327,7 +328,10 @@ const adminNavItems = computed((): NavItem[] => [
     icon: OperationsIcon,
     children: [
       { path: '/admin/scheduler', label: '工作台', icon: OperationsIcon },
+      { path: '/admin/scheduler/routing-refill-history', label: '补池影响历史', icon: OperationsIcon },
       { path: '/admin/scheduler/notifications', label: '通知中心', icon: OperationsIcon },
+      { path: '/admin/actions', label: '智能动作', icon: OperationsIcon },
+      { path: '/admin/action-audits', label: '操作审计', icon: OperationsIcon },
       { path: '/admin/system-logs', label: '系统日志', icon: OperationsIcon },
       { path: '/admin/server-renewal', label: '续费提醒', icon: OperationsIcon },
       { path: '/admin/backup', label: '数据备份', icon: OperationsIcon },

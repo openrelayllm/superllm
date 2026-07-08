@@ -389,59 +389,29 @@ func applyProfileToSessionBundle(bundle map[string]any, probe *ports.SessionProb
 	}
 }
 
-func newAPIAdminSessionRequired(currentRole int64, roleKnown bool) error {
-	metadata := map[string]string{
-		"required_role": "10",
-		"suggestion":    "请先在供应商设置中执行一键登录，并使用 new-api 管理员或 root 账号重新登录。",
-	}
-	if roleKnown {
-		metadata["current_role"] = strconv.FormatInt(currentRole, 10)
-	}
-	return infraerrors.New(
-		http.StatusConflict,
-		"SUPPLIER_NEW_API_ADMIN_SESSION_REQUIRED",
-		"new-api 历史全量数据需要管理员/root 会话；普通用户会话只能读取自己的受限数据",
-	).WithMetadata(metadata)
-}
-
-func requireAdminSessionForDirectLogin(loginContext map[string]any, bundle map[string]any) error {
-	if !newAPIContextRequiresAdminSession(loginContext) {
-		return nil
-	}
-	currentRole, roleKnown := newAPIRoleFromBundle(bundle)
-	if roleKnown && currentRole >= 10 {
-		return nil
-	}
-	metadata := map[string]string{
-		"required_role": "10",
-		"suggestion":    "请在供应商设置中配置 new-api 管理员或 root 账号，或提供管理员/root 的 access token 与 New-Api-User。",
-	}
-	if roleKnown {
-		metadata["current_role"] = strconv.FormatInt(currentRole, 10)
-	}
-	return infraerrors.New(
-		http.StatusConflict,
-		"SUPPLIER_DIRECT_LOGIN_ADMIN_REQUIRED",
-		"new-api direct login returned a non-admin session",
-	).WithMetadata(metadata)
-}
-
-func newAPIContextRequiresAdminSession(loginContext map[string]any) bool {
-	if loginContext == nil {
-		return false
-	}
-	if required, ok := boolValue(loginContext["require_admin_session"]); ok && required {
-		return true
-	}
-	for _, key := range []string{"required_role", "require_role", "minimum_role", "min_role"} {
-		if role := int64FromAny(loginContext[key]); role >= 10 {
-			return true
+func newAPISessionPermissionRequired(currentRole int64, roleKnown bool, cause error) error {
+	metadata := map[string]string{}
+	if appErr := infraerrors.FromError(cause); appErr != nil {
+		for key, value := range appErr.Metadata {
+			metadata[key] = value
 		}
 	}
-	return false
+	metadata["suggestion"] = "当前 New API 注册用户无权读取该接口；请确认账号在供应商后台具备对应权限，或换用可读取该数据的账号/token 与数字 User ID。"
+	if roleKnown {
+		metadata["current_role"] = strconv.FormatInt(currentRole, 10)
+	}
+	message := "new api session cannot access requested endpoint"
+	if causeMessage := infraerrors.Message(cause); causeMessage != "" {
+		message = causeMessage
+	}
+	err := infraerrors.New(http.StatusForbidden, "SUPPLIER_SESSION_PERMISSION_DENIED", message).WithMetadata(metadata)
+	if cause != nil {
+		return err.WithCause(cause)
+	}
+	return err
 }
 
-func isNewAPIAdminPermissionError(err error) bool {
+func isNewAPISessionPermissionError(err error) bool {
 	if err == nil {
 		return false
 	}

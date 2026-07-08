@@ -39,10 +39,18 @@ type EventFilter struct {
 	Limit      int
 }
 
+type UpdateKeyCapacityInput struct {
+	SupplierID      int64  `json:"supplier_id"`
+	SupplierGroupID int64  `json:"supplier_group_id"`
+	KeyLimitPolicy  string `json:"key_limit_policy"`
+	KeyLimitValue   int    `json:"key_limit_value"`
+}
+
 type Repository interface {
 	GetSupplierName(ctx context.Context, supplierID int64) (string, error)
 	UpsertMany(ctx context.Context, supplierID int64, groups []*adminplusdomain.SupplierGroup, seenAt time.Time) ([]*adminplusdomain.SupplierGroup, error)
 	List(ctx context.Context, filter ListFilter) ([]*adminplusdomain.SupplierGroup, error)
+	UpdateKeyCapacity(ctx context.Context, in UpdateKeyCapacityInput) (*adminplusdomain.SupplierGroup, error)
 	ListChangeEvents(ctx context.Context, filter EventFilter) ([]*adminplusdomain.SupplierGroupChangeEvent, error)
 	CreateChangeEvents(ctx context.Context, events []*adminplusdomain.SupplierGroupChangeEvent) ([]*adminplusdomain.SupplierGroupChangeEvent, error)
 }
@@ -143,7 +151,7 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]*adminplusdoma
 	if s == nil || s.repo == nil {
 		return nil, internalError("supplier group service is not configured")
 	}
-	if filter.SupplierID <= 0 {
+	if filter.SupplierID < 0 {
 		return nil, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
 	}
 	if filter.Status != "" && !filter.Status.Valid() {
@@ -166,6 +174,33 @@ func (s *Service) ListChangeEvents(ctx context.Context, filter EventFilter) ([]*
 	}
 	filter.Limit = normalizeEventLimit(filter.Limit)
 	return s.repo.ListChangeEvents(ctx, filter)
+}
+
+func (s *Service) UpdateKeyCapacity(ctx context.Context, in UpdateKeyCapacityInput) (*adminplusdomain.SupplierGroup, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("supplier group service is not configured")
+	}
+	if in.SupplierID <= 0 {
+		return nil, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	if in.SupplierGroupID <= 0 {
+		return nil, badRequest("SUPPLIER_GROUP_ID_INVALID", "invalid supplier group id")
+	}
+	policy := normalizeGroupKeyLimitPolicy(in.KeyLimitPolicy)
+	value := in.KeyLimitValue
+	if policy == adminplusdomain.SupplierGroupKeyLimitPolicyLimited {
+		if value <= 0 {
+			return nil, badRequest("SUPPLIER_GROUP_KEY_LIMIT_VALUE_INVALID", "limited group key capacity requires a positive limit")
+		}
+	} else {
+		value = 0
+	}
+	return s.repo.UpdateKeyCapacity(ctx, UpdateKeyCapacityInput{
+		SupplierID:      in.SupplierID,
+		SupplierGroupID: in.SupplierGroupID,
+		KeyLimitPolicy:  policy,
+		KeyLimitValue:   value,
+	})
 }
 
 func (s *Service) recordChangeEvents(ctx context.Context, previous []*adminplusdomain.SupplierGroup, current []*adminplusdomain.SupplierGroup, createdAt time.Time) ([]*adminplusdomain.SupplierGroupChangeEvent, error) {
@@ -353,6 +388,21 @@ func normalizeEventLimit(limit int) int {
 		return 200
 	}
 	return limit
+}
+
+func normalizeGroupKeyLimitPolicy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case adminplusdomain.SupplierGroupKeyLimitPolicyUnknown:
+		return adminplusdomain.SupplierGroupKeyLimitPolicyUnknown
+	case adminplusdomain.SupplierGroupKeyLimitPolicyUnlimited:
+		return adminplusdomain.SupplierGroupKeyLimitPolicyUnlimited
+	case adminplusdomain.SupplierGroupKeyLimitPolicyLimited:
+		return adminplusdomain.SupplierGroupKeyLimitPolicyLimited
+	case adminplusdomain.SupplierGroupKeyLimitPolicyUnsupported:
+		return adminplusdomain.SupplierGroupKeyLimitPolicyUnsupported
+	default:
+		return adminplusdomain.SupplierGroupKeyLimitPolicyInherit
+	}
 }
 
 func trimLimit(value string, limit int) string {

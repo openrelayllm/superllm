@@ -353,6 +353,9 @@ export type SupplierCapabilityStatus = 'available' | 'needs_session' | 'needs_re
 export type SupplierIntegrationProtocol = 'openai' | 'claude' | 'gemini'
 export type SupplierGroupStatus = 'active' | 'missing' | 'disabled'
 export type SupplierKeyStatus = 'provisioning' | 'bound' | 'manual_secret_required' | 'failed' | 'disabled'
+export type SupplierKeyLimitPolicy = 'unknown' | 'unlimited' | 'limited' | 'unsupported'
+export type SupplierGroupKeyLimitPolicy = 'inherit' | SupplierKeyLimitPolicy
+export type SupplierKeyCapacityStatus = 'available' | 'limited' | 'exhausted' | 'unknown' | 'unsupported'
 export type SupplierSessionSource = 'direct_login' | 'browser_extension' | 'manual_import'
 export type SupplierProvisionJobType = 'sync_groups' | 'provision_group_key' | 'provision_all_group_keys' | 'repair_binding' | 'sync_supplier_costs' | 'check_supplier_channels'
 export type SupplierProvisionStatus = 'queued' | 'running' | 'succeeded' | 'partial_succeeded' | 'retryable_failed' | 'manual_required' | 'dead' | 'cancelled'
@@ -461,6 +464,10 @@ export interface Supplier {
   balance_currency: string
   balance_updated_at?: string | null
   recharge_multiplier: number
+  key_limit_policy: SupplierKeyLimitPolicy | string
+  key_limit_value: number
+  active_key_count: number
+  key_capacity_status: SupplierKeyCapacityStatus | string
   created_at: string
   updated_at: string
 }
@@ -827,6 +834,8 @@ export interface CreateSupplierPayload {
   balance_cents?: number
   balance_currency?: string
   recharge_multiplier?: number
+  key_limit_policy?: SupplierKeyLimitPolicy
+  key_limit_value?: number
 }
 
 export type UpdateSupplierPayload = CreateSupplierPayload
@@ -864,6 +873,351 @@ export interface LocalSub2APIAccount {
   updated_at: string
   group_ids?: number[]
   group_names?: string[]
+}
+
+export interface LocalSub2APIGroup {
+  id: number
+  name: string
+  platform?: string
+  status: string
+  rate_multiplier: number
+  is_exclusive: boolean
+  total_accounts: number
+  schedulable_accounts: number
+  active_api_key_count: number
+  would_empty_schedulable_pool: boolean
+}
+
+export type LocalAccountOpsBalanceStatus = 'unbound' | 'usable' | 'insufficient' | 'unknown'
+export type LocalAccountOpsDriftStatus =
+  | 'unbound'
+  | 'synced'
+  | 'supplier_disabled'
+  | 'binding_disabled'
+  | 'missing_key'
+  | 'key_local_account_mismatch'
+  | 'missing_group'
+  | 'group_missing'
+  | 'group_disabled'
+  | 'local_account_metadata_drift'
+  | 'local_account_state_drift'
+  | 'unknown'
+export type CandidateStatus = 'available' | 'unknown' | 'degraded' | 'needs_provisioning' | 'balance_blocked' | 'blocked' | 'local_blocked' | 'capacity_blocked'
+
+export interface LocalAccountOpsRow {
+  local_sub2api_account_id: number
+  local_account_name: string
+  local_account_platform: string
+  local_account_type: string
+  local_account_status: string
+  local_account_error_message?: string
+  local_account_schedulable: boolean
+  local_account_concurrency: number
+  local_account_priority: number
+  local_account_rate_multiplier: number
+  local_account_rate_limited_at?: string | null
+  local_account_rate_limit_reset_at?: string | null
+  local_account_overload_until?: string | null
+  local_account_temp_unschedulable_until?: string | null
+  local_account_temp_unschedulable_reason?: string
+  local_account_updated_at: string
+  local_account_group_ids?: number[]
+  local_account_group_names?: string[]
+  supplier_account_id?: number
+  supplier_id?: number
+  supplier_name?: string
+  supplier_type?: SupplierType | string
+  supplier_runtime_status?: SupplierRuntimeStatus | string
+  supplier_health_status?: SupplierHealthStatus | string
+  supplier_account_runtime_status?: SupplierRuntimeStatus | string
+  supplier_account_health_status?: SupplierHealthStatus | string
+  supplier_group_id?: number
+  supplier_external_group_id?: string
+  supplier_group_name?: string
+  supplier_group_provider?: string
+  supplier_group_model_family?: string
+  supplier_group_model_spec?: string
+  supplier_group_status?: SupplierGroupStatus | string
+  effective_rate_multiplier: number
+  supplier_key_id?: number
+  supplier_key_name?: string
+  supplier_key_last4?: string
+  supplier_key_status?: SupplierKeyStatus | string
+  balance_threshold_cents: number
+  balance_cents: number
+  balance_currency: string
+  has_usable_balance: boolean
+  balance_status: LocalAccountOpsBalanceStatus | string
+  channel_check_status: SupplierChannelProbeStatus | string
+  channel_remote_status?: string
+  channel_recommended: boolean
+  channel_status_code?: number
+  channel_error_class?: string
+  channel_error_message?: string
+  last_channel_check_at?: string | null
+  drift_status: LocalAccountOpsDriftStatus | string
+  last_local_sync_at?: string | null
+  candidate_status?: CandidateStatus | string
+  blocked_reason?: string
+  check_source?: string
+  key_capacity_status?: string
+  model_scope?: string
+  model_match_status?: string
+}
+
+export type LocalAccountOpsAction = 'set_schedulable' | 'add_to_groups' | 'remove_from_groups'
+
+export interface LocalAccountOpsGroupImpact {
+  group_id: number
+  group_name: string
+  active_api_key_count: number
+  before_schedulable_accounts: number
+  after_schedulable_accounts: number
+  would_empty_schedulable_pool: boolean
+}
+
+export interface LocalAccountOpsActionResult {
+  action: LocalAccountOpsAction
+  dry_run: boolean
+  blocked: boolean
+  blocked_reason?: string
+  account_ids: number[]
+  group_ids?: number[]
+  updated_accounts: number
+  added_bindings: number
+  removed_bindings: number
+  group_impacts?: LocalAccountOpsGroupImpact[]
+  warnings?: string[]
+  action_recommendation_id?: number
+  action_execution_id?: number
+}
+
+export interface LocalAccountOpsActionPayload {
+  action: LocalAccountOpsAction
+  account_ids: number[]
+  group_ids?: number[]
+  schedulable?: boolean
+  allow_empty_pool?: boolean
+  action_id?: number
+  scheduler_run_id?: string
+  scheduler_step_id?: number
+  reason?: string
+}
+
+export interface RoutingGroupAvailability {
+  group_id: number
+  group_name: string
+  platform?: string
+  total_accounts: number
+  schedulable_accounts: number
+  active_api_key_count: number
+  would_empty_schedulable_pool: boolean
+  recent_window_seconds?: number
+  recent_success_request_count?: number
+  recent_error_request_count?: number
+  recent_upstream_429_count?: number
+  recent_token_count?: number
+  recent_last_request_at?: string | null
+  recent_last_error_at?: string | null
+  impacted_api_keys?: RoutingImpactedAPIKey[]
+  impacted_api_keys_truncated?: boolean
+  recent_failure_requests?: RoutingFailureRequest[]
+  recent_failures_truncated?: boolean
+}
+
+export interface RoutingImpactedAPIKey {
+  id: number
+  user_id: number
+  name: string
+  key_preview?: string
+  status: string
+  last_used_at?: string | null
+  recent_success_request_count?: number
+  recent_error_request_count?: number
+  recent_upstream_429_count?: number
+  recent_token_count?: number
+  recent_last_request_at?: string | null
+  recent_last_error_at?: string | null
+}
+
+export interface RoutingFailureRequest {
+  id: number
+  request_id?: string
+  api_key_id?: number
+  api_key_name?: string
+  api_key_preview?: string
+  user_id?: number
+  account_id?: number
+  model?: string
+  status_code?: number
+  upstream_status_code?: number
+  error_owner?: string
+  error_type?: string
+  error_message?: string
+  created_at: string
+}
+
+export interface RoutingSensitiveFailureField {
+  name: string
+  available: boolean
+  value?: string
+  unavailable_reason?: string
+  redacted?: boolean
+  truncated?: boolean
+}
+
+export interface RoutingSensitiveFailureDetail {
+  id: number
+  local_group_id: number
+  request_id?: string
+  api_key_id?: number
+  api_key_name?: string
+  api_key_preview?: string
+  user_id?: number
+  account_id?: number
+  model?: string
+  status_code?: number
+  upstream_status_code?: number
+  error_owner?: string
+  error_type?: string
+  created_at: string
+  available: boolean
+  unavailable_reason?: string
+  fields: RoutingSensitiveFailureField[]
+}
+
+export interface RoutingRefillCandidate {
+  local_sub2api_account_id: number
+  local_account_name?: string
+  local_account_platform?: string
+  supplier_id?: number
+  supplier_name?: string
+  supplier_group_id?: number
+  supplier_group_name?: string
+  supplier_key_id?: number
+  candidate_status: CandidateStatus | string
+  blocked_reason?: string
+  check_source?: string
+  model_scope?: string
+  model_match_status?: string
+  effective_rate_multiplier: number
+}
+
+export interface RoutingRefillPayload {
+  local_group_id: number
+  platform?: string
+  model_scope?: string
+  max_rate_multiplier?: number
+  limit?: number
+  dry_run?: boolean
+  action_id?: number
+  scheduler_run_id?: string
+  scheduler_step_id?: number
+  reason?: string
+  trigger_type?: string
+  cooldown_seconds?: number
+  confirm_window_seconds?: number
+}
+
+export interface RoutingRefillResult {
+  action: string
+  dry_run: boolean
+  local_group_id: number
+  platform?: string
+  model_scope?: string
+  availability_before?: RoutingGroupAvailability
+  availability_after?: RoutingGroupAvailability
+  candidate?: RoutingRefillCandidate
+  account?: {
+    account_id: number
+    name: string
+    platform: string
+    type: string
+    status: string
+    schedulable: boolean
+    group_ids?: number[]
+  }
+  skipped_reason?: string
+}
+
+export interface RoutingRefillRun {
+  id: number
+  run_id?: string
+  sub2api_instance_id: string
+  local_group_id: number
+  local_group_name: string
+  platform?: string
+  model_scope?: string
+  trigger_type: string
+  dry_run: boolean
+  status: 'previewed' | 'succeeded' | 'skipped' | 'failed' | string
+  reason?: string
+  skipped_reason?: string
+  before_total_accounts: number
+  before_schedulable_accounts: number
+  before_active_api_key_count: number
+  after_total_accounts: number
+  after_schedulable_accounts: number
+  after_active_api_key_count: number
+  selected_supplier_id?: number
+  selected_supplier_group_id?: number
+  selected_supplier_key_id?: number
+  selected_local_account_id?: number
+  selected_effective_rate_multiplier?: number
+  requested_by?: number
+  error_code?: string
+  error_message?: string
+  request_snapshot?: Record<string, unknown>
+  result_snapshot?: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface LocalAccountStateSnapshot {
+  name: string
+  platform: string
+  type: string
+  schedulable: boolean
+  group_ids?: number[]
+}
+
+export interface LocalAccountStateDriftSummary {
+  local_sub2api_account_id: number
+  account_name: string
+  accepted: LocalAccountStateSnapshot
+  observed: LocalAccountStateSnapshot
+  drift_fields: string[]
+  first_detected_at?: string
+  last_checked_at: string
+}
+
+export interface LocalAccountStateSyncResult {
+  checked_accounts: number
+  synced_accounts: number
+  drifted_accounts: number
+  pending_drift_accounts: number
+  items?: LocalAccountStateDriftSummary[]
+}
+
+export interface LocalAccountStateSyncPayload {
+  account_ids?: number[]
+  limit?: number
+}
+
+export type LocalAccountStateResolutionAction = 'accept_observed' | 'restore_accepted'
+
+export interface LocalAccountStateResolutionPayload {
+  account_ids: number[]
+}
+
+export interface LocalAccountStateResolutionResult {
+  action: LocalAccountStateResolutionAction
+  account_ids: number[]
+  resolved_accounts: number
+  restored_accounts: number
+  pending_drift_accounts: number
+  items?: LocalAccountStateDriftSummary[]
+  warnings?: string[]
 }
 
 export interface LocalAccountRuntime {
@@ -1221,14 +1575,79 @@ export interface ProvisionSupplierKeyResponse {
 
 export interface EnsureSupplierKeysPayload {
   sync_provider_name?: boolean
+  allow_partial?: boolean
+  supplier_group_priority_ids?: number[]
   local_account_base_url?: string
   local_account_concurrency?: number
   local_account_priority?: number
+  local_account_group_ids?: number[]
   runtime_status?: SupplierRuntimeStatus
   health_status?: SupplierHealthStatus
   balance_threshold_cents?: number
   balance_cents?: number
   balance_currency?: string
+}
+
+export interface EnsureSupplierKeysPlanItem {
+  supplier_group_id: number
+  external_group_id: string
+  group_name: string
+  provider_family: string
+  rate_multiplier?: number
+  effective_rate_multiplier?: number
+  action: 'create' | 'skipped_existing' | 'blocked' | string
+  priority?: number
+  existing_key_id?: number
+  existing_key_status?: SupplierKeyStatus | string
+  existing_local_sub2api_account_id?: number
+  provider_external_key_id?: string
+  provider_key_name?: string
+  provider_key_status?: string
+  group_key_limit_policy?: SupplierGroupKeyLimitPolicy | string
+  group_key_limit_value?: number
+  group_active_key_count?: number
+  group_remaining_key_slots?: number
+  blocked_reason?: string
+}
+
+export interface EnsureSupplierKeysPlan {
+  supplier_id: number
+  key_limit_policy: SupplierKeyLimitPolicy | string
+  key_limit_value: number
+  active_key_count: number
+  remaining_key_slots: number
+  total: number
+  to_create: number
+  already_satisfied: number
+  blocked: number
+  items: EnsureSupplierKeysPlanItem[]
+}
+
+export interface ImportSupplierProviderKeyProjectionPayload {
+  supplier_group_id: number
+  external_key_id?: string
+}
+
+export interface ImportSupplierProviderKeyProjectionsPayload {
+  items: ImportSupplierProviderKeyProjectionPayload[]
+}
+
+export interface ImportSupplierProviderKeyProjectionResultItem {
+  supplier_group_id: number
+  external_key_id?: string
+  action: 'imported' | 'skipped_existing' | 'failed' | string
+  key?: SupplierKey
+  error_code?: string
+  error_message?: string
+}
+
+export interface ImportSupplierProviderKeyProjectionsResponse {
+  supplier_id: number
+  total: number
+  imported: number
+  skipped: number
+  failed: number
+  items: ImportSupplierProviderKeyProjectionResultItem[]
 }
 
 export interface EnsureSupplierKeyItem {
@@ -1340,6 +1759,13 @@ export interface SubmitProvisionJobResponse {
 
 export interface RepairSupplierKeyBindingPayload {
   local_sub2api_account_id: number
+  manual_secret?: string
+  local_account_platform?: string
+  local_account_name?: string
+  local_account_base_url?: string
+  local_account_priority?: number
+  local_account_rate_multiplier?: number | null
+  local_account_group_ids?: number[]
   runtime_status?: SupplierRuntimeStatus
   health_status?: SupplierHealthStatus
   configured_concurrency?: number
@@ -1348,6 +1774,14 @@ export interface RepairSupplierKeyBindingPayload {
   balance_currency?: string
   supplier_account_identifier?: string
   supplier_account_label?: string
+}
+
+export interface DisableSupplierKeyLocalProjectionPayload {
+  reason?: string
+}
+
+export interface ProviderSupplierKeyOperationPayload {
+  reason?: string
 }
 
 export interface SupplierGroup {
@@ -1370,6 +1804,10 @@ export interface SupplierGroup {
   monthly_limit_usd?: number | null
   allow_image_generation: boolean
   is_private: boolean
+  key_limit_policy: SupplierGroupKeyLimitPolicy | string
+  key_limit_value: number
+  active_key_count: number
+  key_capacity_status: SupplierKeyCapacityStatus | 'inherit' | string
   status: SupplierGroupStatus
   raw_payload?: Record<string, unknown>
   last_seen_at: string
@@ -1402,6 +1840,11 @@ export interface SyncSupplierGroupsResponse {
   events?: SupplierGroupChangeEvent[]
   synced_at: string
   total: number
+}
+
+export interface UpdateSupplierGroupKeyCapacityPayload {
+  key_limit_policy: SupplierGroupKeyLimitPolicy | string
+  key_limit_value?: number
 }
 
 export interface CreateSupplierAccountPayload {
@@ -1911,6 +2354,22 @@ export interface SyncSupplierCostsPayload {
   low_balance_threshold_cents?: number
 }
 
+export type CostReconcileDetailType = 'funding_credit' | 'entitlement_credit' | 'refund_debit' | 'usage_cost'
+
+export interface CostReconcileDetailRepairResult {
+  supplier_id: number
+  snapshot_id: number
+  currency: string
+  detail_type: CostReconcileDetailType | string
+  amount_cents: number
+  funding_transaction?: SupplierFundingTransaction
+  entitlement_transaction?: SupplierEntitlementTransaction
+  usage_cost_line?: SupplierUsageCostLine
+  ledger_entry?: SupplierCostLedgerEntry
+  before_snapshot?: SupplierCostSnapshot
+  after_snapshot?: SupplierCostSnapshot
+}
+
 export type SyncSupplierCostsResponse = SubmitProvisionJobResponse
 
 export interface SupplierCostSyncResultSnapshot {
@@ -1987,7 +2446,7 @@ export interface LocalAccountUsageSummary {
 export interface ExtensionTask {
   id: number
   supplier_id: number
-  type: 'fetch_rates' | 'fetch_groups' | 'fetch_balance' | 'fetch_usage_costs' | 'reconcile_supplier_costs' | 'fetch_health' | 'check_supplier_channels' | 'capture_supplier_session' | 'register_supplier_account'
+  type: 'fetch_rates' | 'fetch_groups' | 'fetch_balance' | 'fetch_usage_costs' | 'reconcile_supplier_costs' | 'fetch_health' | 'check_supplier_channels' | 'capture_supplier_session' | 'register_supplier_account' | 'routing_capacity_watch'
   schedule_key?: string
   status: 'pending' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled'
   priority: number
@@ -2469,6 +2928,18 @@ export interface SchedulerCleanupResult {
   deleted_attempts: number
 }
 
+export interface SchedulerCandidateSummary {
+  candidate_status: CandidateStatus | string
+  blocked_reason?: string
+  check_source?: string
+  available_count: number
+  blocked_count: number
+  balance_blocked_count: number
+  capacity_blocked_count: number
+  unknown_count: number
+  lowest_effective_rate_multiplier?: number
+}
+
 export interface SchedulerSupplierStatus {
   supplier_id: number
   supplier_name: string
@@ -2487,6 +2958,7 @@ export interface SchedulerSupplierStatus {
   schedule_status: string
   last_error?: string
   recommended_action?: string
+  candidate_summary?: SchedulerCandidateSummary
 }
 
 export interface SchedulerSupplierChecklistItem {
@@ -2505,6 +2977,7 @@ export interface SchedulerSupplierChecklist {
   supplier_type: string
   completion_percent: number
   recommended_action?: string
+  candidate_summary?: SchedulerCandidateSummary
   items: SchedulerSupplierChecklistItem[]
 }
 
@@ -2530,6 +3003,11 @@ export interface SchedulerSettings {
   channel_check_daily_budget_tokens: number
   first_token_slow_threshold_ms: number
   total_latency_slow_threshold_ms: number
+  routing_refill_auto_execute_enabled: boolean
+  routing_refill_low_capacity_threshold: number
+  routing_refill_cooldown_seconds: number
+  routing_refill_confirm_window_seconds: number
+  routing_refill_max_rate_multiplier: number
   default_enabled_task_types: string[]
   high_cost_task_types: string[]
 }
@@ -2546,7 +3024,7 @@ export interface ActionRecommendation {
   id: number
   supplier_id: number
   target_supplier_id?: number | null
-  type: 'switch_supplier' | 'pause_supplier' | 'degrade_supplier' | 'increase_weight' | 'recharge_supplier' | 'investigate_profit' | 'review_credential'
+  type: 'switch_supplier' | 'pause_supplier' | 'degrade_supplier' | 'increase_weight' | 'recharge_supplier' | 'investigate_profit' | 'review_credential' | 'routing_refill' | 'local_account_schedule_disable' | 'local_account_manual_ops' | 'supplier_cost_reconcile_adjustment'
   severity: 'info' | 'warning' | 'critical'
   status: 'open' | 'acknowledged' | 'approved' | 'executed' | 'rejected'
   reason_code: string
@@ -2569,6 +3047,12 @@ export interface ActionExecution {
   response_payload?: Record<string, unknown>
   error_message?: string
   operator_user_id?: number
+  scheduler_run_id?: string
+  scheduler_step_id?: number
+  idempotency_key_hash?: string
+  idempotency_replayed?: boolean
+  before_snapshot?: Record<string, unknown>
+  after_snapshot?: Record<string, unknown>
   created_at: string
   updated_at: string
 }
@@ -2648,6 +3132,47 @@ export interface SupplierSignal {
   balance_cents: number
   currency?: string
   effective_cost_cents: number
+  key_limit_policy?: SupplierKeyLimitPolicy | string
+  key_limit_value?: number
+  active_key_count?: number
+  key_capacity_status?: SupplierKeyCapacityStatus | string
+}
+
+export interface LocalGroupCapacitySignal {
+  local_group_id: number
+  local_group_name?: string
+  platform?: string
+  total_accounts?: number
+  schedulable_accounts?: number
+  active_api_key_count?: number
+  rate_multiplier?: number
+  low_capacity_threshold?: number
+  best_candidate_supplier_id?: number
+  best_candidate_supplier_group_id?: number
+  best_candidate_local_account_id?: number
+  best_candidate_rate_multiplier?: number
+  best_candidate_check_source?: string
+  best_candidate_supplier_name?: string
+  best_candidate_supplier_group_name?: string
+}
+
+export interface LocalAccountScheduleSignal {
+  supplier_id?: number
+  supplier_group_id?: number
+  local_sub2api_account_id: number
+  local_account_name?: string
+  supplier_name?: string
+  supplier_group_name?: string
+  local_group_ids?: number[]
+  local_group_names?: string[]
+  local_account_schedulable?: boolean
+  candidate_status?: string
+  blocked_reason?: string
+  check_source?: string
+  balance_status?: string
+  key_capacity_status?: string
+  channel_check_status?: string
+  effective_rate_multiplier?: number
 }
 
 export type MailVerificationProvider = 'gmail'
@@ -2755,7 +3280,7 @@ export interface SendTestMailVerificationCodePayload {
 }
 
 export type AdminPlusSystemLogLevel = '' | 'info' | 'warn' | 'error'
-export type AdminPlusSystemLogComponent = '' | 'admin_plus.login' | 'admin_plus.balance' | 'admin_plus.mail' | 'admin_plus.registration' | 'admin_plus.extension'
+export type AdminPlusSystemLogComponent = '' | 'admin_plus.login' | 'admin_plus.balance' | 'admin_plus.mail' | 'admin_plus.registration' | 'admin_plus.extension' | 'admin_plus.sub2api'
 
 export interface AdminPlusSystemLog {
   id: number
@@ -2986,6 +3511,11 @@ export async function listSupplierGroups(supplierId: number, params?: { status?:
   return data
 }
 
+export async function listAllSupplierGroups(params?: { supplier_id?: number; status?: SupplierGroupStatus | ''; q?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<SupplierGroup>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<SupplierGroup>>('/admin-plus/supplier-groups', { params })
+  return data
+}
+
 export async function listSupplierGroupChangeEvents(supplierId: number, params?: { direction?: SupplierGroupChangeEvent['direction'] | ''; low_rate?: boolean } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<SupplierGroupChangeEvent>> {
   const { data } = await apiClient.get<AdminPlusListResponse<SupplierGroupChangeEvent>>(`/admin-plus/suppliers/${supplierId}/groups/events`, { params })
   return data
@@ -2995,6 +3525,11 @@ export async function syncSupplierGroups(supplierId: number): Promise<SubmitProv
   const { data } = await apiClient.post<SubmitProvisionJobResponse>(`/admin-plus/suppliers/${supplierId}/groups/sync`, {}, {
     headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-groups-sync') }
   })
+  return data
+}
+
+export async function updateSupplierGroupKeyCapacity(supplierId: number, groupId: number, payload: UpdateSupplierGroupKeyCapacityPayload): Promise<SupplierGroup> {
+  const { data } = await apiClient.put<SupplierGroup>(`/admin-plus/suppliers/${supplierId}/groups/${groupId}/key-capacity`, payload)
   return data
 }
 
@@ -3017,6 +3552,25 @@ export async function ensureSupplierKeys(supplierId: number, payload?: EnsureSup
   return data
 }
 
+export async function planEnsureSupplierKeys(supplierId: number, payload?: EnsureSupplierKeysPayload): Promise<EnsureSupplierKeysPlan> {
+  const { data } = await apiClient.post<EnsureSupplierKeysPlan>(`/admin-plus/suppliers/${supplierId}/keys/ensure-all-plan`, payload || {})
+  return data
+}
+
+export async function importSupplierProviderKeyProjection(supplierId: number, payload: ImportSupplierProviderKeyProjectionPayload): Promise<SupplierKey> {
+  const { data } = await apiClient.post<SupplierKey>(`/admin-plus/suppliers/${supplierId}/keys/import-provider-projection`, payload, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-key-import-provider-projection') }
+  })
+  return data
+}
+
+export async function importSupplierProviderKeyProjections(supplierId: number, payload: ImportSupplierProviderKeyProjectionsPayload): Promise<ImportSupplierProviderKeyProjectionsResponse> {
+  const { data } = await apiClient.post<ImportSupplierProviderKeyProjectionsResponse>(`/admin-plus/suppliers/${supplierId}/keys/import-provider-projections`, payload, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-key-import-provider-projections') }
+  })
+  return data
+}
+
 export async function standardizeSupplierKeyNames(supplierId: number, payload?: StandardizeSupplierKeyNamesPayload): Promise<StandardizeSupplierKeyNamesResponse> {
   const { data } = await apiClient.post<StandardizeSupplierKeyNamesResponse>(`/admin-plus/suppliers/${supplierId}/keys/standardize-names`, payload || {}, {
     headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-key-standardize-names') }
@@ -3027,6 +3581,27 @@ export async function standardizeSupplierKeyNames(supplierId: number, payload?: 
 export async function repairSupplierKeyBinding(supplierId: number, keyId: number, payload: RepairSupplierKeyBindingPayload): Promise<ProvisionSupplierKeyResponse> {
   const { data } = await apiClient.post<ProvisionSupplierKeyResponse>(`/admin-plus/suppliers/${supplierId}/keys/${keyId}/repair-binding`, payload, {
     headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-key-repair') }
+  })
+  return data
+}
+
+export async function disableSupplierKeyLocalProjection(supplierId: number, keyId: number, payload?: DisableSupplierKeyLocalProjectionPayload): Promise<SupplierKey> {
+  const { data } = await apiClient.post<SupplierKey>(`/admin-plus/suppliers/${supplierId}/keys/${keyId}/disable-local-projection`, payload || {}, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-key-disable-local-projection') }
+  })
+  return data
+}
+
+export async function disableSupplierProviderKey(supplierId: number, keyId: number, payload?: ProviderSupplierKeyOperationPayload): Promise<SupplierKey> {
+  const { data } = await apiClient.post<SupplierKey>(`/admin-plus/suppliers/${supplierId}/keys/${keyId}/disable-provider`, payload || {}, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-key-disable-provider') }
+  })
+  return data
+}
+
+export async function deleteSupplierProviderKey(supplierId: number, keyId: number, payload?: ProviderSupplierKeyOperationPayload): Promise<SupplierKey> {
+  const { data } = await apiClient.post<SupplierKey>(`/admin-plus/suppliers/${supplierId}/keys/${keyId}/delete-provider`, payload || {}, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('supplier-key-delete-provider') }
   })
   return data
 }
@@ -3050,6 +3625,84 @@ export async function listSupplierProvisionJobs(params?: { supplier_id?: number;
 
 export async function listLocalSub2APIAccounts(params?: { q?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalSub2APIAccount>> {
   const { data } = await apiClient.get<AdminPlusListResponse<LocalSub2APIAccount>>('/admin-plus/sub2api/accounts', { params })
+  return data
+}
+
+export async function listLocalSub2APIGroups(params?: AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalSub2APIGroup>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<LocalSub2APIGroup>>('/admin-plus/sub2api/groups', { params })
+  return data
+}
+
+export async function listLocalAccountOps(params?: {
+  q?: string
+  supplier_id?: number
+  local_group_id?: number
+  supplier_group_id?: number
+  model_scope?: string
+  max_rate_multiplier?: number
+  balance_status?: LocalAccountOpsBalanceStatus | string
+  channel_check_status?: SupplierChannelProbeStatus | string
+  schedulable?: boolean
+} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<LocalAccountOpsRow>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<LocalAccountOpsRow>>('/admin-plus/sub2api/local-account-ops', { params })
+  return data
+}
+
+export async function previewLocalAccountOpsAction(payload: LocalAccountOpsActionPayload): Promise<LocalAccountOpsActionResult> {
+  const { data } = await apiClient.post<LocalAccountOpsActionResult>('/admin-plus/sub2api/local-account-ops/preview', payload)
+  return data
+}
+
+export async function applyLocalAccountOpsAction(payload: LocalAccountOpsActionPayload): Promise<LocalAccountOpsActionResult> {
+  const { data } = await apiClient.post<LocalAccountOpsActionResult>('/admin-plus/sub2api/local-account-ops/apply', payload, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('local-account-ops-apply') }
+  })
+  return data
+}
+
+export async function refillLocalGroup(payload: RoutingRefillPayload): Promise<RoutingRefillResult> {
+  const { data } = await apiClient.post<RoutingRefillResult>('/admin-plus/sub2api/routing/refill-local-group', payload, {
+    headers: payload.dry_run ? undefined : { 'Idempotency-Key': createAdminPlusIdempotencyKey('routing-refill-local-group') }
+  })
+  return data
+}
+
+export async function listRoutingRefillRuns(params?: { local_group_id?: number; status?: string } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<RoutingRefillRun>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<RoutingRefillRun>>('/admin-plus/sub2api/routing/refill-runs', { params })
+  return data
+}
+
+export async function listRoutingImpactAPIKeys(params?: { local_group_id?: number } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<RoutingImpactedAPIKey>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<RoutingImpactedAPIKey>>('/admin-plus/sub2api/routing/group-impact/api-keys', { params })
+  return data
+}
+
+export async function listRoutingImpactFailureRequests(params?: { local_group_id?: number } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<RoutingFailureRequest>> {
+  const { data } = await apiClient.get<AdminPlusListResponse<RoutingFailureRequest>>('/admin-plus/sub2api/routing/group-impact/failures', { params })
+  return data
+}
+
+export async function getRoutingFailureSensitiveDetail(id: number, payload: { local_group_id: number; reason: string; fields?: string[] }): Promise<RoutingSensitiveFailureDetail> {
+  const { data } = await apiClient.post<RoutingSensitiveFailureDetail>(`/admin-plus/sub2api/routing/group-impact/failures/${id}/sensitive-detail`, payload)
+  return data
+}
+
+export async function syncLocalAccountState(payload: LocalAccountStateSyncPayload = {}): Promise<LocalAccountStateSyncResult> {
+  const { data } = await apiClient.post<LocalAccountStateSyncResult>('/admin-plus/sub2api/local-account-ops/sync-local-state', payload)
+  return data
+}
+
+export async function acceptLocalAccountState(payload: LocalAccountStateResolutionPayload): Promise<LocalAccountStateResolutionResult> {
+  const { data } = await apiClient.post<LocalAccountStateResolutionResult>('/admin-plus/sub2api/local-account-ops/accept-local-state', payload, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('local-account-state-accept') }
+  })
+  return data
+}
+
+export async function restoreLocalAccountState(payload: LocalAccountStateResolutionPayload): Promise<LocalAccountStateResolutionResult> {
+  const { data } = await apiClient.post<LocalAccountStateResolutionResult>('/admin-plus/sub2api/local-account-ops/restore-local-state', payload, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('local-account-state-restore') }
+  })
   return data
 }
 
@@ -3291,6 +3944,45 @@ export async function listSupplierEntitlementTransactions(supplierId: number, pa
 
 export async function listSupplierCostLedger(supplierId: number, params?: AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<SupplierCostLedgerEntry>>(`/admin-plus/suppliers/${supplierId}/cost-ledger`, { params })
+  return data
+}
+
+export async function applyCostReconcileAdjustment(recommendationId: number, payload: {
+  snapshot_id?: number
+  adjustment_amount_cents?: number
+  reason?: string
+  occurred_at?: string
+  scheduler_run_id?: string
+  scheduler_step_id?: number
+}): Promise<{
+  supplier_id: number
+  snapshot_id: number
+  currency: string
+  adjustment_amount_cents: number
+  ledger_entry?: SupplierCostLedgerEntry
+  before_snapshot?: SupplierCostSnapshot
+  after_snapshot?: SupplierCostSnapshot
+}> {
+  const { data } = await apiClient.post(`/admin-plus/actions/recommendations/${recommendationId}/cost-reconcile-adjustment`, payload, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('cost-reconcile-adjustment') }
+  })
+  return data
+}
+
+export async function applyCostReconcileDetailRepair(recommendationId: number, payload: {
+  snapshot_id?: number
+  detail_type: CostReconcileDetailType | string
+  amount_cents?: number
+  external_id?: string
+  model?: string
+  reason?: string
+  occurred_at?: string
+  scheduler_run_id?: string
+  scheduler_step_id?: number
+}): Promise<CostReconcileDetailRepairResult> {
+  const { data } = await apiClient.post<CostReconcileDetailRepairResult>(`/admin-plus/actions/recommendations/${recommendationId}/cost-reconcile-detail-repair`, payload, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('cost-reconcile-detail-repair') }
+  })
   return data
 }
 
@@ -3742,16 +4434,39 @@ export async function bulkAddDiscoveryCandidatesToCatalogStream(
 
 export async function generateActions(payload: {
   suppliers: SupplierSignal[]
+  candidate_evaluations?: Array<{
+    supplier_id?: number
+    supplier_group_id?: number
+    local_sub2api_account_id?: number
+    candidate_status?: string
+    blocked_reason?: string
+    check_source?: string
+    balance_status?: string
+    key_capacity_status?: string
+    effective_rate_multiplier?: number
+  }>
+  local_group_capacity?: LocalGroupCapacitySignal[]
+  local_account_schedule?: LocalAccountScheduleSignal[]
   balance_events?: BalanceEvent[]
   health_events?: HealthEvent[]
   kanban_events?: KanbanEvent[]
+  cost_snapshots?: SupplierCostSnapshot[]
   min_profit_margin?: number
 }) {
   const { data } = await apiClient.post<AdminPlusListResponse<ActionRecommendation>>('/admin-plus/actions/generate', payload)
   return data
 }
 
-export async function listActionRecommendations(params?: { supplier_id?: number; status?: string; severity?: string; type?: string } & AdminPlusPaginationParams) {
+export async function listActionRecommendations(params?: {
+  recommendation_id?: number
+  supplier_id?: number
+  status?: string
+  severity?: string
+  type?: string
+  signal?: string
+  local_group_id?: number
+  local_sub2api_account_id?: number
+} & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<ActionRecommendation>>('/admin-plus/actions/recommendations', { params })
   return data
 }
@@ -3761,13 +4476,27 @@ export async function updateActionRecommendationStatus(id: number, status: Actio
   return data
 }
 
-export async function executeActionRecommendation(id: number, payload?: { operator_user_id?: number; request_payload?: Record<string, unknown> }): Promise<ActionExecution> {
+export async function executeActionRecommendation(id: number, payload?: { operator_user_id?: number; scheduler_run_id?: string; scheduler_step_id?: number; request_payload?: Record<string, unknown> }): Promise<ActionExecution> {
   const { data } = await apiClient.post<ActionExecution>(`/admin-plus/actions/recommendations/${id}/execute`, payload || {})
   return data
 }
 
 export async function listActionExecutions(id: number, params?: AdminPlusPaginationParams): Promise<AdminPlusListResponse<ActionExecution>> {
   const { data } = await apiClient.get<AdminPlusListResponse<ActionExecution>>(`/admin-plus/actions/recommendations/${id}/executions`, { params })
+  return data
+}
+
+export async function retryActionExecution(recommendationId: number, executionId: number): Promise<ActionExecution> {
+  const { data } = await apiClient.post<ActionExecution>(`/admin-plus/actions/recommendations/${recommendationId}/executions/${executionId}/retry`, {}, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('action-execution-retry') }
+  })
+  return data
+}
+
+export async function rollbackActionExecution(recommendationId: number, executionId: number): Promise<ActionExecution> {
+  const { data } = await apiClient.post<ActionExecution>(`/admin-plus/actions/recommendations/${recommendationId}/executions/${executionId}/rollback`, {}, {
+    headers: { 'Idempotency-Key': createAdminPlusIdempotencyKey('action-execution-rollback') }
+  })
   return data
 }
 
@@ -4142,16 +4871,29 @@ export const adminPlusAPI = {
   listSupplierGroups,
   listSupplierGroupChangeEvents,
   syncSupplierGroups,
+  updateSupplierGroupKeyCapacity,
   listSupplierKeys,
   ensureSupplierKeys,
+  planEnsureSupplierKeys,
+  importSupplierProviderKeyProjection,
+  importSupplierProviderKeyProjections,
   provisionSupplierKey,
   standardizeSupplierKeyNames,
   repairSupplierKeyBinding,
+  disableSupplierKeyLocalProjection,
+  disableSupplierProviderKey,
+  deleteSupplierProviderKey,
   listLocalSub2APIAccounts,
+  listLocalSub2APIGroups,
   listLocalAccountRuntime,
   listLocalAccountTestModels,
   localAccountTestURL,
   localAccountPurityStreamURL,
+  refillLocalGroup,
+  listRoutingRefillRuns,
+  listRoutingImpactAPIKeys,
+  listRoutingImpactFailureRequests,
+  getRoutingFailureSensitiveDetail,
   listLocalUsageLines,
   listLocalUsageSummary,
   listSupplierAccounts,
@@ -4186,6 +4928,12 @@ export const adminPlusAPI = {
   listSupplierFundingTransactions,
   listSupplierEntitlementTransactions,
   listSupplierCostLedger,
+  listLocalAccountOps,
+  previewLocalAccountOpsAction,
+  applyLocalAccountOpsAction,
+  syncLocalAccountState,
+  acceptLocalAccountState,
+  restoreLocalAccountState,
   createExtensionTask,
   listExtensionTasks,
   getExtensionManifest,
@@ -4241,7 +4989,11 @@ export const adminPlusAPI = {
   listActionRecommendations,
   updateActionRecommendationStatus,
   executeActionRecommendation,
+  applyCostReconcileAdjustment,
+  applyCostReconcileDetailRepair,
   listActionExecutions,
+  retryActionExecution,
+  rollbackActionExecution,
   getNotificationCenterStatus,
   getNotificationSettings,
   updateNotificationSettings,

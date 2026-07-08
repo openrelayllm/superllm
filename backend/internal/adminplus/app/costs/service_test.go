@@ -7,6 +7,7 @@ import (
 	"time"
 
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
+	usagecostsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -277,6 +278,195 @@ func TestServiceSyncAppliesSupplierRechargeMultiplierToFundingCost(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, ledger, 1)
 	require.Equal(t, int64(1000), ledger[0].ActualPaymentCents)
+}
+
+func TestServiceApplyReconcileAdjustmentRecordsManualLedgerEntry(t *testing.T) {
+	repo := NewMemoryRepository()
+	now := time.Date(2026, 7, 9, 10, 0, 0, 0, time.UTC)
+	_, _, err := repo.UpsertLedgerEntry(context.Background(), &adminplusdomain.SupplierCostLedgerEntry{
+		SupplierID:         7,
+		ProviderType:       "sub2api",
+		EntryType:          "funding_credit",
+		SourceType:         "funding_transaction",
+		SourceID:           11,
+		SourceExternalID:   "order-11",
+		Currency:           "USD",
+		AmountCents:        10000,
+		CashAmountCents:    10000,
+		ActualPaymentCents: 10000,
+		OccurredAt:         now.Add(-time.Hour),
+	})
+	require.NoError(t, err)
+	before, err := repo.RefreshSnapshot(context.Background(), 7, "USD", now.Add(-30*time.Minute))
+	require.NoError(t, err)
+	actual := int64(12000)
+	delta := int64(2000)
+	repo.snapshots[before.ID].ActualBalanceCents = &actual
+	repo.snapshots[before.ID].BalanceDeltaCents = &delta
+	svc := NewService(repo)
+	svc.now = func() time.Time { return now }
+
+	result, err := svc.ApplyReconcileAdjustment(context.Background(), ReconcileAdjustmentInput{
+		SupplierID:             7,
+		SnapshotID:             before.ID,
+		ActionRecommendationID: 99,
+		AdjustmentAmountCents:  ptrInt64(2000),
+		Reason:                 "reviewed missing balance credit",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2000), result.AdjustmentAmountCents)
+	require.NotNil(t, result.LedgerEntry)
+	require.Equal(t, "manual_adjustment", result.LedgerEntry.EntryType)
+	require.Equal(t, "action_recommendation", result.LedgerEntry.SourceType)
+	require.Equal(t, int64(99), result.LedgerEntry.SourceID)
+	require.Equal(t, int64(12000), result.AfterSnapshot.ExpectedBalanceCents)
+	require.Equal(t, int64(2000), result.AfterSnapshot.AdjustmentAmountCents)
+	ledger, err := svc.ListLedgerEntries(context.Background(), LedgerFilter{SupplierID: 7, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, ledger, 2)
+}
+
+func TestServiceApplyReconcileDetailRepairRecordsFundingCredit(t *testing.T) {
+	repo := NewMemoryRepository()
+	now := time.Date(2026, 7, 9, 11, 0, 0, 0, time.UTC)
+	before := seedReconcileSnapshot(t, repo, now, 10000, 12500, 2500)
+	svc := NewService(repo)
+	svc.now = func() time.Time { return now }
+
+	result, err := svc.ApplyReconcileDetailRepair(context.Background(), ReconcileDetailRepairInput{
+		SupplierID:             7,
+		SnapshotID:             before.ID,
+		ActionRecommendationID: 101,
+		DetailType:             "funding_credit",
+		Reason:                 "missing recharge",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "funding_credit", result.DetailType)
+	require.Equal(t, int64(2500), result.AmountCents)
+	require.NotNil(t, result.FundingTransaction)
+	require.Equal(t, "COMPLETED", result.FundingTransaction.Status)
+	require.NotNil(t, result.LedgerEntry)
+	require.Equal(t, "funding_credit", result.LedgerEntry.EntryType)
+	require.Equal(t, int64(12500), result.AfterSnapshot.ExpectedBalanceCents)
+	items, err := svc.ListFundingTransactions(context.Background(), TransactionFilter{SupplierID: 7, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+}
+
+func TestServiceApplyReconcileDetailRepairRecordsEntitlementCredit(t *testing.T) {
+	repo := NewMemoryRepository()
+	now := time.Date(2026, 7, 9, 11, 15, 0, 0, time.UTC)
+	before := seedReconcileSnapshot(t, repo, now, 10000, 13000, 3000)
+	svc := NewService(repo)
+	svc.now = func() time.Time { return now }
+
+	result, err := svc.ApplyReconcileDetailRepair(context.Background(), ReconcileDetailRepairInput{
+		SupplierID:             7,
+		SnapshotID:             before.ID,
+		ActionRecommendationID: 102,
+		DetailType:             "entitlement_credit",
+		ExternalID:             "redeem-manual-102",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "entitlement_credit", result.DetailType)
+	require.NotNil(t, result.EntitlementTransaction)
+	require.Equal(t, "manual_redeem", result.EntitlementTransaction.SourceFamily)
+	require.NotNil(t, result.LedgerEntry)
+	require.Equal(t, "entitlement_credit", result.LedgerEntry.EntryType)
+	require.Equal(t, int64(13000), result.AfterSnapshot.ExpectedBalanceCents)
+	items, err := svc.ListEntitlementTransactions(context.Background(), TransactionFilter{SupplierID: 7, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+}
+
+func TestServiceApplyReconcileDetailRepairRecordsRefundDebit(t *testing.T) {
+	repo := NewMemoryRepository()
+	now := time.Date(2026, 7, 9, 11, 30, 0, 0, time.UTC)
+	before := seedReconcileSnapshot(t, repo, now, 10000, 8000, -2000)
+	svc := NewService(repo)
+	svc.now = func() time.Time { return now }
+
+	result, err := svc.ApplyReconcileDetailRepair(context.Background(), ReconcileDetailRepairInput{
+		SupplierID:             7,
+		SnapshotID:             before.ID,
+		ActionRecommendationID: 103,
+		DetailType:             "refund_debit",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "refund_debit", result.DetailType)
+	require.NotNil(t, result.FundingTransaction)
+	require.Equal(t, "REFUNDED", result.FundingTransaction.Status)
+	require.NotNil(t, result.LedgerEntry)
+	require.Equal(t, "refund_debit", result.LedgerEntry.EntryType)
+	require.Equal(t, int64(-2000), result.LedgerEntry.AmountCents)
+	require.Equal(t, int64(8000), result.AfterSnapshot.ExpectedBalanceCents)
+}
+
+func TestServiceApplyReconcileDetailRepairImportsUsageCost(t *testing.T) {
+	repo := NewMemoryRepository()
+	now := time.Date(2026, 7, 9, 11, 45, 0, 0, time.UTC)
+	before := seedReconcileSnapshot(t, repo, now, 10000, 9000, -1000)
+	importer := &stubCostUsageImporter{}
+	svc := NewService(repo)
+	svc.now = func() time.Time { return now }
+	svc.usageCostImporter = importer
+
+	result, err := svc.ApplyReconcileDetailRepair(context.Background(), ReconcileDetailRepairInput{
+		SupplierID:             7,
+		SnapshotID:             before.ID,
+		ActionRecommendationID: 104,
+		DetailType:             "usage_cost",
+		Model:                  "gpt-4.1-mini",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "usage_cost", result.DetailType)
+	require.NotNil(t, result.UsageCostLine)
+	require.Equal(t, int64(1000), result.UsageCostLine.CostCents)
+	require.Equal(t, "manual_reconcile", result.UsageCostLine.Source)
+	require.Len(t, importer.inputs, 1)
+	require.Equal(t, "gpt-4.1-mini", importer.inputs[0].Model)
+}
+
+func TestServiceApplyReconcileDetailRepairRejectsDirectionMismatch(t *testing.T) {
+	repo := NewMemoryRepository()
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	before := seedReconcileSnapshot(t, repo, now, 10000, 12500, 2500)
+	svc := NewService(repo)
+	svc.now = func() time.Time { return now }
+
+	_, err := svc.ApplyReconcileDetailRepair(context.Background(), ReconcileDetailRepairInput{
+		SupplierID:             7,
+		SnapshotID:             before.ID,
+		ActionRecommendationID: 105,
+		DetailType:             "usage_cost",
+	})
+
+	require.Error(t, err)
+	require.Equal(t, "COST_RECONCILE_DETAIL_DIRECTION_MISMATCH", infraerrors.Reason(err))
+}
+
+func TestServiceApplyReconcileDetailRepairRejectsAmountMismatch(t *testing.T) {
+	repo := NewMemoryRepository()
+	now := time.Date(2026, 7, 9, 12, 15, 0, 0, time.UTC)
+	before := seedReconcileSnapshot(t, repo, now, 10000, 12500, 2500)
+	svc := NewService(repo)
+	svc.now = func() time.Time { return now }
+
+	_, err := svc.ApplyReconcileDetailRepair(context.Background(), ReconcileDetailRepairInput{
+		SupplierID:             7,
+		SnapshotID:             before.ID,
+		ActionRecommendationID: 106,
+		DetailType:             "funding_credit",
+		AmountCents:            ptrInt64(1000),
+	})
+
+	require.Error(t, err)
+	require.Equal(t, "COST_RECONCILE_DETAIL_AMOUNT_MISMATCH", infraerrors.Reason(err))
 }
 
 func TestServiceSyncDerivesRechargeMultiplierFromFundingCashAmount(t *testing.T) {
@@ -656,6 +846,30 @@ func (s *stubCostBalanceSyncer) SyncFromSession(_ context.Context, in balancesap
 	return s.result, nil
 }
 
+type stubCostUsageImporter struct {
+	inputs []usagecostsapp.ImportUsageCostLineInput
+}
+
+func (s *stubCostUsageImporter) ImportUsageCostLines(_ context.Context, lines []usagecostsapp.ImportUsageCostLineInput) ([]*adminplusdomain.SupplierUsageCostLine, error) {
+	s.inputs = append(s.inputs, lines...)
+	items := make([]*adminplusdomain.SupplierUsageCostLine, 0, len(lines))
+	for i, line := range lines {
+		items = append(items, &adminplusdomain.SupplierUsageCostLine{
+			ID:                  int64(i + 1),
+			SupplierID:          line.SupplierID,
+			Source:              line.Source,
+			ExternalUsageCostID: line.ExternalUsageCostID,
+			Model:               line.Model,
+			Endpoint:            line.Endpoint,
+			Currency:            line.Currency,
+			CostCents:           line.CostCents,
+			StartedAt:           line.StartedAt,
+			RawPayload:          line.RawPayload,
+		})
+	}
+	return items, nil
+}
+
 type stubCostSupplierLookup struct {
 	supplier *adminplusdomain.Supplier
 }
@@ -701,6 +915,29 @@ func ptrInt64(value int64) *int64 {
 	return &value
 }
 
+func seedReconcileSnapshot(t *testing.T, repo *MemoryRepository, now time.Time, expected int64, actual int64, delta int64) *adminplusdomain.SupplierCostSnapshot {
+	t.Helper()
+	_, _, err := repo.UpsertLedgerEntry(context.Background(), &adminplusdomain.SupplierCostLedgerEntry{
+		SupplierID:         7,
+		ProviderType:       "sub2api",
+		EntryType:          "funding_credit",
+		SourceType:         "funding_transaction",
+		SourceID:           1,
+		SourceExternalID:   "seed-funding",
+		Currency:           "USD",
+		AmountCents:        expected,
+		CashAmountCents:    expected,
+		ActualPaymentCents: expected,
+		OccurredAt:         now.Add(-time.Hour),
+	})
+	require.NoError(t, err)
+	before, err := repo.RefreshSnapshot(context.Background(), 7, "USD", now.Add(-30*time.Minute))
+	require.NoError(t, err)
+	repo.snapshots[before.ID].ActualBalanceCents = &actual
+	repo.snapshots[before.ID].BalanceDeltaCents = &delta
+	return before
+}
+
 func findEntitlementByExternalID(t *testing.T, items []*adminplusdomain.SupplierEntitlementTransaction, externalID string) *adminplusdomain.SupplierEntitlementTransaction {
 	t.Helper()
 	for _, item := range items {
@@ -717,5 +954,6 @@ var _ Repository = (*anomalyCostRepository)(nil)
 var _ SessionReader = (*stubCostSessionReader)(nil)
 var _ ports.SessionFundingAdapter = (*stubCostFundingReader)(nil)
 var _ ports.SessionEntitlementAdapter = (*stubCostEntitlementReader)(nil)
+var _ UsageCostImporter = (*stubCostUsageImporter)(nil)
 var _ SupplierLookup = (*stubCostSupplierLookup)(nil)
 var _ Notifier = (*stubCostNotifier)(nil)

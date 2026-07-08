@@ -181,6 +181,32 @@ func (r *Router) CreateKey(ctx context.Context, in ports.SessionProbeInput, requ
 	return r.sub2api.CreateKey(ctx, in, request)
 }
 
+func (r *Router) ListKeys(ctx context.Context, in ports.SessionProbeInput, request ports.ListProviderKeysInput) (*ports.ListProviderKeysResult, error) {
+	if providerTypeFromBundle(in.Bundle) == "new_api" {
+		if r == nil || r.newapi == nil {
+			return nil, internalError()
+		}
+		return r.newapi.ListKeys(ctx, in, request)
+	}
+	if r == nil || r.sub2api == nil {
+		return nil, internalError()
+	}
+	return r.sub2api.ListKeys(ctx, in, request)
+}
+
+func (r *Router) ReadKeyCapacity(ctx context.Context, in ports.SessionProbeInput, request ports.ReadProviderKeyCapacityInput) (*ports.ProviderKeyCapacityResult, error) {
+	if providerTypeFromBundle(in.Bundle) == "new_api" {
+		if r == nil || r.newapi == nil {
+			return nil, internalError()
+		}
+		return r.newapi.ReadKeyCapacity(ctx, in, request)
+	}
+	if r == nil || r.sub2api == nil {
+		return nil, internalError()
+	}
+	return r.sub2api.ReadKeyCapacity(ctx, in, request)
+}
+
 func (r *Router) RenameKey(ctx context.Context, in ports.SessionProbeInput, request ports.RenameProviderKeyInput) (*ports.ProviderKeyResult, error) {
 	if providerTypeFromBundle(in.Bundle) == "new_api" {
 		if r == nil || r.newapi == nil {
@@ -192,6 +218,32 @@ func (r *Router) RenameKey(ctx context.Context, in ports.SessionProbeInput, requ
 		return nil, internalError()
 	}
 	return r.sub2api.RenameKey(ctx, in, request)
+}
+
+func (r *Router) DisableKey(ctx context.Context, in ports.SessionProbeInput, request ports.DisableProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	if providerTypeFromBundle(in.Bundle) == "new_api" {
+		if r == nil || r.newapi == nil {
+			return nil, internalError()
+		}
+		return r.newapi.DisableKey(ctx, in, request)
+	}
+	if r == nil || r.sub2api == nil {
+		return nil, internalError()
+	}
+	return r.sub2api.DisableKey(ctx, in, request)
+}
+
+func (r *Router) DeleteKey(ctx context.Context, in ports.SessionProbeInput, request ports.DeleteProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	if providerTypeFromBundle(in.Bundle) == "new_api" {
+		if r == nil || r.newapi == nil {
+			return nil, internalError()
+		}
+		return r.newapi.DeleteKey(ctx, in, request)
+	}
+	if r == nil || r.sub2api == nil {
+		return nil, internalError()
+	}
+	return r.sub2api.DeleteKey(ctx, in, request)
 }
 
 func (r *Router) ReadChannelMonitors(ctx context.Context, in ports.SessionProbeInput) (*ports.ReadChannelMonitorsResult, error) {

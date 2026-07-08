@@ -122,6 +122,19 @@ type SupplierOperationHint struct {
 	Description string `json:"description,omitempty"`
 }
 
+const (
+	SupplierKeyLimitPolicyUnknown     = "unknown"
+	SupplierKeyLimitPolicyUnlimited   = "unlimited"
+	SupplierKeyLimitPolicyLimited     = "limited"
+	SupplierKeyLimitPolicyUnsupported = "unsupported"
+
+	SupplierKeyCapacityAvailable   = "available"
+	SupplierKeyCapacityLimited     = "limited"
+	SupplierKeyCapacityExhausted   = "exhausted"
+	SupplierKeyCapacityUnknown     = "unknown"
+	SupplierKeyCapacityUnsupported = "unsupported"
+)
+
 type Supplier struct {
 	ID                    int64                          `json:"id"`
 	Name                  string                         `json:"name"`
@@ -149,6 +162,10 @@ type Supplier struct {
 	BalanceCurrency       string                         `json:"balance_currency"`
 	BalanceUpdatedAt      *time.Time                     `json:"balance_updated_at,omitempty"`
 	RechargeMultiplier    float64                        `json:"recharge_multiplier"`
+	KeyLimitPolicy        string                         `json:"key_limit_policy"`
+	KeyLimitValue         int                            `json:"key_limit_value"`
+	ActiveKeyCount        int                            `json:"active_key_count"`
+	KeyCapacityStatus     string                         `json:"key_capacity_status"`
 	CreatedAt             time.Time                      `json:"created_at"`
 	UpdatedAt             time.Time                      `json:"updated_at"`
 }

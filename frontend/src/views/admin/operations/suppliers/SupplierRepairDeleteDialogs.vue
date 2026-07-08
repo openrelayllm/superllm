@@ -2,7 +2,7 @@
 <BaseDialog :show="repairDialogOpen" :title="repairKey ? `修复绑定 - ${repairKey.name}` : '修复绑定'" width="normal" @close="closeRepairDialog">
   <form id="supplier-key-repair-form" class="space-y-5" @submit.prevent="submitRepairBinding">
     <div class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-      第三方 Key 已创建，但本地账号绑定未完成。请选择已手动补好的本地 Sub2API 账号完成绑定。
+      第三方 Key 已存在但本地账号绑定未完成。可补录第三方 Key 明文创建本地账号，也可绑定已经手动创建好的本地账号。
     </div>
 
     <div class="grid gap-4 sm:grid-cols-2">
@@ -21,7 +21,54 @@
       </div>
     </div>
 
-    <label class="block">
+    <div class="grid gap-2 sm:grid-cols-2">
+      <label class="flex min-h-[44px] cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm dark:border-dark-700" :class="repairForm.mode === 'manual_secret' ? 'border-primary-500 bg-primary-50 text-primary-700 dark:border-primary-400 dark:bg-primary-900/20 dark:text-primary-200' : 'border-gray-200 text-gray-700 dark:text-dark-200'">
+        <input v-model="repairForm.mode" type="radio" value="manual_secret" class="h-4 w-4" />
+        <span>补录密钥并创建本地账号</span>
+      </label>
+      <label class="flex min-h-[44px] cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm dark:border-dark-700" :class="repairForm.mode === 'bind_existing' ? 'border-primary-500 bg-primary-50 text-primary-700 dark:border-primary-400 dark:bg-primary-900/20 dark:text-primary-200' : 'border-gray-200 text-gray-700 dark:text-dark-200'">
+        <input v-model="repairForm.mode" type="radio" value="bind_existing" class="h-4 w-4" />
+        <span>绑定已有本地账号</span>
+      </label>
+    </div>
+
+    <div v-if="repairForm.mode === 'manual_secret'" class="space-y-4">
+      <label class="block">
+        <span class="input-label">第三方 Key 明文</span>
+        <input v-model.trim="repairForm.manual_secret" type="password" autocomplete="off" class="input font-mono" placeholder="sk-..." required />
+      </label>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <label class="block">
+          <span class="input-label">本地账号名称</span>
+          <input v-model.trim="repairForm.local_account_name" type="text" class="input" />
+        </label>
+        <label class="block">
+          <span class="input-label">本地账号平台</span>
+          <select v-model="repairForm.local_account_platform" class="input">
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="gemini">Gemini</option>
+            <option value="antigravity">Antigravity</option>
+          </select>
+        </label>
+      </div>
+      <label class="block">
+        <span class="input-label">本地账号 Base URL</span>
+        <input v-model.trim="repairForm.local_account_base_url" type="url" class="input" required />
+      </label>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <label class="block">
+          <span class="input-label">优先级</span>
+          <input v-model.number="repairForm.local_account_priority" type="number" min="0" step="1" class="input" />
+        </label>
+        <label class="block">
+          <span class="input-label">倍率</span>
+          <input v-model.number="repairForm.local_account_rate_multiplier" type="number" min="0" step="0.01" class="input" />
+        </label>
+      </div>
+    </div>
+
+    <label v-else class="block">
       <span class="input-label">本地 Sub2API 账号</span>
       <select v-model.number="repairForm.local_sub2api_account_id" class="input" required :disabled="repairAccountsLoading">
         <option :value="0">{{ repairAccountsLoading ? '加载账号中...' : '请选择账号' }}</option>
@@ -74,9 +121,9 @@
 
   <template #footer>
     <button type="button" class="btn btn-secondary" @click="closeRepairDialog">取消</button>
-    <button type="submit" form="supplier-key-repair-form" class="btn btn-primary" :disabled="repairSubmitting || repairAccountsLoading">
+    <button type="submit" form="supplier-key-repair-form" class="btn btn-primary" :disabled="repairSubmitting || (repairForm.mode === 'bind_existing' && repairAccountsLoading)">
       <Icon name="link" size="sm" :class="{ 'animate-spin': repairSubmitting }" />
-      {{ repairSubmitting ? '修复中...' : '完成绑定' }}
+      {{ repairSubmitting ? '修复中...' : repairForm.mode === 'manual_secret' ? '补录并绑定' : '完成绑定' }}
     </button>
   </template>
 </BaseDialog>

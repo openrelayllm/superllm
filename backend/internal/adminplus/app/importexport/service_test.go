@@ -37,6 +37,7 @@ func TestDefaultTableSpecsIncludeCoreButNotRuntimeLogs(t *testing.T) {
 	for _, table := range []string{
 		"usage_logs",
 		"admin_plus_scheduler_runs",
+		"admin_plus_routing_refill_runs",
 		"admin_plus_extension_tasks",
 		"admin_plus_proxy_audit_events",
 		"admin_plus_supplier_browser_sessions",

@@ -76,6 +76,44 @@ func TestSQLRepositoryFindActiveByGroupReturnsLatestBlockingKey(t *testing.T) {
 	require.Equal(t, int64(42), got.LocalSub2APIAccountID)
 }
 
+func TestSQLRepositoryDisableLocalProjectionMarksKeyDisabled(t *testing.T) {
+	db, mock := newSupplierKeySQLMock(t)
+	repo := NewSQLRepository(db)
+	now := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+
+	mock.ExpectQuery(`UPDATE admin_plus_supplier_keys\s+SET status = 'disabled'`).
+		WithArgs(int64(24), int64(9), "释放本地配额投影").
+		WillReturnRows(newSupplierKeyRows().AddRow(
+			int64(9),
+			int64(24),
+			int64(6),
+			"1215",
+			"99",
+			"Lime",
+			"fingerprint",
+			"abcd",
+			string(adminplusdomain.SupplierKeyStatusDisabled),
+			"openai",
+			int64(42),
+			"AI Pixel / PLUS共享号池 / Lime",
+			"openai",
+			"api_key",
+			[]byte(`{"name":"Lime"}`),
+			[]byte(`{"id":99}`),
+			"LOCAL_PROJECTION_RELEASED",
+			"释放本地配额投影",
+			now,
+			now,
+		))
+
+	got, err := repo.DisableLocalProjection(context.Background(), 24, 9, "释放本地配额投影")
+
+	require.NoError(t, err)
+	require.Equal(t, adminplusdomain.SupplierKeyStatusDisabled, got.Status)
+	require.Equal(t, "LOCAL_PROJECTION_RELEASED", got.ErrorCode)
+	require.Equal(t, "释放本地配额投影", got.ErrorMessage)
+}
+
 func newSupplierKeyRows() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
 		"id",

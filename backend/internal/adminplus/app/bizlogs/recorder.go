@@ -23,9 +23,11 @@ const (
 	CategoryMail         = "mail"
 	CategoryRegistration = "registration"
 	CategoryExtension    = "extension"
+	CategorySub2API      = "sub2api"
 
 	OutcomeSucceeded = "succeeded"
 	OutcomeFailed    = "failed"
+	OutcomeBlocked   = "blocked"
 
 	maxMessageLength     = 500
 	maxExtraStringLength = 500

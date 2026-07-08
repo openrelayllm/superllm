@@ -70,6 +70,12 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     meta: adminMeta('账号/Key 绑定')
   },
   {
+    path: '/admin/local-account-ops',
+    name: 'AdminPlusLocalAccountOps',
+    component: () => import('@/views/admin/operations/LocalAccountOpsView.vue'),
+    meta: adminMeta('本地账号运营')
+  },
+  {
     path: '/admin/supplier-rate-checks',
     name: 'AdminPlusSupplierRateChecks',
     component: () => import('@/views/admin/operations/SupplierRateChecksView.vue'),
@@ -140,10 +146,28 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     meta: adminMeta('通知中心')
   },
   {
+    path: '/admin/scheduler/routing-refill-history',
+    name: 'AdminPlusRoutingRefillHistory',
+    component: () => import('@/views/admin/scheduler/RoutingRefillHistoryView.vue'),
+    meta: adminMeta('补池影响历史')
+  },
+  {
+    path: '/admin/actions',
+    name: 'AdminPlusActions',
+    component: () => import('@/views/admin/operations/ActionRecommendationsView.vue'),
+    meta: adminMeta('智能动作')
+  },
+  {
     path: '/admin/system-logs',
     name: 'AdminPlusSystemLogs',
     component: () => import('@/views/admin/operations/SystemLogsView.vue'),
     meta: adminMeta('系统日志')
+  },
+  {
+    path: '/admin/action-audits',
+    name: 'AdminPlusActionAudits',
+    component: () => import('@/views/admin/operations/ActionAuditsView.vue'),
+    meta: adminMeta('操作审计')
   },
   {
     path: '/admin/server-renewal',
@@ -219,7 +243,7 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/monitoring/account-runtime',
-    redirect: redirectWithQuery('/admin/suppliers')
+    redirect: redirectWithQuery('/admin/local-account-ops')
   },
   {
     path: '/admin/monitoring/announcements',
@@ -245,7 +269,7 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/automation/actions',
-    redirect: redirectWithQuery('/admin/suppliers')
+    redirect: redirectWithQuery('/admin/actions')
   },
   {
     path: '/admin/automation/notifications',
@@ -253,7 +277,7 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/automation/audits',
-    redirect: redirectWithQuery('/admin/system-logs')
+    redirect: redirectWithQuery('/admin/action-audits')
   },
   {
     path: '/admin/operations',
@@ -269,7 +293,7 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/operations/account-runtime',
-    redirect: redirectWithQuery('/admin/suppliers')
+    redirect: redirectWithQuery('/admin/local-account-ops')
   },
   {
     path: '/admin/operations/rates',
@@ -305,7 +329,7 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/operations/actions',
-    redirect: redirectWithQuery('/admin/suppliers')
+    redirect: redirectWithQuery('/admin/actions')
   },
   {
     path: '/admin/operations/notifications',
@@ -313,7 +337,7 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/operations/audits',
-    redirect: redirectWithQuery('/admin/system-logs')
+    redirect: redirectWithQuery('/admin/action-audits')
   },
   {
     path: '/admin/settings',

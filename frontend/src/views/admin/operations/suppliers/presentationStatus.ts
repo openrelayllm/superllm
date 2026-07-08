@@ -429,7 +429,10 @@ export function attachPresentationStatus(ctx: any) {
       return withDiagnostic('供应商直登失败：账号或密码无效，请编辑供应商更新登录凭据后重试', diagnostic)
     }
     if (code === 'SUPPLIER_DIRECT_LOGIN_ADMIN_REQUIRED') {
-      return withDiagnostic('New API 后端直登需要供应商管理员/root 账号；当前凭据登录后不是管理员，请改用管理员账号，或配置管理员/root 的 access token 与数字 User ID', diagnostic)
+      return withDiagnostic('当前账号无权完成供应商后台直登；请确认注册用户具备对应接口权限，或改用可读取该数据的账号/token 与数字 User ID', diagnostic)
+    }
+    if (code === 'SUPPLIER_SESSION_PERMISSION_DENIED') {
+      return withDiagnostic('当前注册用户会话权限不足，无法读取该接口；请确认账号权限，或换用可读取该数据的账号/token 与数字 User ID', diagnostic)
     }
     if (code === '429') {
       return '供应商登录限流，请稍后重试'

@@ -5,6 +5,7 @@ import { attachSuppliersComputed } from './computed'
 import { attachSuppliersData } from './data'
 import { attachSupplierDialogs } from './dialogs'
 import { attachSupplierGroups } from './groups'
+import { attachSupplierDetail } from './detail'
 import { attachSupplierProvision } from './provision'
 import { attachSupplierBulkAndLifecycle } from './bulkAndLifecycle'
 
@@ -16,6 +17,7 @@ export function useSuppliersViewModel() {
   attachSuppliersData(ctx)
   attachSupplierDialogs(ctx)
   attachSupplierGroups(ctx)
+  attachSupplierDetail(ctx)
   attachSupplierProvision(ctx)
   attachSupplierBulkAndLifecycle(ctx)
   return ctx

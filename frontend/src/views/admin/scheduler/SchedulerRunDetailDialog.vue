@@ -67,6 +67,15 @@
               <td class="px-4 py-3 text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(step.next_attempt_at) || '-' }}</td>
               <td class="px-4 py-3">
                 <div class="flex flex-wrap gap-2">
+                  <RouterLink
+                    v-for="link in stepActionRecommendationLinks(step)"
+                    :key="link.key"
+                    :to="link.to"
+                    class="btn btn-secondary btn-sm"
+                  >
+                    <Icon name="clipboard" size="sm" />
+                    {{ link.label }}
+                  </RouterLink>
                   <button
                     type="button"
                     class="btn btn-secondary btn-sm"
@@ -159,6 +168,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Icon from '@/components/icons/Icon.vue'
 import type { SchedulerRunDetail, SchedulerStepRecord } from '@/api/admin/adminPlus'
 import {
   formatDateTime,
@@ -190,6 +200,15 @@ const emit = defineEmits<{
 
 const title = computed(() => (props.detail ? `运行详情 - ${props.detail.run.id}` : '运行详情'))
 const selectedStep = ref<SchedulerStepRecord | null>(null)
+
+interface StepActionRecommendationLink {
+  key: string
+  label: string
+  to: {
+    path: string
+    query: Record<string, string>
+  }
+}
 
 interface StepFailureReason {
   stage?: string
@@ -252,6 +271,83 @@ function parseReason(reason?: string): StepFailureReason {
   return {}
 }
 
+function stepActionRecommendationLinks(step: SchedulerStepRecord): StepActionRecommendationLink[] {
+  const snapshot = step.result_snapshot || {}
+  const links = actionLinksFromSnapshot(snapshot, step)
+  if (links.length > 0) return links.slice(0, 4)
+  return fallbackRoutingGroupLinks(snapshot, step).slice(0, 4)
+}
+
+function actionLinksFromSnapshot(snapshot: Record<string, unknown>, step: SchedulerStepRecord): StepActionRecommendationLink[] {
+  const raw = snapshot.actions
+  if (!Array.isArray(raw)) return []
+  const links: StepActionRecommendationLink[] = []
+  const seen = new Set<string>()
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const record = item as Record<string, unknown>
+    const recommendationType = stringField(record, 'recommendation_type')
+    const groupID = positiveNumberField(record, 'local_group_id')
+    const accountID = positiveNumberField(record, 'local_sub2api_account_id')
+    const link = recommendationLink(recommendationType, groupID, accountID, step)
+    if (!link || seen.has(link.key)) continue
+    seen.add(link.key)
+    links.push(link)
+  }
+  return links
+}
+
+function fallbackRoutingGroupLinks(snapshot: Record<string, unknown>, step: SchedulerStepRecord): StepActionRecommendationLink[] {
+  const raw = snapshot.groups
+  if (!Array.isArray(raw)) return []
+  const links: StepActionRecommendationLink[] = []
+  const seen = new Set<string>()
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const groupID = positiveNumberField(item as Record<string, unknown>, 'local_group_id')
+    const link = recommendationLink('routing_refill', groupID, 0, step)
+    if (!link || seen.has(link.key)) continue
+    seen.add(link.key)
+    links.push(link)
+  }
+  return links
+}
+
+function recommendationLink(recommendationType: string, groupID: number, accountID: number, step: SchedulerStepRecord): StepActionRecommendationLink | null {
+  const sourceQuery = schedulerSourceQuery(step)
+  if (recommendationType === 'routing_refill' && groupID > 0) {
+    return {
+      key: `routing_refill:${groupID}`,
+      label: `补池建议 #${groupID}`,
+      to: { path: '/admin/actions', query: { type: 'routing_refill', local_group_id: String(groupID), ...sourceQuery } }
+    }
+  }
+  if (recommendationType === 'local_account_schedule_disable' && accountID > 0) {
+    return {
+      key: `local_account_schedule_disable:${accountID}`,
+      label: `关调度建议 #${accountID}`,
+      to: { path: '/admin/actions', query: { type: 'local_account_schedule_disable', local_sub2api_account_id: String(accountID), ...sourceQuery } }
+    }
+  }
+  return null
+}
+
+function schedulerSourceQuery(step: SchedulerStepRecord): Record<string, string> {
+  const query: Record<string, string> = {}
+  if (step.run_id) query.scheduler_run_id = step.run_id
+  if (step.id > 0) query.scheduler_step_id = String(step.id)
+  return query
+}
+
+function stringField(record: Record<string, unknown>, key: string): string {
+  return String(record[key] || '').trim()
+}
+
+function positiveNumberField(record: Record<string, unknown>, key: string): number {
+  const value = Number(record[key])
+  return Number.isFinite(value) && value > 0 ? value : 0
+}
+
 function plainReason(reason: string): string {
   const parsed = parseReason(reason)
   return firstText(parsed.login_message, parsed.message, parsed.raw_error, reason)
@@ -264,7 +360,9 @@ function codeFromText(reason: string): string {
     'SUPPLIER_SESSION_EXPIRED',
     'SUPPLIER_SESSION_DECRYPT_FAILED',
     'SUPPLIER_SESSION_PERMISSION_DENIED',
+    'SUPPLIER_NEW_API_ADMIN_SESSION_REQUIRED',
     'SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED',
+    'SUPPLIER_DIRECT_LOGIN_ADMIN_REQUIRED',
     'LOGIN_CREDENTIAL_INVALID',
     'LOGIN_CAPTCHA_REQUIRED',
     'LOGIN_MFA_REQUIRED',
@@ -317,11 +415,14 @@ function suggestionFromCode(code?: string): string {
     SUPPLIER_SESSION_NOT_FOUND: '当前没有可用会话，请配置登录凭据后重试，或使用插件采集会话。',
     SUPPLIER_SESSION_EXPIRED: '当前会话已过期，请重新登录或使用插件刷新会话。',
     SUPPLIER_SESSION_DECRYPT_FAILED: '会话解密失败，请重新一键登录或使用插件采集会话。',
+    SUPPLIER_SESSION_PERMISSION_DENIED: '当前注册用户会话权限不足，请确认账号权限或换用具备该接口权限的账号。',
+    SUPPLIER_NEW_API_ADMIN_SESSION_REQUIRED: 'new-api 历史接口需要更高数据权限，请确认注册用户具备该接口权限，或换用可读取该数据的账号/token。',
     SUPPLIER_SESSION_PROBE_FAILED: '供应商接口超时或不可达，请检查供应商地址、网络出口和前置防护后重试。',
     SUPPLIER_SESSION_PROBE_HTML: '供应商 profile 接口返回 HTML，通常是 Cloudflare/Nginx/风控页面，请检查前置层策略。',
     SUPPLIER_SESSION_PROBE_BAD_STATUS: '供应商 profile 接口返回非成功状态，请检查会话权限和供应商接口。',
     SUPPLIER_SESSION_PROFILE_INVALID: '供应商 profile 返回结构异常，请检查供应商程序版本和接口兼容性。',
     SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED: '补充供应商登录账号密码或 access token 后重试。',
+    SUPPLIER_DIRECT_LOGIN_ADMIN_REQUIRED: '当前账号无权完成供应商后台直登，请换用具备对应接口权限的账号/token 后重试。',
     SUPPLIER_DIRECT_LOGIN_UPSTREAM_HTML: '供应商登录接口返回 HTML，通常是前置层或风控页面，请改用浏览器会话或调整防护策略。',
     SUPPLIER_DIRECT_LOGIN_UPSTREAM_ORIGIN_ERROR: '供应商前置层或源站返回异常，请检查 Cloudflare/Nginx/源站健康。',
     LOGIN_CREDENTIAL_INVALID: '供应商登录凭据无效，请更新账号密码或 token 后重试。',

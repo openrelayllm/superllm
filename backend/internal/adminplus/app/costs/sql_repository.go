@@ -316,6 +316,25 @@ func (r *SQLRepository) RefreshSnapshot(ctx context.Context, supplierID int64, c
 	return scanCostSnapshot(row)
 }
 
+func (r *SQLRepository) GetSnapshot(ctx context.Context, id int64) (*adminplusdomain.SupplierCostSnapshot, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, supplier_id, currency, completed_funding_amount_cents,
+			completed_funding_cash_cents, recharge_actual_payment_cents, entitlement_amount_cents, usage_cost_cents,
+			refund_amount_cents, adjustment_amount_cents, expected_balance_cents,
+			actual_balance_cents, balance_delta_cents, captured_at, created_at
+		FROM admin_plus_supplier_cost_snapshots
+		WHERE id = $1
+	`, id)
+	item, err := scanCostSnapshot(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return item, err
+}
+
 func (r *SQLRepository) ListSnapshots(ctx context.Context, filter SummaryFilter) ([]*adminplusdomain.SupplierCostSnapshot, error) {
 	if r == nil || r.db == nil {
 		return nil, dbNotConfigured()

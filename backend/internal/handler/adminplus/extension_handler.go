@@ -49,6 +49,7 @@ type captureSessionTaskRequest struct {
 	SupplierID            int64          `json:"supplier_id"`
 	DeviceID              string         `json:"device_id" binding:"required"`
 	LeaseTTLSeconds       int64          `json:"lease_ttl_seconds"`
+	AutoCreate            *bool          `json:"auto_create_supplier"`
 	URL                   string         `json:"url"`
 	Origin                string         `json:"origin"`
 	Host                  string         `json:"host"`
@@ -347,9 +348,11 @@ func reportHasBrowserCredential(req reportSupplierCandidateRequest) bool {
 
 func (h *ExtensionHandler) resolveCaptureSessionSupplier(c *gin.Context, req captureSessionTaskRequest) (int64, map[string]any, error) {
 	payload := clonePayload(req.Payload)
-	sourceURL := firstNonEmpty(req.URL, req.DashboardURL, stringFromPayload(payload, "source_url"))
-	sourceHost := firstNonEmpty(req.Host, stringFromPayload(payload, "source_host"))
-	origin := firstNonEmpty(req.Origin, req.DashboardURL)
+	sourceURL := firstNonEmpty(req.URL, req.DashboardURL, stringFromPayload(payload, "source_url"), stringFromPayload(payload, "dashboard_url"))
+	dashboardURL := firstNonEmpty(req.DashboardURL, stringFromPayload(payload, "dashboard_url"), sourceURL)
+	apiBaseURL := firstNonEmpty(req.APIBaseURL, stringFromPayload(payload, "api_base_url"))
+	origin := firstNonEmpty(req.Origin, stringFromPayload(payload, "source_origin"), originFromURL(sourceURL), originFromURL(dashboardURL), originFromURL(apiBaseURL))
+	sourceHost := firstNonEmpty(req.Host, stringFromPayload(payload, "source_host"), hostFromURL(sourceURL), hostFromURL(dashboardURL), hostFromURL(apiBaseURL), hostFromURL(origin))
 	supplierType := normalizeCaptureSupplierType(firstNonEmpty(req.Type, req.SupplierType, req.ProviderType, stringFromPayload(payload, "supplier_type"), stringFromPayload(payload, "provider_type")))
 	thirdPartyRechargeURL := firstNonEmpty(req.ThirdPartyRechargeURL, stringFromPayload(payload, "third_party_recharge_url"))
 	localRechargeURL := firstNonEmpty(req.LocalRechargeURL, stringFromPayload(payload, "local_recharge_url"))
@@ -362,6 +365,12 @@ func (h *ExtensionHandler) resolveCaptureSessionSupplier(c *gin.Context, req cap
 	if origin != "" {
 		payload["source_origin"] = origin
 	}
+	if dashboardURL != "" {
+		payload["dashboard_url"] = dashboardURL
+	}
+	if apiBaseURL != "" {
+		payload["api_base_url"] = apiBaseURL
+	}
 	if thirdPartyRechargeURL != "" {
 		payload["third_party_recharge_url"] = thirdPartyRechargeURL
 	}
@@ -371,6 +380,37 @@ func (h *ExtensionHandler) resolveCaptureSessionSupplier(c *gin.Context, req cap
 	if supplierType != "" {
 		payload["supplier_type"] = string(supplierType)
 		payload["provider_type"] = string(supplierType)
+	}
+	if req.SupplierID <= 0 {
+		if req.AutoCreate != nil && *req.AutoCreate {
+			if h.suppliers == nil {
+				return 0, payload, infraerrors.New(http.StatusBadRequest, "SUPPLIER_SERVICE_REQUIRED", "supplier service is not configured")
+			}
+			title := firstNonEmpty(stringFromNestedPayload(payload, "page_context", "title"), stringFromPayload(payload, "title"))
+			ensured, err := h.suppliers.EnsureFromSiteCandidateWithOptions(c.Request.Context(), suppliersapp.CreateFromSiteCandidateInput{
+				Name:                  firstNonEmpty(stringFromPayload(payload, "name"), title, sourceHost),
+				Type:                  supplierType,
+				DashboardURL:          dashboardURL,
+				APIBaseURL:            firstNonEmpty(apiBaseURL, origin),
+				ThirdPartyRechargeURL: thirdPartyRechargeURL,
+				LocalRechargeURL:      localRechargeURL,
+				SourceHost:            sourceHost,
+				SourceURL:             sourceURL,
+				Title:                 title,
+			}, suppliersapp.EnsureFromSiteCandidateOptions{AllowCreate: true})
+			if err != nil {
+				return 0, payload, err
+			}
+			if ensured == nil || ensured.Supplier == nil || ensured.Supplier.ID <= 0 {
+				return 0, payload, infraerrors.New(http.StatusInternalServerError, "SUPPLIER_AUTO_CREATE_FAILED", "supplier auto create failed")
+			}
+			req.SupplierID = ensured.Supplier.ID
+			payload["supplier_auto_created"] = ensured.Created
+			payload["supplier_auto_matched"] = ensured.Matched
+			if ensured.MatchStatus != "" {
+				payload["supplier_match_status"] = ensured.MatchStatus
+			}
+		}
 	}
 	if req.SupplierID <= 0 {
 		return 0, payload, infraerrors.New(http.StatusBadRequest, "SUPPLIER_ID_REQUIRED", "supplier id is required")
@@ -540,6 +580,17 @@ func stringFromPayload(in map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(value)
+}
+
+func stringFromNestedPayload(in map[string]any, objectKey string, key string) string {
+	if in == nil {
+		return ""
+	}
+	nested, ok := in[objectKey].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return stringFromPayload(nested, key)
 }
 
 func normalizeCaptureSupplierType(value string) adminplusdomain.SupplierType {

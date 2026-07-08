@@ -65,9 +65,11 @@ func TestServiceProvisionAllCreatesOneStepPerSupplierGroup(t *testing.T) {
 	repo := newProvisionJobsMemoryRepository()
 	now := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
 	keyProvisioner := &stubKeyProvisioner{
-		plans: []supplierkeys.ProvisionGroupPlan{
-			{SupplierGroupID: 10, ExternalGroupID: "g10", GroupName: "Fast", ProviderFamily: "openai"},
-			{SupplierGroupID: 20, ExternalGroupID: "g20", GroupName: "Cheap", ProviderFamily: "openai"},
+		plan: &supplierkeys.EnsureAllPlan{
+			Items: []supplierkeys.ProvisionGroupPlan{
+				{SupplierGroupID: 10, ExternalGroupID: "g10", GroupName: "Fast", ProviderFamily: "openai", Action: "create"},
+				{SupplierGroupID: 20, ExternalGroupID: "g20", GroupName: "Cheap", ProviderFamily: "openai", Action: "create"},
+			},
 		},
 	}
 	service := NewService(repo, nil, nil, keyProvisioner)
@@ -112,13 +114,93 @@ func TestServiceProvisionAllCreatesOneStepPerSupplierGroup(t *testing.T) {
 	require.Equal(t, 2, stored.ResultSnapshot["local_groups_created"])
 }
 
+func TestServiceProvisionAllRejectsBlockedCapacityPlan(t *testing.T) {
+	repo := newProvisionJobsMemoryRepository()
+	keyProvisioner := &stubKeyProvisioner{
+		plan: &supplierkeys.EnsureAllPlan{
+			SupplierID:        7,
+			KeyLimitPolicy:    adminplusdomain.SupplierKeyLimitPolicyLimited,
+			KeyLimitValue:     1,
+			ActiveKeyCount:    1,
+			RemainingKeySlots: 0,
+			Blocked:           1,
+			Items: []supplierkeys.ProvisionGroupPlan{{
+				SupplierGroupID: 20,
+				ExternalGroupID: "g20",
+				GroupName:       "Cheap",
+				ProviderFamily:  "openai",
+				Action:          "blocked",
+				BlockedReason:   "key_capacity_exhausted",
+			}},
+		},
+	}
+	service := NewService(repo, nil, nil, keyProvisioner)
+
+	submitted, err := service.Submit(context.Background(), SubmitInput{
+		JobType:        adminplusdomain.SupplierProvisionJobTypeProvisionAllGroupKeys,
+		SupplierID:     7,
+		IdempotencyKey: "supplier-7-all",
+		Request: map[string]any{
+			"local_account_base_url": "https://relay.example.com/v1",
+			"runtime_status":         string(adminplusdomain.SupplierRuntimeStatusMonitorOnly),
+			"health_status":          string(adminplusdomain.SupplierHealthStatusNormal),
+		},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "SUPPLIER_KEY_CAPACITY_EXHAUSTED")
+	require.Nil(t, submitted)
+}
+
+func TestServiceProvisionAllAllowsExplicitPartialCapacityPlan(t *testing.T) {
+	repo := newProvisionJobsMemoryRepository()
+	keyProvisioner := &stubKeyProvisioner{
+		plan: &supplierkeys.EnsureAllPlan{
+			SupplierID:        7,
+			KeyLimitPolicy:    adminplusdomain.SupplierKeyLimitPolicyLimited,
+			KeyLimitValue:     2,
+			ActiveKeyCount:    1,
+			RemainingKeySlots: 1,
+			ToCreate:          1,
+			Blocked:           1,
+			Items: []supplierkeys.ProvisionGroupPlan{
+				{SupplierGroupID: 10, ExternalGroupID: "g10", GroupName: "Lowest", ProviderFamily: "openai", Action: "create"},
+				{SupplierGroupID: 20, ExternalGroupID: "g20", GroupName: "High", ProviderFamily: "openai", Action: "blocked", BlockedReason: "key_capacity_exhausted"},
+			},
+		},
+	}
+	service := NewService(repo, nil, nil, keyProvisioner)
+
+	submitted, err := service.Submit(context.Background(), SubmitInput{
+		JobType:        adminplusdomain.SupplierProvisionJobTypeProvisionAllGroupKeys,
+		SupplierID:     7,
+		IdempotencyKey: "supplier-7-partial",
+		Request: map[string]any{
+			"allow_partial":          true,
+			"local_account_base_url": "https://relay.example.com/v1",
+			"runtime_status":         string(adminplusdomain.SupplierRuntimeStatusMonitorOnly),
+			"health_status":          string(adminplusdomain.SupplierHealthStatusNormal),
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, submitted)
+	stored, err := service.Get(context.Background(), submitted.JobID)
+	require.NoError(t, err)
+	require.Len(t, stored.Steps, 1)
+	require.Equal(t, int64(10), stored.Steps[0].SupplierGroupID)
+	require.Equal(t, true, stored.Steps[0].RequestSnapshot["allow_partial"])
+}
+
 func TestServiceProvisionAllRetriesOnlyFailedSupplierGroup(t *testing.T) {
 	repo := newProvisionJobsMemoryRepository()
 	now := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
 	keyProvisioner := &stubKeyProvisioner{
-		plans: []supplierkeys.ProvisionGroupPlan{
-			{SupplierGroupID: 10, ExternalGroupID: "g10", GroupName: "Fast", ProviderFamily: "openai"},
-			{SupplierGroupID: 20, ExternalGroupID: "g20", GroupName: "Cheap", ProviderFamily: "openai"},
+		plan: &supplierkeys.EnsureAllPlan{
+			Items: []supplierkeys.ProvisionGroupPlan{
+				{SupplierGroupID: 10, ExternalGroupID: "g10", GroupName: "Fast", ProviderFamily: "openai", Action: "create"},
+				{SupplierGroupID: 20, ExternalGroupID: "g20", GroupName: "Cheap", ProviderFamily: "openai", Action: "create"},
+			},
 		},
 		failGroupID: 20,
 	}
@@ -184,7 +266,7 @@ func (s *stubCostSyncer) Sync(_ context.Context, in costs.SyncInput) (*costs.Syn
 
 type stubKeyProvisioner struct {
 	planned     supplierkeys.EnsureAllInput
-	plans       []supplierkeys.ProvisionGroupPlan
+	plan        *supplierkeys.EnsureAllPlan
 	ensureCalls []supplierkeys.EnsureGroupInput
 	failGroupID int64
 }
@@ -193,9 +275,14 @@ func (s *stubKeyProvisioner) Provision(context.Context, supplierkeys.ProvisionKe
 	return nil, nil
 }
 
-func (s *stubKeyProvisioner) PlanEnsureAll(_ context.Context, in supplierkeys.EnsureAllInput) ([]supplierkeys.ProvisionGroupPlan, error) {
+func (s *stubKeyProvisioner) PlanEnsureAll(_ context.Context, in supplierkeys.EnsureAllInput) (*supplierkeys.EnsureAllPlan, error) {
 	s.planned = in
-	return append([]supplierkeys.ProvisionGroupPlan(nil), s.plans...), nil
+	if s.plan != nil {
+		cp := *s.plan
+		cp.Items = append([]supplierkeys.ProvisionGroupPlan(nil), s.plan.Items...)
+		return &cp, nil
+	}
+	return &supplierkeys.EnsureAllPlan{}, nil
 }
 
 func (s *stubKeyProvisioner) EnsureGroup(_ context.Context, in supplierkeys.EnsureGroupInput) (*supplierkeys.EnsureAllResultItem, error) {

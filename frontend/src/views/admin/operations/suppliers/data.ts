@@ -46,6 +46,7 @@ export function attachSuppliersData(ctx: any) {
   const scheduleChannelKey = ctxFn(ctx, 'scheduleChannelKey')
   const channelStatusErrorMessage = ctxFn(ctx, 'channelStatusErrorMessage')
   const openGroupsDialog = ctxFn(ctx, 'openGroupsDialog')
+  const previewEnsureCurrentKeys = ctxFn(ctx, 'previewEnsureCurrentKeys')
   const loadCurrentGroups = ctxFn(ctx, 'loadCurrentGroups')
   const mergeChannelCheckSnapshots = ctxFn(ctx, 'mergeChannelCheckSnapshots')
   async function loadSuppliers() {
@@ -259,12 +260,19 @@ export function attachSuppliersData(ctx: any) {
     if (route.query.open !== 'groups') return
     const supplierID = Number(route.query.supplier_id || 0)
     if (!supplierID) return
-    const deepLinkKey = `${route.query.open}:${supplierID}`
+    const tool = typeof route.query.tool === 'string' ? route.query.tool : ''
+    const actionID = typeof route.query.action_id === 'string' ? route.query.action_id : ''
+    const deepLinkKey = `${route.query.open}:${supplierID}:${tool}:${actionID}`
     if (handledDeepLinkKey.value === deepLinkKey) return
     const supplier = suppliers.value.find((item) => item.id === supplierID)
     if (!supplier) return
     handledDeepLinkKey.value = deepLinkKey
     openGroupsDialog(supplier)
+    if (tool === 'key-plan') {
+      window.setTimeout(() => {
+        void previewEnsureCurrentKeys()
+      }, 0)
+    }
   }
 
   async function reloadCurrentSession() {

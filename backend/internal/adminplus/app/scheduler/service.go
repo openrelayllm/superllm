@@ -12,7 +12,9 @@ import (
 	"sync"
 	"time"
 
+	actionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/actions"
 	balancesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/balances"
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/candidateeval"
 	channelchecksapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/channelchecks"
 	costsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/costs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
@@ -20,6 +22,7 @@ import (
 	purityapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/purity"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
+	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	suppliergroupsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	usagecostsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/usagecosts"
@@ -74,6 +77,9 @@ type Service struct {
 	channelChecker   ChannelChecker
 	purityChecker    PurityChecker
 	sessionRefresher SessionRefresher
+	candidateReader  CandidateSummaryReader
+	routingRefiller  RoutingRefiller
+	actionSyncer     ActionRecommendationSyncer
 	runObserver      RunStatusObserver
 	now              func() time.Time
 	recentRunsMu     sync.Mutex
@@ -147,6 +153,19 @@ type SessionRefresher interface {
 	Login(ctx context.Context, in sessionsapp.LoginInput) (*sessionsapp.LoginResult, error)
 }
 
+type CandidateSummaryReader interface {
+	ListLocalGroups(ctx context.Context, limit int) ([]*sub2apiapp.LocalSub2APIGroup, error)
+	ListLocalAccountOps(ctx context.Context, filter sub2apiapp.LocalAccountOpsFilter) ([]*adminplusdomain.LocalAccountOpsRow, error)
+}
+
+type RoutingRefiller interface {
+	RefillLocalGroup(ctx context.Context, in sub2apiapp.RoutingRefillInput) (*sub2apiapp.RoutingRefillResult, error)
+}
+
+type ActionRecommendationSyncer interface {
+	Generate(ctx context.Context, in actionsapp.GenerateInput) (*actionsapp.GenerateResult, error)
+}
+
 type RunStatusObserver interface {
 	OnSchedulerRunStatusRefreshed(ctx context.Context, runID string) error
 }
@@ -185,11 +204,17 @@ func ProvideService(
 	channelChecker ChannelChecker,
 	purityChecker PurityChecker,
 	sessionRefresher SessionRefresher,
+	candidateReader CandidateSummaryReader,
+	routingRefiller RoutingRefiller,
+	actionSyncer ActionRecommendationSyncer,
 ) *Service {
 	return NewServiceWithDependenciesAndRepository(repo, supplierService, extensionService, groupSyncer, rateSyncer, balanceSyncer, healthSyncer, usageCostSyncer, channelChecker).
 		WithCostSyncer(costSyncer).
 		WithPurityChecker(purityChecker).
-		WithSessionRefresher(sessionRefresher)
+		WithSessionRefresher(sessionRefresher).
+		WithCandidateSummaryReader(candidateReader).
+		WithRoutingRefiller(routingRefiller).
+		WithActionRecommendationSyncer(actionSyncer)
 }
 
 func NewService(supplierService *suppliersapp.Service, extensionService *extensionapp.Service) *Service {
@@ -223,6 +248,27 @@ func NewServiceWithDependencies(
 func (s *Service) WithSessionRefresher(refresher SessionRefresher) *Service {
 	if s != nil {
 		s.sessionRefresher = refresher
+	}
+	return s
+}
+
+func (s *Service) WithCandidateSummaryReader(reader CandidateSummaryReader) *Service {
+	if s != nil {
+		s.candidateReader = reader
+	}
+	return s
+}
+
+func (s *Service) WithRoutingRefiller(refiller RoutingRefiller) *Service {
+	if s != nil {
+		s.routingRefiller = refiller
+	}
+	return s
+}
+
+func (s *Service) WithActionRecommendationSyncer(syncer ActionRecommendationSyncer) *Service {
+	if s != nil {
+		s.actionSyncer = syncer
 	}
 	return s
 }
@@ -370,6 +416,26 @@ func (s *Service) Run(ctx context.Context, in RunInput) (*adminplusdomain.Schedu
 		TaskTypes:   taskTypes,
 		Items:       make([]adminplusdomain.ScheduledTask, 0),
 	}
+	localTaskTypes, _ := localSchedulerTaskTypes(taskTypes)
+	for _, taskType := range localTaskTypes {
+		item := s.scheduleLocalTask(ctx, taskType, mode, windowMinutes, in.Now, in.DryRun, in.Request)
+		if item.Synced {
+			run.EligibleCount++
+		} else if item.Reason == "" {
+			run.EligibleCount++
+		} else {
+			run.SkippedCount++
+		}
+		run.Items = append(run.Items, item)
+	}
+
+	supplierTaskTypes := supplierSchedulerTaskTypes(taskTypes)
+	if len(supplierTaskTypes) == 0 {
+		if err := s.rememberRun(ctx, run); err != nil {
+			return nil, err
+		}
+		return run, nil
+	}
 
 	suppliers, err := s.supplierService.List(ctx, suppliersapp.SupplierFilter{})
 	if err != nil {
@@ -382,7 +448,7 @@ func (s *Service) Run(ctx context.Context, in RunInput) (*adminplusdomain.Schedu
 		if in.SupplierID > 0 && supplier.ID != in.SupplierID {
 			continue
 		}
-		for _, taskType := range taskTypes {
+		for _, taskType := range supplierTaskTypes {
 			item := s.scheduleSupplierTask(ctx, supplier, taskType, mode, windowMinutes, in.Now, in.DryRun, in.Request)
 			if item.Created {
 				run.CreatedCount++
@@ -425,6 +491,22 @@ func (s *Service) EnqueueRun(ctx context.Context, in RunInput) (*adminplusdomain
 		TaskTypes:   taskTypes,
 		Items:       make([]adminplusdomain.ScheduledTask, 0),
 	}
+	localTaskTypes, _ := localSchedulerTaskTypes(taskTypes)
+	for _, taskType := range localTaskTypes {
+		item := s.planLocalTask(taskType, windowMinutes, in.Now)
+		item.Request = cloneMap(in.Request)
+		if item.Reason != "" {
+			run.SkippedCount++
+		} else {
+			run.EligibleCount++
+		}
+		run.Items = append(run.Items, item)
+	}
+
+	supplierTaskTypes := supplierSchedulerTaskTypes(taskTypes)
+	if len(supplierTaskTypes) == 0 {
+		return s.saveQueuedRun(ctx, run, mode, in.Request)
+	}
 
 	suppliers, err := s.supplierService.List(ctx, suppliersapp.SupplierFilter{})
 	if err != nil {
@@ -437,7 +519,7 @@ func (s *Service) EnqueueRun(ctx context.Context, in RunInput) (*adminplusdomain
 		if in.SupplierID > 0 && supplier.ID != in.SupplierID {
 			continue
 		}
-		for _, taskType := range taskTypes {
+		for _, taskType := range supplierTaskTypes {
 			item := s.planSupplierTask(supplier, taskType, windowMinutes, in.Now)
 			item.Request = cloneMap(in.Request)
 			if item.Reason != "" {
@@ -448,12 +530,19 @@ func (s *Service) EnqueueRun(ctx context.Context, in RunInput) (*adminplusdomain
 			run.Items = append(run.Items, item)
 		}
 	}
-	requestedAt := in.Now.UTC()
+	return s.saveQueuedRun(ctx, run, mode, in.Request)
+}
+
+func (s *Service) saveQueuedRun(ctx context.Context, run *adminplusdomain.SchedulerRun, mode string, request map[string]any) (*adminplusdomain.SchedulerRunSummary, error) {
+	if run == nil {
+		return nil, infraerrors.New(http.StatusBadRequest, "ADMIN_PLUS_SCHEDULER_RUN_INVALID", "scheduler run is required")
+	}
+	requestedAt := run.RequestedAt.UTC()
 	summary := adminplusdomain.SchedulerRunSummary{
 		ID:              strings.ReplaceAll(run.RunID, ":", "-"),
 		LegacyRunID:     run.RunID,
 		TriggerType:     mode,
-		TaskType:        schedulerRunTaskLabel(taskTypes),
+		TaskType:        schedulerRunTaskLabel(run.TaskTypes),
 		Status:          "queued",
 		RequestedAt:     requestedAt,
 		SupplierCount:   schedulerRunSupplierCount(run.Items),
@@ -461,7 +550,7 @@ func (s *Service) EnqueueRun(ctx context.Context, in RunInput) (*adminplusdomain
 		SucceededSteps:  0,
 		FailedSteps:     0,
 		SkippedSteps:    run.SkippedCount,
-		RequestSnapshot: cloneMap(in.Request),
+		RequestSnapshot: cloneMap(request),
 	}
 	if len(run.Items) == 0 {
 		summary.Status = "skipped"
@@ -839,12 +928,13 @@ func (s *Service) ListSupplierStatuses(ctx context.Context) ([]adminplusdomain.S
 			latestSteps = values
 		}
 	}
+	candidateSummaries := s.supplierCandidateSummaries(ctx, 1000)
 	out := make([]adminplusdomain.SchedulerSupplierStatus, 0, len(suppliers))
 	for _, supplier := range suppliers {
 		if supplier == nil {
 			continue
 		}
-		out = append(out, schedulerSupplierStatus(supplier, latestSteps[supplier.ID]))
+		out = append(out, schedulerSupplierStatus(supplier, latestSteps[supplier.ID], candidateSummaries[supplier.ID]))
 	}
 	return out, nil
 }
@@ -863,7 +953,8 @@ func (s *Service) GetSupplierChecklist(ctx context.Context, supplierID int64) (*
 			latestSteps = values[supplier.ID]
 		}
 	}
-	status := schedulerSupplierStatus(supplier, latestSteps)
+	candidateSummary := s.supplierCandidateSummaries(ctx, 1000)[supplier.ID]
+	status := schedulerSupplierStatus(supplier, latestSteps, candidateSummary)
 	items := schedulerSupplierChecklistItems(supplier, status)
 	return &adminplusdomain.SchedulerSupplierChecklist{
 		SupplierID:        supplier.ID,
@@ -871,12 +962,14 @@ func (s *Service) GetSupplierChecklist(ctx context.Context, supplierID int64) (*
 		SupplierType:      string(supplier.Type),
 		CompletionPercent: schedulerChecklistCompletionPercent(items),
 		RecommendedAction: status.RecommendedAction,
+		CandidateSummary:  candidateSummary,
 		Items:             items,
 	}, nil
 }
 
 func (s *Service) ListActions(ctx context.Context) []adminplusdomain.SchedulerAction {
-	generated := s.generateActions(ctx)
+	generated, actionSignals := s.generateActionsWithSignals(ctx)
+	_ = s.syncActionRecommendations(ctx, actionSignals)
 	if s.repo != nil {
 		_ = s.repo.UpsertActions(ctx, generated)
 		if stored, err := s.repo.ListActions(ctx); err == nil {
@@ -920,9 +1013,14 @@ func (s *Service) ResolveAction(ctx context.Context, actionID, status string) (*
 }
 
 func (s *Service) generateActions(ctx context.Context) []adminplusdomain.SchedulerAction {
+	actions, _ := s.generateActionsWithSignals(ctx)
+	return actions
+}
+
+func (s *Service) generateActionsWithSignals(ctx context.Context) ([]adminplusdomain.SchedulerAction, actionsapp.GenerateInput) {
 	suppliers, err := s.supplierService.List(ctx, suppliersapp.SupplierFilter{})
 	if err != nil {
-		return []adminplusdomain.SchedulerAction{}
+		return []adminplusdomain.SchedulerAction{}, actionsapp.GenerateInput{}
 	}
 	now := s.now().UTC()
 	actions := make([]adminplusdomain.SchedulerAction, 0)
@@ -946,7 +1044,519 @@ func (s *Service) generateActions(ctx context.Context) []adminplusdomain.Schedul
 			actions = append(actions, schedulerAction(now, supplier, "warning", "supplier.recharge", "供应商余额不足", "余额不可用时不会进入自动切换候选。", "刷新余额或充值"))
 		}
 	}
+	localActions, actionSignals := s.localRoutingActionsAndSignals(ctx, now, s.Settings(ctx))
+	actions = append(actions, localActions...)
+	return actions, actionSignals
+}
+
+type localGroupRefillCandidate struct {
+	AccountID       int64
+	SupplierID      int64
+	SupplierGroupID int64
+	GroupName       string
+	Rate            float64
+	Supplier        string
+	CheckSource     string
+}
+
+type routingCapacityWatchResult struct {
+	AutoExecuteEnabled bool
+	ActionsGenerated   int
+	Actions            []routingCapacityWatchActionResult
+	GroupsScanned      int
+	EligibleGroups     int
+	Attempted          int
+	Succeeded          int
+	Skipped            int
+	Failed             int
+	Total              int
+	Groups             []routingCapacityWatchGroupResult
+}
+
+type routingCapacityWatchGroupResult struct {
+	LocalGroupID        int64
+	LocalGroupName      string
+	Platform            string
+	ActiveAPIKeyCount   int64
+	SchedulableAccounts int64
+	Status              string
+	SkippedReason       string
+	Error               string
+	CandidateAccountID  int64
+	CandidateSupplierID int64
+	EffectiveRate       float64
+}
+
+type routingCapacityWatchActionResult struct {
+	ActionID              string `json:"action_id"`
+	Type                  string `json:"type"`
+	RecommendationType    string `json:"recommendation_type"`
+	Severity              string `json:"severity"`
+	Title                 string `json:"title"`
+	LocalGroupID          int64  `json:"local_group_id,omitempty"`
+	LocalSub2APIAccountID int64  `json:"local_sub2api_account_id,omitempty"`
+}
+
+func (s *Service) executeRoutingCapacityWatch(ctx context.Context, now time.Time) (*routingCapacityWatchResult, error) {
+	settings := s.Settings(ctx)
+	actions, actionSignals := s.localRoutingActionsAndSignals(ctx, now, settings)
+	if s.repo != nil {
+		if err := s.repo.UpsertActions(ctx, actions); err != nil {
+			return nil, err
+		}
+	}
+	_ = s.syncActionRecommendations(ctx, actionSignals)
+	out := &routingCapacityWatchResult{
+		AutoExecuteEnabled: settings.RoutingRefillAutoExecuteEnabled,
+		ActionsGenerated:   len(actions),
+		Actions:            routingCapacityWatchActionResults(actions),
+		Total:              len(actions),
+		Groups:             make([]routingCapacityWatchGroupResult, 0),
+	}
+	if !settings.RoutingRefillAutoExecuteEnabled {
+		return out, nil
+	}
+	if s.candidateReader == nil {
+		return out, infraerrors.New(http.StatusConflict, "ADMIN_PLUS_ROUTING_CAPACITY_READER_MISSING", "routing capacity watch requires local group reader")
+	}
+	if s.routingRefiller == nil {
+		return out, infraerrors.New(http.StatusConflict, "ADMIN_PLUS_ROUTING_REFILLER_MISSING", "routing capacity watch requires routing refiller")
+	}
+	groups, err := s.candidateReader.ListLocalGroups(ctx, 1000)
+	if err != nil {
+		return out, err
+	}
+	for _, group := range groups {
+		if group == nil || group.ID <= 0 {
+			continue
+		}
+		out.GroupsScanned++
+		if group.ActiveAPIKeyCount <= 0 || group.SchedulableAccounts > 0 {
+			continue
+		}
+		out.EligibleGroups++
+		groupResult := routingCapacityWatchGroupResult{
+			LocalGroupID:        group.ID,
+			LocalGroupName:      group.Name,
+			Platform:            group.Platform,
+			ActiveAPIKeyCount:   group.ActiveAPIKeyCount,
+			SchedulableAccounts: group.SchedulableAccounts,
+		}
+		out.Attempted++
+		refill, err := s.routingRefiller.RefillLocalGroup(ctx, sub2apiapp.RoutingRefillInput{
+			LocalGroupID:      group.ID,
+			Platform:          group.Platform,
+			MaxRateMultiplier: settings.RoutingRefillMaxRateMultiplier,
+			Limit:             1000,
+			DryRun:            false,
+			Reason:            "auto_scheduler_capacity_watch",
+			TriggerType:       "scheduler:auto",
+			CooldownSeconds:   settings.RoutingRefillCooldownSeconds,
+			ConfirmWindowSecs: settings.RoutingRefillConfirmWindowSeconds,
+		})
+		if err != nil {
+			groupResult.Status = "failed"
+			groupResult.Error = err.Error()
+			out.Failed++
+			out.Groups = append(out.Groups, groupResult)
+			continue
+		}
+		applyRoutingCapacityWatchGroupResult(&groupResult, refill)
+		if refill != nil && refill.SkippedReason != "" {
+			groupResult.Status = "skipped"
+			groupResult.SkippedReason = refill.SkippedReason
+			out.Skipped++
+			out.Groups = append(out.Groups, groupResult)
+			continue
+		}
+		groupResult.Status = "succeeded"
+		out.Succeeded++
+		out.Groups = append(out.Groups, groupResult)
+	}
+	out.Total = out.Attempted
+	return out, nil
+}
+
+func applyRoutingCapacityWatchGroupResult(group *routingCapacityWatchGroupResult, refill *sub2apiapp.RoutingRefillResult) {
+	if group == nil || refill == nil {
+		return
+	}
+	if refill.AvailabilityBefore != nil {
+		group.LocalGroupName = firstNonEmpty(group.LocalGroupName, refill.AvailabilityBefore.GroupName)
+		group.Platform = firstNonEmpty(group.Platform, refill.AvailabilityBefore.Platform)
+		group.ActiveAPIKeyCount = refill.AvailabilityBefore.ActiveAPIKeyCount
+		group.SchedulableAccounts = refill.AvailabilityBefore.SchedulableAccounts
+	}
+	if refill.Candidate != nil {
+		group.CandidateAccountID = refill.Candidate.LocalSub2APIAccountID
+		group.CandidateSupplierID = refill.Candidate.SupplierID
+		group.EffectiveRate = refill.Candidate.EffectiveRateMultiplier
+	}
+}
+
+func routingCapacityWatchResultSnapshot(result *routingCapacityWatchResult) map[string]any {
+	if result == nil {
+		return map[string]any{}
+	}
+	actions := make([]map[string]any, 0, len(result.Actions))
+	for _, action := range result.Actions {
+		actions = append(actions, map[string]any{
+			"action_id":                action.ActionID,
+			"type":                     action.Type,
+			"recommendation_type":      action.RecommendationType,
+			"severity":                 action.Severity,
+			"title":                    action.Title,
+			"local_group_id":           action.LocalGroupID,
+			"local_sub2api_account_id": action.LocalSub2APIAccountID,
+		})
+	}
+	groups := make([]map[string]any, 0, len(result.Groups))
+	for _, group := range result.Groups {
+		groups = append(groups, map[string]any{
+			"local_group_id":        group.LocalGroupID,
+			"local_group_name":      group.LocalGroupName,
+			"platform":              group.Platform,
+			"active_api_key_count":  group.ActiveAPIKeyCount,
+			"schedulable_accounts":  group.SchedulableAccounts,
+			"status":                group.Status,
+			"skipped_reason":        group.SkippedReason,
+			"error":                 group.Error,
+			"candidate_account_id":  group.CandidateAccountID,
+			"candidate_supplier_id": group.CandidateSupplierID,
+			"effective_rate":        group.EffectiveRate,
+		})
+	}
+	return map[string]any{
+		"auto_execute_enabled": result.AutoExecuteEnabled,
+		"actions_generated":    result.ActionsGenerated,
+		"actions":              actions,
+		"groups_scanned":       result.GroupsScanned,
+		"eligible_groups":      result.EligibleGroups,
+		"attempted":            result.Attempted,
+		"succeeded":            result.Succeeded,
+		"skipped":              result.Skipped,
+		"failed":               result.Failed,
+		"groups":               groups,
+	}
+}
+
+func routingCapacityWatchActionResults(actions []adminplusdomain.SchedulerAction) []routingCapacityWatchActionResult {
+	items := make([]routingCapacityWatchActionResult, 0, len(actions))
+	for _, action := range actions {
+		item := routingCapacityWatchActionResult{
+			ActionID: action.ID,
+			Type:     action.Type,
+			Severity: action.Severity,
+			Title:    action.Title,
+		}
+		objectID := schedulerActionObjectID(action.ID)
+		switch action.Type {
+		case "local_group.routing.refill", "local_group.routing.low_capacity":
+			item.RecommendationType = string(adminplusdomain.ActionTypeRoutingRefill)
+			item.LocalGroupID = objectID
+		case "local_account.schedule.disable":
+			item.RecommendationType = string(adminplusdomain.ActionTypeLocalAccountScheduleDisable)
+			item.LocalSub2APIAccountID = objectID
+		default:
+			continue
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+func schedulerActionObjectID(actionID string) int64 {
+	raw := actionID
+	if idx := strings.LastIndex(raw, ":"); idx >= 0 {
+		raw = raw[idx+1:]
+	}
+	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return value
+}
+
+func (s *Service) localRoutingActions(ctx context.Context, now time.Time, settings adminplusdomain.SchedulerSettings) []adminplusdomain.SchedulerAction {
+	actions, _ := s.localRoutingActionsAndSignals(ctx, now, settings)
 	return actions
+}
+
+func (s *Service) localRoutingActionsAndSignals(ctx context.Context, now time.Time, settings adminplusdomain.SchedulerSettings) ([]adminplusdomain.SchedulerAction, actionsapp.GenerateInput) {
+	if s == nil || s.candidateReader == nil {
+		return nil, actionsapp.GenerateInput{}
+	}
+	rows, err := s.candidateReader.ListLocalAccountOps(ctx, sub2apiapp.LocalAccountOpsFilter{Limit: 5000})
+	if err != nil {
+		rows = nil
+	}
+	actions := make([]adminplusdomain.SchedulerAction, 0)
+	signals := actionsapp.GenerateInput{}
+	groups, err := s.candidateReader.ListLocalGroups(ctx, 1000)
+	if err == nil && len(groups) > 0 {
+		actions = append(actions, localGroupCapacityActions(now, groups, rows, settings.RoutingRefillLowCapacityThreshold)...)
+		signals.LocalGroupCapacity = localGroupCapacityRecommendationSignals(groups, rows, settings.RoutingRefillLowCapacityThreshold)
+	}
+	actions = append(actions, localAccountScheduleActions(now, rows)...)
+	signals.LocalAccountSchedule = localAccountScheduleRecommendationSignals(rows)
+	return actions, signals
+}
+
+func (s *Service) syncActionRecommendations(ctx context.Context, signals actionsapp.GenerateInput) error {
+	if s == nil || s.actionSyncer == nil {
+		return nil
+	}
+	if len(signals.LocalGroupCapacity) == 0 && len(signals.LocalAccountSchedule) == 0 {
+		return nil
+	}
+	_, err := s.actionSyncer.Generate(ctx, signals)
+	return err
+}
+
+func localGroupCapacityActions(now time.Time, groups []*sub2apiapp.LocalSub2APIGroup, rows []*adminplusdomain.LocalAccountOpsRow, lowCapacityThreshold int64) []adminplusdomain.SchedulerAction {
+	actions := make([]adminplusdomain.SchedulerAction, 0)
+	if lowCapacityThreshold <= 0 {
+		lowCapacityThreshold = 1
+	}
+	for _, group := range groups {
+		if group == nil || group.ID <= 0 || group.ActiveAPIKeyCount <= 0 {
+			continue
+		}
+		candidate := bestLocalGroupRefillCandidate(group, rows)
+		switch {
+		case group.SchedulableAccounts == 0:
+			actions = append(actions, localGroupSchedulerAction(
+				now,
+				group,
+				"critical",
+				"local_group.routing.refill",
+				"本地调度分组空池",
+				localGroupCapacityReason(group, candidate),
+				localGroupRecommendedOperation(candidate),
+			))
+		case group.SchedulableAccounts <= lowCapacityThreshold:
+			actions = append(actions, localGroupSchedulerAction(
+				now,
+				group,
+				"warning",
+				"local_group.routing.low_capacity",
+				"本地调度分组低容量",
+				localGroupCapacityReason(group, candidate),
+				localGroupRecommendedOperation(candidate),
+			))
+		}
+	}
+	return actions
+}
+
+func localGroupCapacityRecommendationSignals(groups []*sub2apiapp.LocalSub2APIGroup, rows []*adminplusdomain.LocalAccountOpsRow, lowCapacityThreshold int64) []actionsapp.LocalGroupCapacitySignal {
+	signals := make([]actionsapp.LocalGroupCapacitySignal, 0, len(groups))
+	if lowCapacityThreshold <= 0 {
+		lowCapacityThreshold = 1
+	}
+	for _, group := range groups {
+		if group == nil || group.ID <= 0 || group.ActiveAPIKeyCount <= 0 || group.SchedulableAccounts > lowCapacityThreshold {
+			continue
+		}
+		candidate := bestLocalGroupRefillCandidate(group, rows)
+		signal := actionsapp.LocalGroupCapacitySignal{
+			LocalGroupID:         group.ID,
+			LocalGroupName:       group.Name,
+			Platform:             group.Platform,
+			TotalAccounts:        group.TotalAccounts,
+			SchedulableAccounts:  group.SchedulableAccounts,
+			ActiveAPIKeyCount:    group.ActiveAPIKeyCount,
+			RateMultiplier:       group.RateMultiplier,
+			LowCapacityThreshold: lowCapacityThreshold,
+		}
+		if candidate != nil {
+			signal.BestCandidateSupplierID = candidate.SupplierID
+			signal.BestCandidateSupplierGroupID = candidate.SupplierGroupID
+			signal.BestCandidateLocalAccountID = candidate.AccountID
+			signal.BestCandidateRateMultiplier = candidate.Rate
+			signal.BestCandidateCheckSource = candidate.CheckSource
+			signal.BestCandidateSupplierName = candidate.Supplier
+			signal.BestCandidateSupplierGroupName = candidate.GroupName
+		}
+		signals = append(signals, signal)
+	}
+	return signals
+}
+
+func localAccountScheduleActions(now time.Time, rows []*adminplusdomain.LocalAccountOpsRow) []adminplusdomain.SchedulerAction {
+	actions := make([]adminplusdomain.SchedulerAction, 0)
+	seen := make(map[int64]struct{})
+	for _, row := range rows {
+		if !localAccountNeedsScheduleDisable(row) {
+			continue
+		}
+		if _, ok := seen[row.LocalSub2APIAccountID]; ok {
+			continue
+		}
+		seen[row.LocalSub2APIAccountID] = struct{}{}
+		actions = append(actions, localAccountSchedulerAction(
+			now,
+			row,
+			"warning",
+			"local_account.schedule.disable",
+			"本地账号通道异常仍在调度",
+			localAccountScheduleDisableReason(row),
+			"预览关闭调度",
+		))
+	}
+	return actions
+}
+
+func localAccountScheduleRecommendationSignals(rows []*adminplusdomain.LocalAccountOpsRow) []actionsapp.LocalAccountScheduleSignal {
+	signals := make([]actionsapp.LocalAccountScheduleSignal, 0)
+	seen := make(map[int64]struct{})
+	for _, row := range rows {
+		if !localAccountNeedsScheduleDisable(row) {
+			continue
+		}
+		if _, ok := seen[row.LocalSub2APIAccountID]; ok {
+			continue
+		}
+		seen[row.LocalSub2APIAccountID] = struct{}{}
+		signals = append(signals, actionsapp.LocalAccountScheduleSignal{
+			SupplierID:              row.SupplierID,
+			SupplierGroupID:         row.SupplierGroupID,
+			LocalSub2APIAccountID:   row.LocalSub2APIAccountID,
+			LocalAccountName:        row.LocalAccountName,
+			SupplierName:            row.SupplierName,
+			SupplierGroupName:       row.SupplierGroupName,
+			LocalGroupIDs:           append([]int64(nil), row.LocalAccountGroupIDs...),
+			LocalGroupNames:         append([]string(nil), row.LocalAccountGroupNames...),
+			LocalAccountSchedulable: row.LocalAccountSchedulable,
+			CandidateStatus:         row.CandidateStatus,
+			BlockedReason:           row.BlockedReason,
+			CheckSource:             row.CheckSource,
+			BalanceStatus:           row.BalanceStatus,
+			KeyCapacityStatus:       row.KeyCapacityStatus,
+			ChannelCheckStatus:      row.ChannelCheckStatus,
+			EffectiveRateMultiplier: row.EffectiveRateMultiplier,
+		})
+	}
+	return signals
+}
+
+func localAccountNeedsScheduleDisable(row *adminplusdomain.LocalAccountOpsRow) bool {
+	if row == nil || row.LocalSub2APIAccountID <= 0 || !row.LocalAccountSchedulable || len(row.LocalAccountGroupIDs) == 0 {
+		return false
+	}
+	if strings.TrimSpace(row.CandidateStatus) == "" {
+		candidateeval.ApplyToLocalAccountOpsRow(row)
+	}
+	if strings.TrimSpace(row.CandidateStatus) != candidateeval.StatusBlocked {
+		return false
+	}
+	switch strings.TrimSpace(row.BlockedReason) {
+	case "channel_monitor_failed", "channel_active_probe_failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func bestLocalGroupRefillCandidate(group *sub2apiapp.LocalSub2APIGroup, rows []*adminplusdomain.LocalAccountOpsRow) *localGroupRefillCandidate {
+	if group == nil {
+		return nil
+	}
+	var best *localGroupRefillCandidate
+	for _, row := range rows {
+		if row == nil || row.LocalSub2APIAccountID <= 0 {
+			continue
+		}
+		if strings.TrimSpace(row.CandidateStatus) != "available" {
+			continue
+		}
+		if group.Platform != "" && !strings.EqualFold(strings.TrimSpace(row.LocalAccountPlatform), strings.TrimSpace(group.Platform)) {
+			continue
+		}
+		if containsInt64(row.LocalAccountGroupIDs, group.ID) {
+			continue
+		}
+		rate := row.EffectiveRateMultiplier
+		if rate <= 0 {
+			continue
+		}
+		if best == nil || rate < best.Rate || (rate == best.Rate && row.LocalSub2APIAccountID < best.AccountID) {
+			best = &localGroupRefillCandidate{
+				AccountID:       row.LocalSub2APIAccountID,
+				SupplierID:      row.SupplierID,
+				SupplierGroupID: row.SupplierGroupID,
+				GroupName:       strings.TrimSpace(row.SupplierGroupName),
+				Rate:            rate,
+				Supplier:        strings.TrimSpace(row.SupplierName),
+				CheckSource:     strings.TrimSpace(row.CheckSource),
+			}
+		}
+	}
+	return best
+}
+
+func localGroupCapacityReason(group *sub2apiapp.LocalSub2APIGroup, candidate *localGroupRefillCandidate) string {
+	if group == nil {
+		return "本地调度分组容量不足。"
+	}
+	base := fmt.Sprintf("%s 有 %d 个启用用户 Key，可调度账号数为 %d。", firstNonEmpty(group.Name, fmt.Sprintf("#%d", group.ID)), group.ActiveAPIKeyCount, group.SchedulableAccounts)
+	if candidate == nil {
+		return base + " 当前没有可补入候选，请先同步供应商、检查余额和通道状态。"
+	}
+	supplier := candidate.Supplier
+	if supplier == "" {
+		supplier = "未知供应商"
+	}
+	return fmt.Sprintf("%s 可预览补入最低倍率候选：账号 #%d，%s，%.4gx。", base, candidate.AccountID, supplier, candidate.Rate)
+}
+
+func localGroupRecommendedOperation(candidate *localGroupRefillCandidate) string {
+	if candidate == nil {
+		return "检查候选池"
+	}
+	return "预览补池"
+}
+
+func localAccountScheduleDisableReason(row *adminplusdomain.LocalAccountOpsRow) string {
+	if row == nil {
+		return "本地账号通道异常但仍在调度。"
+	}
+	accountName := firstNonEmpty(row.LocalAccountName, fmt.Sprintf("#%d", row.LocalSub2APIAccountID))
+	supplierName := firstNonEmpty(row.SupplierName, "未知供应商")
+	groups := localAccountGroupNames(row)
+	return fmt.Sprintf(
+		"%s 的本地账号 #%d（%s）仍在分组 %s 参与调度，候选评估为 %s；建议先在本地账号运营页预览关闭调度。",
+		supplierName,
+		row.LocalSub2APIAccountID,
+		accountName,
+		groups,
+		firstNonEmpty(row.BlockedReason, "channel_failed"),
+	)
+}
+
+func localAccountGroupNames(row *adminplusdomain.LocalAccountOpsRow) string {
+	if row == nil {
+		return "-"
+	}
+	names := make([]string, 0, len(row.LocalAccountGroupNames)+len(row.LocalAccountGroupIDs))
+	for _, name := range row.LocalAccountGroupNames {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) > 0 {
+		return strings.Join(names, ", ")
+	}
+	for _, id := range row.LocalAccountGroupIDs {
+		if id > 0 {
+			names = append(names, fmt.Sprintf("#%d", id))
+		}
+	}
+	if len(names) == 0 {
+		return "-"
+	}
+	return strings.Join(names, ", ")
 }
 
 func (s *Service) Settings(ctx context.Context) adminplusdomain.SchedulerSettings {
@@ -972,12 +1582,17 @@ func (s *Service) UpdateSettings(ctx context.Context, settings adminplusdomain.S
 
 func (s *Service) defaultSettings() adminplusdomain.SchedulerSettings {
 	return adminplusdomain.SchedulerSettings{
-		Enabled:                       schedulerEnabled(),
-		DefaultSupplierConcurrency:    1,
-		ChannelChecksEnabled:          channelChecksSchedulerEnabled(),
-		ChannelCheckDailyBudgetTokens: 0,
-		FirstTokenSlowThresholdMS:     3000,
-		TotalLatencySlowThresholdMS:   15000,
+		Enabled:                           schedulerEnabled(),
+		DefaultSupplierConcurrency:        1,
+		ChannelChecksEnabled:              channelChecksSchedulerEnabled(),
+		ChannelCheckDailyBudgetTokens:     0,
+		FirstTokenSlowThresholdMS:         3000,
+		TotalLatencySlowThresholdMS:       15000,
+		RoutingRefillAutoExecuteEnabled:   false,
+		RoutingRefillLowCapacityThreshold: 1,
+		RoutingRefillCooldownSeconds:      180,
+		RoutingRefillConfirmWindowSeconds: 0,
+		RoutingRefillMaxRateMultiplier:    0,
 		DefaultEnabledTaskTypes: []string{
 			"supplier.balance.sync",
 			"supplier.groups.sync",
@@ -1005,6 +1620,24 @@ func normalizeSettings(settings, defaults adminplusdomain.SchedulerSettings) adm
 	}
 	if settings.TotalLatencySlowThresholdMS <= 0 {
 		settings.TotalLatencySlowThresholdMS = defaults.TotalLatencySlowThresholdMS
+	}
+	if settings.RoutingRefillLowCapacityThreshold <= 0 {
+		settings.RoutingRefillLowCapacityThreshold = defaults.RoutingRefillLowCapacityThreshold
+	}
+	if settings.RoutingRefillCooldownSeconds <= 0 {
+		settings.RoutingRefillCooldownSeconds = defaults.RoutingRefillCooldownSeconds
+	}
+	if settings.RoutingRefillCooldownSeconds > 86400 {
+		settings.RoutingRefillCooldownSeconds = 86400
+	}
+	if settings.RoutingRefillConfirmWindowSeconds < 0 {
+		settings.RoutingRefillConfirmWindowSeconds = 0
+	}
+	if settings.RoutingRefillConfirmWindowSeconds > 86400 {
+		settings.RoutingRefillConfirmWindowSeconds = 86400
+	}
+	if settings.RoutingRefillMaxRateMultiplier < 0 {
+		settings.RoutingRefillMaxRateMultiplier = 0
 	}
 	if len(settings.DefaultEnabledTaskTypes) == 0 {
 		settings.DefaultEnabledTaskTypes = defaults.DefaultEnabledTaskTypes
@@ -1328,6 +1961,9 @@ func (s *Service) executeClaimedStep(ctx context.Context, step *adminplusdomain.
 	if step == nil {
 		return "dead", 0, "step_missing", nil
 	}
+	if isLocalSchedulerTask(step.TaskType) {
+		return s.executeLocalStep(ctx, step, now)
+	}
 	supplier, err := s.supplierService.Get(ctx, step.SupplierID)
 	if err != nil {
 		return "retryable_failed", 0, err.Error(), nil
@@ -1382,6 +2018,65 @@ func (s *Service) executeClaimedStep(ctx context.Context, step *adminplusdomain.
 		return stepFailureStatus(item.Reason), item.Total, item.Reason, item.Result
 	}
 	return "succeeded", item.Total, "", item.Result
+}
+
+func (s *Service) scheduleLocalTask(ctx context.Context, taskType adminplusdomain.ExtensionTaskType, mode string, windowMinutes int, now time.Time, dryRun bool, request map[string]any) adminplusdomain.ScheduledTask {
+	item := s.planLocalTask(taskType, windowMinutes, now)
+	item.Request = cloneMap(request)
+	if item.Reason != "" || dryRun {
+		return item
+	}
+	s.syncLocalTask(ctx, taskType, now, &item)
+	return item
+}
+
+func (s *Service) planLocalTask(taskType adminplusdomain.ExtensionTaskType, windowMinutes int, now time.Time) adminplusdomain.ScheduledTask {
+	item := adminplusdomain.ScheduledTask{
+		SupplierID:   0,
+		SupplierName: "本地调度",
+		TaskType:     taskType,
+		Action:       actionForTaskType(taskType),
+	}
+	if !isLocalSchedulerTask(taskType) {
+		item.Reason = "local_task_not_supported"
+		return item
+	}
+	bucket := scheduleBucket(taskType, now, windowMinutes)
+	item.ScheduleKey = fmt.Sprintf("scheduler:%s:local:%s", taskType, bucket)
+	return item
+}
+
+func (s *Service) executeLocalStep(ctx context.Context, step *adminplusdomain.SchedulerStepRecord, now time.Time) (string, int, string, map[string]any) {
+	item := adminplusdomain.ScheduledTask{
+		SupplierID:   step.SupplierID,
+		SupplierName: firstNonEmpty(step.SupplierName, "本地调度"),
+		TaskType:     step.TaskType,
+		Action:       step.Action,
+		ScheduleKey:  step.ScheduleKey,
+		Request:      cloneMap(step.RequestSnapshot),
+	}
+	s.syncLocalTask(ctx, step.TaskType, now, &item)
+	if item.Reason != "" {
+		return stepFailureStatus(item.Reason), item.Total, item.Reason, item.Result
+	}
+	return "succeeded", item.Total, "", item.Result
+}
+
+func (s *Service) syncLocalTask(ctx context.Context, taskType adminplusdomain.ExtensionTaskType, now time.Time, item *adminplusdomain.ScheduledTask) {
+	switch taskType {
+	case adminplusdomain.ExtensionTaskTypeRoutingCapacityWatch:
+		result, err := s.executeRoutingCapacityWatch(ctx, now)
+		if err != nil {
+			item.Reason = encodeSyncFailure(stepFailureInput{TaskType: taskType, Stage: "local_routing_capacity_watch", Action: "routing_refill", Err: err})
+			item.Result = routingCapacityWatchResultSnapshot(result)
+			return
+		}
+		item.Synced = true
+		item.Total = result.Total
+		item.Result = routingCapacityWatchResultSnapshot(result)
+	default:
+		item.Reason = "local_task_not_supported"
+	}
 }
 
 func (s *Service) scheduleSupplierTask(ctx context.Context, supplier *adminplusdomain.Supplier, taskType adminplusdomain.ExtensionTaskType, mode string, windowMinutes int, now time.Time, dryRun bool, request map[string]any) adminplusdomain.ScheduledTask {
@@ -1514,10 +2209,6 @@ func (s *Service) refreshSupplierSession(ctx context.Context, supplier *adminplu
 		"task_type":       string(taskType),
 		"scheduler_stage": stage,
 	}
-	if taskRequiresAdminSession(taskType) {
-		loginContext["require_admin_session"] = true
-		loginContext["required_role"] = "10"
-	}
 	login, loginErr := s.sessionRefresher.Login(ctx, sessionsapp.LoginInput{
 		SupplierID:   supplier.ID,
 		LoginContext: loginContext,
@@ -1552,15 +2243,6 @@ func (s *Service) refreshSupplierSession(ctx context.Context, supplier *adminplu
 		return false
 	}
 	return true
-}
-
-func taskRequiresAdminSession(taskType adminplusdomain.ExtensionTaskType) bool {
-	switch taskType {
-	case adminplusdomain.ExtensionTaskTypeFetchUsageCosts, adminplusdomain.ExtensionTaskTypeReconcileCosts:
-		return true
-	default:
-		return false
-	}
 }
 
 func (s *Service) syncSupplierTask(ctx context.Context, supplier *adminplusdomain.Supplier, taskType adminplusdomain.ExtensionTaskType, now time.Time, item *adminplusdomain.ScheduledTask) {
@@ -1744,6 +2426,7 @@ func (s *Service) defaultPlans() []adminplusdomain.SchedulerPlan {
 		plan("supplier.session.probe", "会话探测", "supplier.session.probe", []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeFetchHealth}, "enabled", "全部启用供应商", 30*time.Minute, 30, "fire_once", "forbid", false, "探测供应商会话和只读 capability", now),
 		plan("supplier.channels.check", "渠道健康检测", "supplier.channels.check", []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeCheckChannels}, "paused", "按供应商启用", 0, 10, "skip", "forbid", true, "使用真实模型请求检测渠道可用性、首 token 和总耗时", now),
 		plan("supplier.purity.check", "模型纯度检测", "supplier.purity.check", []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeRunPurityCheck}, "paused", "按供应商启用", 0, 10, "skip", "forbid", true, "使用本地账号 API Key 执行模型身份、协议和 usage 纯度检测", now),
+		plan("local.sub2api.routing.capacity_watch", "本地容量巡检", "local.sub2api.routing.capacity_watch", []adminplusdomain.ExtensionTaskType{adminplusdomain.ExtensionTaskTypeRoutingCapacityWatch}, "paused", "本地调度分组", 0, 10, "skip", "forbid", false, "扫描有用户 Key 但可调度账号不足的本地分组，并生成补池动作建议", now),
 		plan("local.sub2api.schedule.ensure", "加入本地调度", "local.sub2api.schedule.ensure", nil, "paused", "智能动作触发", 0, 10, "skip", "forbid", true, "将低倍率且可用的供应商渠道加入本地 Lime/Sub2API 调度", now),
 	}
 }
@@ -1893,7 +2576,136 @@ func applyPlanConfig(plan *adminplusdomain.SchedulerPlan, config adminplusdomain
 	}
 }
 
-func schedulerSupplierStatus(supplier *adminplusdomain.Supplier, latestSteps map[adminplusdomain.ExtensionTaskType]adminplusdomain.SchedulerStepRecord) adminplusdomain.SchedulerSupplierStatus {
+func (s *Service) supplierCandidateSummaries(ctx context.Context, limit int) map[int64]*adminplusdomain.SchedulerCandidateSummary {
+	out := make(map[int64]*adminplusdomain.SchedulerCandidateSummary)
+	if s == nil || s.candidateReader == nil {
+		return out
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	rows, err := s.candidateReader.ListLocalAccountOps(ctx, sub2apiapp.LocalAccountOpsFilter{Limit: limit})
+	if err != nil {
+		return out
+	}
+	for _, row := range rows {
+		if row == nil || row.SupplierID <= 0 {
+			continue
+		}
+		summary := out[row.SupplierID]
+		if summary == nil {
+			summary = &adminplusdomain.SchedulerCandidateSummary{}
+			out[row.SupplierID] = summary
+		}
+		applyCandidateRowToSchedulerSummary(summary, row)
+	}
+	for _, summary := range out {
+		finalizeSchedulerCandidateSummary(summary)
+	}
+	return out
+}
+
+func applyCandidateRowToSchedulerSummary(summary *adminplusdomain.SchedulerCandidateSummary, row *adminplusdomain.LocalAccountOpsRow) {
+	status := strings.TrimSpace(row.CandidateStatus)
+	if status == "" {
+		status = "unknown"
+	}
+	if row.EffectiveRateMultiplier > 0 && (summary.LowestEffectiveRateMultiplier == 0 || row.EffectiveRateMultiplier < summary.LowestEffectiveRateMultiplier) {
+		summary.LowestEffectiveRateMultiplier = row.EffectiveRateMultiplier
+	}
+	if status == "available" {
+		summary.AvailableCount++
+	} else {
+		summary.BlockedCount++
+	}
+	switch status {
+	case "balance_blocked":
+		summary.BalanceBlockedCount++
+	case "capacity_blocked":
+		summary.CapacityBlockedCount++
+	case "unknown":
+		summary.UnknownCount++
+	}
+	if shouldUseCandidateReason(summary, row) {
+		summary.CandidateStatus = status
+		summary.BlockedReason = strings.TrimSpace(row.BlockedReason)
+		summary.CheckSource = strings.TrimSpace(row.CheckSource)
+	}
+}
+
+func shouldUseCandidateReason(summary *adminplusdomain.SchedulerCandidateSummary, row *adminplusdomain.LocalAccountOpsRow) bool {
+	if strings.TrimSpace(row.BlockedReason) == "" {
+		return false
+	}
+	if summary.BlockedReason == "" {
+		return true
+	}
+	return schedulerCandidateReasonPriority(row.CandidateStatus, row.BlockedReason) > schedulerCandidateReasonPriority(summary.CandidateStatus, summary.BlockedReason)
+}
+
+func schedulerCandidateReasonPriority(status string, reason string) int {
+	reason = strings.TrimSpace(reason)
+	status = strings.TrimSpace(status)
+	switch {
+	case reason == "recharge_required" || status == "balance_blocked":
+		return 80
+	case reason == "key_capacity_exhausted" || status == "capacity_blocked":
+		return 70
+	case status == "local_blocked":
+		return 60
+	case reason == "channel_monitor_failed":
+		return 50
+	case status == "needs_provisioning":
+		return 40
+	default:
+		return 10
+	}
+}
+
+func finalizeSchedulerCandidateSummary(summary *adminplusdomain.SchedulerCandidateSummary) {
+	if summary.CandidateStatus != "" {
+		return
+	}
+	if summary.AvailableCount > 0 {
+		summary.CandidateStatus = "available"
+		summary.CheckSource = "candidate_evaluator"
+		return
+	}
+	if summary.BlockedCount > 0 {
+		summary.CandidateStatus = "blocked"
+		summary.BlockedReason = "candidate_unavailable"
+		summary.CheckSource = "candidate_evaluator"
+		return
+	}
+	summary.CandidateStatus = "unknown"
+	summary.BlockedReason = "candidate_missing"
+	summary.CheckSource = "candidate_evaluator"
+}
+
+func schedulerCandidateRecommendedAction(summary *adminplusdomain.SchedulerCandidateSummary) string {
+	if summary == nil {
+		return ""
+	}
+	switch summary.BlockedReason {
+	case "recharge_required":
+		return "充值后重跑候选评估"
+	case "key_capacity_exhausted":
+		return "检查 Key 配额和开通计划"
+	case "local_account_state_drift", "local_account_metadata_drift":
+		return "同步并处理本地账号漂移"
+	case "local_account_unschedulable", "local_account_temp_unschedulable":
+		return "检查本地账号调度状态"
+	case "channel_monitor_failed":
+		return "检查通道监控后再实测"
+	default:
+		if summary.BlockedReason != "" {
+			return "查看候选阻断原因"
+		}
+		return ""
+	}
+}
+
+func schedulerSupplierStatus(supplier *adminplusdomain.Supplier, latestSteps map[adminplusdomain.ExtensionTaskType]adminplusdomain.SchedulerStepRecord, candidateSummary *adminplusdomain.SchedulerCandidateSummary) adminplusdomain.SchedulerSupplierStatus {
 	sessionStatus := taskStatusFromLatest(latestSteps, adminplusdomain.ExtensionTaskTypeFetchHealth, "not_checked")
 	lastError := ""
 	recommendedAction := ""
@@ -1930,6 +2742,29 @@ func schedulerSupplierStatus(supplier *adminplusdomain.Supplier, latestSteps map
 		lastError = "supplier_disabled"
 		recommendedAction = "恢复供应商后再启用自动化"
 	}
+	if candidateSummary != nil {
+		if candidateSummary.AvailableCount > 0 {
+			scheduleStatus = "ready"
+		} else if candidateSummary.BalanceBlockedCount > 0 {
+			scheduleStatus = "blocked"
+			if recommendedAction == "" {
+				recommendedAction = "充值后重跑候选评估"
+			}
+		} else if candidateSummary.CapacityBlockedCount > 0 {
+			scheduleStatus = "blocked"
+			if recommendedAction == "" {
+				recommendedAction = "检查 Key 配额和开通计划"
+			}
+		} else if candidateSummary.BlockedCount > 0 {
+			scheduleStatus = "blocked"
+			if recommendedAction == "" {
+				recommendedAction = schedulerCandidateRecommendedAction(candidateSummary)
+			}
+		}
+		if candidateSummary.BlockedReason != "" && lastError == "" {
+			lastError = candidateSummary.BlockedReason
+		}
+	}
 	out := adminplusdomain.SchedulerSupplierStatus{
 		SupplierID:        supplier.ID,
 		SupplierName:      supplier.Name,
@@ -1947,6 +2782,7 @@ func schedulerSupplierStatus(supplier *adminplusdomain.Supplier, latestSteps map
 		ScheduleStatus:    scheduleStatus,
 		LastError:         lastError,
 		RecommendedAction: recommendedAction,
+		CandidateSummary:  candidateSummary,
 	}
 	out.CompletionPercent = schedulerChecklistCompletionPercent(schedulerSupplierChecklistItems(supplier, out))
 	return out
@@ -2002,6 +2838,7 @@ func schedulerSupplierChecklistItems(supplier *adminplusdomain.Supplier, status 
 		checklistItem("rates", "使用倍率", status.RateStatus, "同步渠道使用倍率并计算有效倍率", status.RateStatus, "同步倍率", &updatedAt),
 		checklistItem("billing", "账务采集", status.BillingStatus, "充值、兑换和 usage 采集为成本对账提供事实", status.BillingStatus, "运行成本对账", &updatedAt),
 		checklistItem("channels", "渠道检测", status.ChannelStatus, "渠道检测会消耗 token，默认需要人工启用", status.ChannelStatus, "开启渠道检测或单次检测", &updatedAt),
+		checklistItem("candidate_pool", "候选池", schedulerCandidateChecklistStatus(status.CandidateSummary), "统一候选评估解释余额、配额、通道和本地调度阻断原因", schedulerCandidateEvidence(status.CandidateSummary), schedulerCandidateRecommendedAction(status.CandidateSummary), &updatedAt),
 		checklistItem("schedule", "Lime/OpenAI 调度", status.ScheduleStatus, "可用低倍率渠道应能加入本地调度分组", status.ScheduleStatus, "加入本地调度", &updatedAt),
 	}
 	if supplier.RuntimeStatus == adminplusdomain.SupplierRuntimeStatusDisabled {
@@ -2013,6 +2850,45 @@ func schedulerSupplierChecklistItems(supplier *adminplusdomain.Supplier, status 
 		}
 	}
 	return items
+}
+
+func schedulerCandidateChecklistStatus(summary *adminplusdomain.SchedulerCandidateSummary) string {
+	if summary == nil {
+		return "not_checked"
+	}
+	if summary.AvailableCount > 0 {
+		return "ready"
+	}
+	if summary.BlockedCount > 0 {
+		return "blocked"
+	}
+	return "not_checked"
+}
+
+func schedulerCandidateEvidence(summary *adminplusdomain.SchedulerCandidateSummary) string {
+	if summary == nil {
+		return "未读取候选池"
+	}
+	parts := []string{
+		fmt.Sprintf("可用 %d", summary.AvailableCount),
+		fmt.Sprintf("阻断 %d", summary.BlockedCount),
+	}
+	if summary.BalanceBlockedCount > 0 {
+		parts = append(parts, fmt.Sprintf("余额阻断 %d", summary.BalanceBlockedCount))
+	}
+	if summary.CapacityBlockedCount > 0 {
+		parts = append(parts, fmt.Sprintf("配额阻断 %d", summary.CapacityBlockedCount))
+	}
+	if summary.UnknownCount > 0 {
+		parts = append(parts, fmt.Sprintf("待确认 %d", summary.UnknownCount))
+	}
+	if summary.LowestEffectiveRateMultiplier > 0 {
+		parts = append(parts, fmt.Sprintf("最低倍率 %.4g", summary.LowestEffectiveRateMultiplier))
+	}
+	if summary.BlockedReason != "" {
+		parts = append(parts, "原因 "+summary.BlockedReason)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func schedulerChecklistCompletionPercent(items []adminplusdomain.SchedulerSupplierChecklistItem) int {
@@ -2229,9 +3105,9 @@ func syncFailureSuggestion(code string) string {
 	case "SUPPLIER_SESSION_NOT_FOUND", "SUPPLIER_SESSION_EXPIRED", "SUPPLIER_SESSION_DECRYPT_FAILED":
 		return "重新一键登录或使用 Chrome 插件采集会话后重试。"
 	case "SUPPLIER_SESSION_PERMISSION_DENIED":
-		return "供应商会话无权读取该接口，请重新登录、检查账号权限或改用插件采集最新会话。"
+		return "供应商注册用户会话无权读取该接口，请检查账号权限、换用具备权限的账号/token，或使用插件采集最新会话。"
 	case "SUPPLIER_NEW_API_ADMIN_SESSION_REQUIRED":
-		return "new-api 历史全量需要管理员/root 会话，请先执行一键登录并使用管理员账号重新登录后重试。"
+		return "new-api 历史接口需要更高数据权限，请确认注册用户具备该接口权限，或换用可读取该数据的账号/token 后重试。"
 	case "SUPPLIER_SESSION_PROBE_FAILED":
 		return "供应商接口超时或不可达，请检查供应商地址、网络出口和前置防护后重试。"
 	case "SUPPLIER_SESSION_PROBE_HTML", "SUPPLIER_SESSION_PROBE_BAD_STATUS", "SUPPLIER_DIRECT_LOGIN_UPSTREAM_HTML", "SUPPLIER_DIRECT_LOGIN_UPSTREAM_ORIGIN_ERROR":
@@ -2262,9 +3138,7 @@ func isSessionRefreshableCode(code string) bool {
 	switch strings.ToUpper(strings.TrimSpace(code)) {
 	case "SUPPLIER_SESSION_NOT_FOUND",
 		"SUPPLIER_SESSION_EXPIRED",
-		"SUPPLIER_SESSION_DECRYPT_FAILED",
-		"SUPPLIER_SESSION_PERMISSION_DENIED",
-		"SUPPLIER_NEW_API_ADMIN_SESSION_REQUIRED":
+		"SUPPLIER_SESSION_DECRYPT_FAILED":
 		return true
 	default:
 		return false
@@ -2307,7 +3181,7 @@ func loginFailureSuggestion(err error) string {
 	case "SUPPLIER_DIRECT_LOGIN_CREDENTIAL_REQUIRED":
 		return "补充供应商登录账号密码或 access token 后重试。"
 	case "SUPPLIER_DIRECT_LOGIN_ADMIN_REQUIRED":
-		return "供应商后台模式需要管理员账号，请换用管理员凭据后重试。"
+		return "当前账号无权完成供应商后台直登，请换用具备对应接口权限的账号/token 后重试。"
 	case "SUPPLIER_DIRECT_LOGIN_UNSUPPORTED":
 		return "该供应商类型暂不支持后端直登，请使用插件采集会话后重试。"
 	case "LOGIN_CREDENTIAL_INVALID":
@@ -2391,6 +3265,61 @@ func schedulerAction(now time.Time, supplier *adminplusdomain.Supplier, severity
 	}
 }
 
+func localGroupSchedulerAction(now time.Time, group *sub2apiapp.LocalSub2APIGroup, severity, actionType, title, reason, operation string) adminplusdomain.SchedulerAction {
+	groupID := int64(0)
+	groupName := ""
+	if group != nil {
+		groupID = group.ID
+		groupName = group.Name
+	}
+	return adminplusdomain.SchedulerAction{
+		ID:                   fmt.Sprintf("%s:%d", actionType, groupID),
+		SupplierID:           0,
+		SupplierName:         groupName,
+		Severity:             severity,
+		Status:               "open",
+		Type:                 actionType,
+		Title:                title,
+		Reason:               reason,
+		RecommendedOperation: operation,
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+}
+
+func localAccountSchedulerAction(now time.Time, row *adminplusdomain.LocalAccountOpsRow, severity, actionType, title, reason, operation string) adminplusdomain.SchedulerAction {
+	accountID := int64(0)
+	supplierID := int64(0)
+	supplierName := ""
+	if row != nil {
+		accountID = row.LocalSub2APIAccountID
+		supplierID = row.SupplierID
+		supplierName = row.SupplierName
+	}
+	return adminplusdomain.SchedulerAction{
+		ID:                   fmt.Sprintf("%s:%d", actionType, accountID),
+		SupplierID:           supplierID,
+		SupplierName:         supplierName,
+		Severity:             severity,
+		Status:               "open",
+		Type:                 actionType,
+		Title:                title,
+		Reason:               reason,
+		RecommendedOperation: operation,
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+}
+
+func containsInt64(values []int64, needle int64) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
+}
+
 func schedulerRunTaskLabel(taskTypes []adminplusdomain.ExtensionTaskType) string {
 	if len(taskTypes) == 1 {
 		return schedulerTaskTypeLabel(taskTypes[0])
@@ -2421,6 +3350,8 @@ func schedulerTaskTypeLabel(taskType adminplusdomain.ExtensionTaskType) string {
 		return "supplier.purity.check"
 	case adminplusdomain.ExtensionTaskTypeCaptureSession:
 		return "supplier.session.capture"
+	case adminplusdomain.ExtensionTaskTypeRoutingCapacityWatch:
+		return "local.sub2api.routing.capacity_watch"
 	default:
 		return string(taskType)
 	}
@@ -2501,6 +3432,31 @@ func normalizeTaskTypes(input []adminplusdomain.ExtensionTaskType) []adminplusdo
 	return out
 }
 
+func localSchedulerTaskTypes(taskTypes []adminplusdomain.ExtensionTaskType) ([]adminplusdomain.ExtensionTaskType, bool) {
+	out := make([]adminplusdomain.ExtensionTaskType, 0)
+	for _, taskType := range taskTypes {
+		if isLocalSchedulerTask(taskType) {
+			out = append(out, taskType)
+		}
+	}
+	return out, len(out) > 0
+}
+
+func supplierSchedulerTaskTypes(taskTypes []adminplusdomain.ExtensionTaskType) []adminplusdomain.ExtensionTaskType {
+	out := make([]adminplusdomain.ExtensionTaskType, 0, len(taskTypes))
+	for _, taskType := range taskTypes {
+		if isLocalSchedulerTask(taskType) {
+			continue
+		}
+		out = append(out, taskType)
+	}
+	return out
+}
+
+func isLocalSchedulerTask(taskType adminplusdomain.ExtensionTaskType) bool {
+	return taskType == adminplusdomain.ExtensionTaskTypeRoutingCapacityWatch
+}
+
 func ineligibleReason(supplier *adminplusdomain.Supplier, taskType adminplusdomain.ExtensionTaskType) string {
 	if supplier.RuntimeStatus == adminplusdomain.SupplierRuntimeStatusDisabled {
 		return "supplier_disabled"
@@ -2543,7 +3499,8 @@ func actionForTaskType(taskType adminplusdomain.ExtensionTaskType) string {
 		adminplusdomain.ExtensionTaskTypeFetchUsageCosts,
 		adminplusdomain.ExtensionTaskTypeReconcileCosts,
 		adminplusdomain.ExtensionTaskTypeCheckChannels,
-		adminplusdomain.ExtensionTaskTypeRunPurityCheck:
+		adminplusdomain.ExtensionTaskTypeRunPurityCheck,
+		adminplusdomain.ExtensionTaskTypeRoutingCapacityWatch:
 		return actionDirectSync
 	case adminplusdomain.ExtensionTaskTypeCaptureSession:
 		return actionExtensionTask

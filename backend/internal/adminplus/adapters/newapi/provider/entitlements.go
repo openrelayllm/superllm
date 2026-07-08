@@ -24,9 +24,6 @@ func (c *Client) ReadEntitlementTransactions(ctx context.Context, in ports.Sessi
 		return nil, err
 	}
 	role, roleKnown := newAPIRoleFromBundle(in.Bundle)
-	if roleKnown && role < newAPIAdminRole {
-		return nil, newAPIAdminSessionRequired(role, true)
-	}
 	baseEndpoint, err := buildEndpointURL(apiBaseURL, "/api/redemption/")
 	if err != nil {
 		return nil, err
@@ -42,8 +39,8 @@ func (c *Client) ReadEntitlementTransactions(ctx context.Context, in ports.Sessi
 		})
 		raw, err := c.doSessionJSON(ctx, http.MethodGet, endpoint, in.Bundle)
 		if err != nil {
-			if isNewAPIAdminPermissionError(err) {
-				return nil, newAPIAdminSessionRequired(role, roleKnown)
+			if isNewAPISessionPermissionError(err) {
+				return nil, newAPISessionPermissionRequired(role, roleKnown, err)
 			}
 			return nil, err
 		}
@@ -53,8 +50,8 @@ func (c *Client) ReadEntitlementTransactions(ctx context.Context, in ports.Sessi
 		}
 		if !envelope.Success {
 			err := classifySessionBusinessFailure(envelope.Message)
-			if isNewAPIAdminPermissionError(err) {
-				return nil, newAPIAdminSessionRequired(role, roleKnown)
+			if isNewAPISessionPermissionError(err) {
+				return nil, newAPISessionPermissionRequired(role, roleKnown, err)
 			}
 			return nil, err
 		}

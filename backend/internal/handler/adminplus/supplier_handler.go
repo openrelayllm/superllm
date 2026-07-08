@@ -39,6 +39,8 @@ type createSupplierRequest struct {
 	BalanceCents          int64   `json:"balance_cents"`
 	BalanceCurrency       string  `json:"balance_currency"`
 	RechargeMultiplier    float64 `json:"recharge_multiplier"`
+	KeyLimitPolicy        string  `json:"key_limit_policy"`
+	KeyLimitValue         int     `json:"key_limit_value"`
 }
 
 type createSupplierAccountRequest struct {
@@ -131,6 +133,8 @@ func (h *SupplierHandler) Create(c *gin.Context) {
 		BalanceCents:          req.BalanceCents,
 		BalanceCurrency:       req.BalanceCurrency,
 		RechargeMultiplier:    req.RechargeMultiplier,
+		KeyLimitPolicy:        req.KeyLimitPolicy,
+		KeyLimitValue:         req.KeyLimitValue,
 	})
 	if response.ErrorFrom(c, err) {
 		return
@@ -186,6 +190,8 @@ func (h *SupplierHandler) Update(c *gin.Context) {
 		BalanceCents:          req.BalanceCents,
 		BalanceCurrency:       req.BalanceCurrency,
 		RechargeMultiplier:    req.RechargeMultiplier,
+		KeyLimitPolicy:        req.KeyLimitPolicy,
+		KeyLimitValue:         req.KeyLimitValue,
 	})
 	if response.ErrorFrom(c, err) {
 		return

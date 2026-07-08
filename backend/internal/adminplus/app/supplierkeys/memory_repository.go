@@ -130,6 +130,20 @@ func (r *MemoryRepository) CreateKey(_ context.Context, key *adminplusdomain.Sup
 	return cloneKey(cp), nil
 }
 
+func (r *MemoryRepository) UpdateKeyManualSecret(_ context.Context, keyID int64, fingerprint string, last4 string) (*adminplusdomain.SupplierKey, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key, ok := r.keys[keyID]
+	if !ok {
+		return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_KEY_NOT_FOUND", "supplier key not found")
+	}
+	key.KeyFingerprint = strings.TrimSpace(fingerprint)
+	key.KeyLast4 = strings.TrimSpace(last4)
+	key.ErrorCode = ""
+	key.ErrorMessage = ""
+	return cloneKey(key), nil
+}
+
 func (r *MemoryRepository) UpdateKeyAfterLocalBind(_ context.Context, keyID int64, localAccount *service.Account, status adminplusdomain.SupplierKeyStatus, errorCode string, errorMessage string) (*adminplusdomain.SupplierKey, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -162,6 +176,32 @@ func (r *MemoryRepository) UpdateKeyName(_ context.Context, supplierID int64, ke
 			binding.SupplierAccountLabel = key.Name
 		}
 	}
+	return cloneKey(key), nil
+}
+
+func (r *MemoryRepository) DisableLocalProjection(_ context.Context, supplierID int64, keyID int64, reason string) (*adminplusdomain.SupplierKey, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key, ok := r.keys[keyID]
+	if !ok || key.SupplierID != supplierID {
+		return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_KEY_NOT_FOUND", "supplier key not found")
+	}
+	key.Status = adminplusdomain.SupplierKeyStatusDisabled
+	key.ErrorCode = "LOCAL_PROJECTION_RELEASED"
+	key.ErrorMessage = strings.TrimSpace(reason)
+	return cloneKey(key), nil
+}
+
+func (r *MemoryRepository) MarkKeyDisabled(_ context.Context, supplierID int64, keyID int64, errorCode string, errorMessage string) (*adminplusdomain.SupplierKey, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key, ok := r.keys[keyID]
+	if !ok || key.SupplierID != supplierID {
+		return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_KEY_NOT_FOUND", "supplier key not found")
+	}
+	key.Status = adminplusdomain.SupplierKeyStatusDisabled
+	key.ErrorCode = strings.TrimSpace(errorCode)
+	key.ErrorMessage = strings.TrimSpace(errorMessage)
 	return cloneKey(key), nil
 }
 
@@ -245,6 +285,8 @@ func cloneGroup(in *adminplusdomain.SupplierGroup) *adminplusdomain.SupplierGrou
 		return nil
 	}
 	out := *in
+	out.KeyLimitPolicy = normalizeGroupKeyLimitPolicy(out.KeyLimitPolicy)
+	out.KeyCapacityStatus = groupKeyCapacityStatus(out.KeyLimitPolicy, out.KeyLimitValue, out.ActiveKeyCount)
 	return &out
 }
 

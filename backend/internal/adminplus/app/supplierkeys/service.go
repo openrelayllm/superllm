@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -38,17 +39,19 @@ type ProvisionKeyInput struct {
 }
 
 type EnsureAllInput struct {
-	SupplierID              int64
-	SyncProviderName        bool
-	LocalAccountBaseURL     string
-	LocalAccountConcurrency int
-	LocalAccountPriority    int
-	LocalAccountGroupIDs    []int64
-	RuntimeStatus           adminplusdomain.SupplierRuntimeStatus
-	HealthStatus            adminplusdomain.SupplierHealthStatus
-	BalanceThresholdCents   int64
-	BalanceCents            int64
-	BalanceCurrency         string
+	SupplierID               int64
+	SyncProviderName         bool
+	AllowPartial             bool
+	SupplierGroupPriorityIDs []int64
+	LocalAccountBaseURL      string
+	LocalAccountConcurrency  int
+	LocalAccountPriority     int
+	LocalAccountGroupIDs     []int64
+	RuntimeStatus            adminplusdomain.SupplierRuntimeStatus
+	HealthStatus             adminplusdomain.SupplierHealthStatus
+	BalanceThresholdCents    int64
+	BalanceCents             int64
+	BalanceCurrency          string
 }
 
 type EnsureGroupInput struct {
@@ -57,24 +60,113 @@ type EnsureGroupInput struct {
 }
 
 type ProvisionGroupPlan struct {
-	SupplierGroupID int64  `json:"supplier_group_id"`
-	ExternalGroupID string `json:"external_group_id"`
-	GroupName       string `json:"group_name"`
-	ProviderFamily  string `json:"provider_family"`
+	SupplierGroupID               int64                             `json:"supplier_group_id"`
+	ExternalGroupID               string                            `json:"external_group_id"`
+	GroupName                     string                            `json:"group_name"`
+	ProviderFamily                string                            `json:"provider_family"`
+	RateMultiplier                float64                           `json:"rate_multiplier,omitempty"`
+	EffectiveRateMultiplier       float64                           `json:"effective_rate_multiplier,omitempty"`
+	Action                        string                            `json:"action"`
+	Priority                      int                               `json:"priority,omitempty"`
+	ExistingKeyID                 int64                             `json:"existing_key_id,omitempty"`
+	ExistingKeyStatus             adminplusdomain.SupplierKeyStatus `json:"existing_key_status,omitempty"`
+	ExistingLocalSub2APIAccountID int64                             `json:"existing_local_sub2api_account_id,omitempty"`
+	ProviderExternalKeyID         string                            `json:"provider_external_key_id,omitempty"`
+	ProviderKeyName               string                            `json:"provider_key_name,omitempty"`
+	ProviderKeyStatus             string                            `json:"provider_key_status,omitempty"`
+	GroupKeyLimitPolicy           string                            `json:"group_key_limit_policy,omitempty"`
+	GroupKeyLimitValue            int                               `json:"group_key_limit_value,omitempty"`
+	GroupActiveKeyCount           int                               `json:"group_active_key_count,omitempty"`
+	GroupRemainingKeySlots        int                               `json:"group_remaining_key_slots,omitempty"`
+	BlockedReason                 string                            `json:"blocked_reason,omitempty"`
+}
+
+type EnsureAllPlan struct {
+	SupplierID        int64                `json:"supplier_id"`
+	KeyLimitPolicy    string               `json:"key_limit_policy"`
+	KeyLimitValue     int                  `json:"key_limit_value"`
+	ActiveKeyCount    int                  `json:"active_key_count"`
+	RemainingKeySlots int                  `json:"remaining_key_slots"`
+	Total             int                  `json:"total"`
+	ToCreate          int                  `json:"to_create"`
+	AlreadySatisfied  int                  `json:"already_satisfied"`
+	Blocked           int                  `json:"blocked"`
+	Items             []ProvisionGroupPlan `json:"items"`
+}
+
+type providerKeyCapacitySnapshot struct {
+	ActiveKeyCount             int
+	ActiveByExternalGroup      map[string]ports.ProviderKeySnapshot
+	ActiveCountByExternalGroup map[string]int
+	Incomplete                 bool
 }
 
 type RepairBindingInput struct {
-	SupplierID                int64
-	KeyID                     int64
-	LocalSub2APIAccountID     int64
-	RuntimeStatus             adminplusdomain.SupplierRuntimeStatus
-	HealthStatus              adminplusdomain.SupplierHealthStatus
-	ConfiguredConcurrency     int
-	BalanceThresholdCents     int64
-	BalanceCents              int64
-	BalanceCurrency           string
-	SupplierAccountIdentifier string
-	SupplierAccountLabel      string
+	SupplierID                 int64
+	KeyID                      int64
+	LocalSub2APIAccountID      int64
+	ManualSecret               string
+	LocalAccountPlatform       string
+	LocalAccountName           string
+	LocalAccountBaseURL        string
+	LocalAccountPriority       int
+	LocalAccountRateMultiplier *float64
+	LocalAccountGroupIDs       []int64
+	RuntimeStatus              adminplusdomain.SupplierRuntimeStatus
+	HealthStatus               adminplusdomain.SupplierHealthStatus
+	ConfiguredConcurrency      int
+	BalanceThresholdCents      int64
+	BalanceCents               int64
+	BalanceCurrency            string
+	SupplierAccountIdentifier  string
+	SupplierAccountLabel       string
+}
+
+type ImportProviderProjectionInput struct {
+	SupplierID      int64
+	SupplierGroupID int64
+	ExternalKeyID   string
+}
+
+type ImportProviderProjectionsInput struct {
+	SupplierID int64
+	Items      []ImportProviderProjectionInput
+}
+
+type ImportProviderProjectionsResult struct {
+	SupplierID int64                                `json:"supplier_id"`
+	Total      int                                  `json:"total"`
+	Imported   int                                  `json:"imported"`
+	Skipped    int                                  `json:"skipped"`
+	Failed     int                                  `json:"failed"`
+	Items      []ImportProviderProjectionResultItem `json:"items"`
+}
+
+type ImportProviderProjectionResultItem struct {
+	SupplierGroupID int64                        `json:"supplier_group_id"`
+	ExternalKeyID   string                       `json:"external_key_id,omitempty"`
+	Action          string                       `json:"action"`
+	Key             *adminplusdomain.SupplierKey `json:"key,omitempty"`
+	ErrorCode       string                       `json:"error_code,omitempty"`
+	ErrorMessage    string                       `json:"error_message,omitempty"`
+}
+
+type DisableLocalProjectionInput struct {
+	SupplierID int64
+	KeyID      int64
+	Reason     string
+}
+
+type DisableProviderKeyInput struct {
+	SupplierID int64
+	KeyID      int64
+	Reason     string
+}
+
+type DeleteProviderKeyInput struct {
+	SupplierID int64
+	KeyID      int64
+	Reason     string
 }
 
 type StandardizeNamesInput struct {
@@ -151,8 +243,11 @@ type Repository interface {
 	ListGroups(ctx context.Context, supplierID int64) ([]*adminplusdomain.SupplierGroup, error)
 	FindActiveByGroup(ctx context.Context, supplierID int64, groupID int64) (*adminplusdomain.SupplierKey, error)
 	CreateKey(ctx context.Context, key *adminplusdomain.SupplierKey) (*adminplusdomain.SupplierKey, error)
+	UpdateKeyManualSecret(ctx context.Context, keyID int64, fingerprint string, last4 string) (*adminplusdomain.SupplierKey, error)
 	UpdateKeyAfterLocalBind(ctx context.Context, keyID int64, localAccount *service.Account, status adminplusdomain.SupplierKeyStatus, errorCode string, errorMessage string) (*adminplusdomain.SupplierKey, error)
 	UpdateKeyName(ctx context.Context, supplierID int64, keyID int64, name string) (*adminplusdomain.SupplierKey, error)
+	DisableLocalProjection(ctx context.Context, supplierID int64, keyID int64, reason string) (*adminplusdomain.SupplierKey, error)
+	MarkKeyDisabled(ctx context.Context, supplierID int64, keyID int64, errorCode string, errorMessage string) (*adminplusdomain.SupplierKey, error)
 	CreateBinding(ctx context.Context, account *adminplusdomain.SupplierAccount) (*adminplusdomain.SupplierAccount, error)
 	UpsertBinding(ctx context.Context, account *adminplusdomain.SupplierAccount) (*adminplusdomain.SupplierAccount, error)
 	List(ctx context.Context, filter ListFilter) ([]*adminplusdomain.SupplierKey, error)
@@ -275,6 +370,9 @@ func (s *Service) Provision(ctx context.Context, in ProvisionKeyInput) (*Provisi
 	if existing != nil {
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_GROUP_KEY_ALREADY_BOUND", "supplier group already has a bound or provisioning key")
 	}
+	if err := s.ensureSupplierKeyCapacityForCreate(ctx, supplier, group); err != nil {
+		return nil, err
+	}
 	if err := s.ensureLocalAccountGatewayReady(ctx); err != nil {
 		return nil, err
 	}
@@ -376,16 +474,33 @@ func (s *Service) EnsureAll(ctx context.Context, in EnsureAllInput) (*EnsureAllR
 	if err != nil {
 		return nil, err
 	}
-	groups, err := s.repo.ListGroups(ctx, normalized.SupplierID)
+	plan, err := s.planEnsureAll(ctx, normalized, supplier)
 	if err != nil {
+		return nil, err
+	}
+	if err := ensureAllPlanCanApply(plan, normalized.AllowPartial); err != nil {
 		return nil, err
 	}
 	result := &EnsureAllResult{
 		SupplierID: normalized.SupplierID,
-		Items:      make([]EnsureAllResultItem, 0, len(groups)),
+		Items:      make([]EnsureAllResultItem, 0, len(plan.Items)),
 	}
-	for _, group := range groups {
-		if group == nil || group.Status != adminplusdomain.SupplierGroupStatusActive {
+	for _, planItem := range plan.Items {
+		if planItem.Action != "create" && planItem.Action != "skipped_existing" {
+			continue
+		}
+		group, err := s.repo.GetGroup(ctx, normalized.SupplierID, planItem.SupplierGroupID)
+		if err != nil {
+			result.Total++
+			result.Failed++
+			result.Items = append(result.Items, EnsureAllResultItem{
+				SupplierGroupID: planItem.SupplierGroupID,
+				ExternalGroupID: planItem.ExternalGroupID,
+				GroupName:       planItem.GroupName,
+				Action:          "failed",
+				ErrorCode:       infraerrors.Reason(err),
+				ErrorMessage:    infraerrors.Message(err),
+			})
 			continue
 		}
 		result.Total++
@@ -415,31 +530,674 @@ func (s *Service) EnsureAll(ctx context.Context, in EnsureAllInput) (*EnsureAllR
 	return result, nil
 }
 
-func (s *Service) PlanEnsureAll(ctx context.Context, in EnsureAllInput) ([]ProvisionGroupPlan, error) {
+func (s *Service) PlanEnsureAll(ctx context.Context, in EnsureAllInput) (*EnsureAllPlan, error) {
 	if s == nil || s.repo == nil {
 		return nil, internalError("supplier key service is not configured")
 	}
-	normalized, _, err := s.normalizeEnsureAllInput(ctx, in)
+	normalized, supplier, err := s.normalizeEnsureAllInput(ctx, in)
 	if err != nil {
 		return nil, err
+	}
+	return s.planEnsureAll(ctx, normalized, supplier)
+}
+
+func (s *Service) planEnsureAll(ctx context.Context, normalized EnsureAllInput, supplier *adminplusdomain.Supplier) (*EnsureAllPlan, error) {
+	if supplier == nil {
+		return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_NOT_FOUND", "supplier not found")
 	}
 	groups, err := s.repo.ListGroups(ctx, normalized.SupplierID)
 	if err != nil {
 		return nil, err
 	}
-	plans := make([]ProvisionGroupPlan, 0, len(groups))
+	keys, err := s.repo.List(ctx, ListFilter{SupplierID: normalized.SupplierID, Limit: 5000})
+	if err != nil {
+		return nil, err
+	}
+	activeKeysByGroup := make(map[int64]*adminplusdomain.SupplierKey)
+	activeKeyCountsByGroup := make(map[int64]int)
+	localActiveKeyCount := 0
+	for _, key := range keys {
+		if key == nil || !isBlockingKeyStatus(key.Status) {
+			continue
+		}
+		localActiveKeyCount++
+		activeKeyCountsByGroup[key.SupplierGroupID]++
+		if current := activeKeysByGroup[key.SupplierGroupID]; current == nil || key.ID > current.ID {
+			activeKeysByGroup[key.SupplierGroupID] = key
+		}
+	}
+	activeKeyCount := localActiveKeyCount
+	providerSnapshot, hasProviderSnapshot := s.readProviderKeyCapacitySnapshot(ctx, supplier)
+	if hasProviderSnapshot {
+		activeKeyCount = maxInt(localActiveKeyCount, providerSnapshot.ActiveKeyCount)
+	}
+	policy := normalizeKeyLimitPolicy(supplier.KeyLimitPolicy)
+	remaining := remainingKeySlots(policy, supplier.KeyLimitValue, activeKeyCount)
+	plan := &EnsureAllPlan{
+		SupplierID:        normalized.SupplierID,
+		KeyLimitPolicy:    policy,
+		KeyLimitValue:     supplier.KeyLimitValue,
+		ActiveKeyCount:    activeKeyCount,
+		RemainingKeySlots: remaining,
+		Items:             make([]ProvisionGroupPlan, 0, len(groups)),
+	}
+	createCandidates := make([]ProvisionGroupPlan, 0, len(groups))
 	for _, group := range groups {
 		if group == nil || group.Status != adminplusdomain.SupplierGroupStatusActive {
 			continue
 		}
-		plans = append(plans, ProvisionGroupPlan{
-			SupplierGroupID: group.ID,
-			ExternalGroupID: group.ExternalGroupID,
-			GroupName:       group.Name,
-			ProviderFamily:  group.ProviderFamily,
-		})
+		plan.Total++
+		item := provisionGroupPlanFromGroup(group)
+		if existing := activeKeysByGroup[group.ID]; existing != nil {
+			item.Action = "skipped_existing"
+			item.ExistingKeyID = existing.ID
+			item.ExistingKeyStatus = existing.Status
+			item.ExistingLocalSub2APIAccountID = existing.LocalSub2APIAccountID
+			plan.AlreadySatisfied++
+			plan.Items = append(plan.Items, item)
+			continue
+		}
+		if hasProviderSnapshot {
+			providerKey, hasProviderKey := providerSnapshot.activeExternalGroup(group.ExternalGroupID)
+			if hasProviderKey {
+				item.ProviderExternalKeyID = providerKey.ExternalKeyID
+				item.ProviderKeyName = providerKey.Name
+				item.ProviderKeyStatus = providerKey.Status
+				item.Action = "blocked"
+				item.BlockedReason = "provider_key_exists_unbound"
+				plan.Blocked++
+				plan.Items = append(plan.Items, item)
+				continue
+			}
+		}
+		if hasProviderSnapshot && providerSnapshot.Incomplete {
+			item.Action = "blocked"
+			item.BlockedReason = "provider_key_capacity_incomplete"
+			plan.Blocked++
+			plan.Items = append(plan.Items, item)
+			continue
+		}
+		groupActiveCount := activeKeyCountsByGroup[group.ID]
+		if hasProviderSnapshot {
+			groupActiveCount = maxInt(groupActiveCount, providerSnapshot.activeExternalGroupCount(group.ExternalGroupID))
+		}
+		item.GroupActiveKeyCount = groupActiveCount
+		item.GroupRemainingKeySlots = remainingGroupKeySlots(item.GroupKeyLimitPolicy, item.GroupKeyLimitValue, groupActiveCount)
+		if blockReason := groupKeyCapacityBlockReason(item.GroupKeyLimitPolicy, item.GroupKeyLimitValue, groupActiveCount); blockReason != "" {
+			item.Action = "blocked"
+			item.BlockedReason = blockReason
+			plan.Blocked++
+			plan.Items = append(plan.Items, item)
+			continue
+		}
+		switch policy {
+		case adminplusdomain.SupplierKeyLimitPolicyUnlimited:
+			item.Action = "create"
+			createCandidates = append(createCandidates, item)
+		case adminplusdomain.SupplierKeyLimitPolicyLimited:
+			item.Action = "create"
+			createCandidates = append(createCandidates, item)
+		case adminplusdomain.SupplierKeyLimitPolicyUnsupported:
+			item.Action = "blocked"
+			item.BlockedReason = "key_provisioning_unsupported"
+			plan.Blocked++
+			plan.Items = append(plan.Items, item)
+		default:
+			item.Action = "blocked"
+			item.BlockedReason = "key_capacity_unknown"
+			plan.Blocked++
+			plan.Items = append(plan.Items, item)
+		}
 	}
-	return plans, nil
+	sortProvisionGroupPlansByPriority(createCandidates, normalized.SupplierGroupPriorityIDs)
+	for index := range createCandidates {
+		createCandidates[index].Priority = index + 1
+	}
+	for _, item := range createCandidates {
+		if policy == adminplusdomain.SupplierKeyLimitPolicyLimited && (remaining <= 0 || plan.ToCreate >= remaining) {
+			item.Action = "blocked"
+			item.BlockedReason = "key_capacity_exhausted"
+			plan.Blocked++
+			plan.Items = append(plan.Items, item)
+			continue
+		}
+		plan.ToCreate++
+		plan.Items = append(plan.Items, item)
+	}
+	sortProvisionGroupPlans(plan.Items)
+	return plan, nil
+}
+
+func ensureAllPlanCanApply(plan *EnsureAllPlan, allowPartial bool) error {
+	if plan == nil {
+		return badRequest("SUPPLIER_KEY_PLAN_INVALID", "supplier key provision plan is required")
+	}
+	if plan.Blocked == 0 {
+		return nil
+	}
+	if allowPartial && planHasOnlyCapacityExhaustedBlocks(plan) && planHasActionableItems(plan) {
+		return nil
+	}
+	reason := "SUPPLIER_KEY_PLAN_BLOCKED"
+	message := "supplier key provision plan has blocked groups"
+	for _, item := range plan.Items {
+		if item.Action != "blocked" {
+			continue
+		}
+		switch item.BlockedReason {
+		case "key_capacity_unknown":
+			reason = "SUPPLIER_KEY_CAPACITY_UNKNOWN"
+			message = "supplier key capacity is unknown; configure key limit policy before provisioning all groups"
+		case "key_capacity_exhausted":
+			reason = "SUPPLIER_KEY_CAPACITY_EXHAUSTED"
+			message = "supplier key capacity is exhausted; provisioning all groups would be incomplete"
+		case "group_key_capacity_unknown":
+			reason = "SUPPLIER_GROUP_KEY_CAPACITY_UNKNOWN"
+			message = "supplier group key capacity is unknown; configure group key limit policy before provisioning"
+		case "group_key_capacity_exhausted":
+			reason = "SUPPLIER_GROUP_KEY_CAPACITY_EXHAUSTED"
+			message = "supplier group key capacity is exhausted; provisioning all groups would be incomplete"
+		case "group_key_provisioning_unsupported":
+			reason = "SUPPLIER_GROUP_KEY_PROVISIONING_UNSUPPORTED"
+			message = "supplier group does not support automatic key provisioning"
+		case "key_provisioning_unsupported":
+			reason = "SUPPLIER_KEY_PROVIDER_UNSUPPORTED"
+			message = "supplier does not support automatic key provisioning"
+		case "provider_key_exists_unbound":
+			reason = "SUPPLIER_PROVIDER_KEY_UNBOUND"
+			message = "third-party provider already has keys that are not bound in Admin Plus"
+		case "provider_key_capacity_incomplete":
+			reason = "SUPPLIER_PROVIDER_KEY_CAPACITY_INCOMPLETE"
+			message = "third-party provider key list was not fully read; retry sync before provisioning"
+		}
+		break
+	}
+	return infraerrors.New(http.StatusConflict, reason, message)
+}
+
+func planHasOnlyCapacityExhaustedBlocks(plan *EnsureAllPlan) bool {
+	if plan == nil || plan.Blocked == 0 {
+		return false
+	}
+	for _, item := range plan.Items {
+		if item.Action == "blocked" && !isCapacityExhaustedBlockReason(item.BlockedReason) {
+			return false
+		}
+	}
+	return true
+}
+
+func isCapacityExhaustedBlockReason(reason string) bool {
+	return reason == "key_capacity_exhausted" || reason == "group_key_capacity_exhausted"
+}
+
+func planHasActionableItems(plan *EnsureAllPlan) bool {
+	if plan == nil {
+		return false
+	}
+	for _, item := range plan.Items {
+		if item.Action == "create" || item.Action == "skipped_existing" {
+			return true
+		}
+	}
+	return false
+}
+
+func provisionGroupPlanFromGroup(group *adminplusdomain.SupplierGroup) ProvisionGroupPlan {
+	if group == nil {
+		return ProvisionGroupPlan{}
+	}
+	effectiveRate := group.EffectiveRateMultiplier
+	if effectiveRate <= 0 {
+		effectiveRate = group.RateMultiplier
+	}
+	return ProvisionGroupPlan{
+		SupplierGroupID:         group.ID,
+		ExternalGroupID:         group.ExternalGroupID,
+		GroupName:               group.Name,
+		ProviderFamily:          group.ProviderFamily,
+		RateMultiplier:          group.RateMultiplier,
+		EffectiveRateMultiplier: effectiveRate,
+		GroupKeyLimitPolicy:     normalizeGroupKeyLimitPolicy(group.KeyLimitPolicy),
+		GroupKeyLimitValue:      group.KeyLimitValue,
+		GroupActiveKeyCount:     group.ActiveKeyCount,
+		GroupRemainingKeySlots:  remainingGroupKeySlots(group.KeyLimitPolicy, group.KeyLimitValue, group.ActiveKeyCount),
+	}
+}
+
+func sortProvisionGroupPlans(items []ProvisionGroupPlan) {
+	sort.SliceStable(items, func(i, j int) bool {
+		left := items[i]
+		right := items[j]
+		if left.Action != right.Action {
+			return provisionPlanActionRank(left.Action) < provisionPlanActionRank(right.Action)
+		}
+		if left.Priority > 0 || right.Priority > 0 {
+			if left.Priority <= 0 {
+				return false
+			}
+			if right.Priority <= 0 {
+				return true
+			}
+			if left.Priority != right.Priority {
+				return left.Priority < right.Priority
+			}
+		}
+		if left.EffectiveRateMultiplier != right.EffectiveRateMultiplier {
+			if left.EffectiveRateMultiplier <= 0 {
+				return false
+			}
+			if right.EffectiveRateMultiplier <= 0 {
+				return true
+			}
+			return left.EffectiveRateMultiplier < right.EffectiveRateMultiplier
+		}
+		return left.SupplierGroupID < right.SupplierGroupID
+	})
+}
+
+func sortProvisionGroupPlansByPriority(items []ProvisionGroupPlan, priorityIDs []int64) {
+	ranks := supplierGroupPriorityRanks(priorityIDs)
+	if len(ranks) == 0 {
+		sortProvisionGroupPlans(items)
+		return
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		left := items[i]
+		right := items[j]
+		leftRank, leftPinned := ranks[left.SupplierGroupID]
+		rightRank, rightPinned := ranks[right.SupplierGroupID]
+		if leftPinned || rightPinned {
+			if !leftPinned {
+				return false
+			}
+			if !rightPinned {
+				return true
+			}
+			if leftRank != rightRank {
+				return leftRank < rightRank
+			}
+		}
+		if left.EffectiveRateMultiplier != right.EffectiveRateMultiplier {
+			if left.EffectiveRateMultiplier <= 0 {
+				return false
+			}
+			if right.EffectiveRateMultiplier <= 0 {
+				return true
+			}
+			return left.EffectiveRateMultiplier < right.EffectiveRateMultiplier
+		}
+		return left.SupplierGroupID < right.SupplierGroupID
+	})
+}
+
+func supplierGroupPriorityRanks(ids []int64) map[int64]int {
+	if len(ids) == 0 {
+		return nil
+	}
+	ranks := make(map[int64]int, len(ids))
+	for index, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, exists := ranks[id]; exists {
+			continue
+		}
+		ranks[id] = index + 1
+	}
+	return ranks
+}
+
+func provisionPlanActionRank(action string) int {
+	switch action {
+	case "create":
+		return 0
+	case "skipped_existing":
+		return 1
+	case "blocked":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func normalizeKeyLimitPolicy(value string) string {
+	switch strings.TrimSpace(value) {
+	case adminplusdomain.SupplierKeyLimitPolicyUnlimited:
+		return adminplusdomain.SupplierKeyLimitPolicyUnlimited
+	case adminplusdomain.SupplierKeyLimitPolicyLimited:
+		return adminplusdomain.SupplierKeyLimitPolicyLimited
+	case adminplusdomain.SupplierKeyLimitPolicyUnsupported:
+		return adminplusdomain.SupplierKeyLimitPolicyUnsupported
+	default:
+		return adminplusdomain.SupplierKeyLimitPolicyUnknown
+	}
+}
+
+func normalizeGroupKeyLimitPolicy(value string) string {
+	switch strings.TrimSpace(value) {
+	case adminplusdomain.SupplierGroupKeyLimitPolicyUnknown:
+		return adminplusdomain.SupplierGroupKeyLimitPolicyUnknown
+	case adminplusdomain.SupplierGroupKeyLimitPolicyUnlimited:
+		return adminplusdomain.SupplierGroupKeyLimitPolicyUnlimited
+	case adminplusdomain.SupplierGroupKeyLimitPolicyLimited:
+		return adminplusdomain.SupplierGroupKeyLimitPolicyLimited
+	case adminplusdomain.SupplierGroupKeyLimitPolicyUnsupported:
+		return adminplusdomain.SupplierGroupKeyLimitPolicyUnsupported
+	default:
+		return adminplusdomain.SupplierGroupKeyLimitPolicyInherit
+	}
+}
+
+func remainingGroupKeySlots(policy string, limit int, activeCount int) int {
+	switch normalizeGroupKeyLimitPolicy(policy) {
+	case adminplusdomain.SupplierGroupKeyLimitPolicyUnlimited, adminplusdomain.SupplierGroupKeyLimitPolicyInherit:
+		return -1
+	case adminplusdomain.SupplierGroupKeyLimitPolicyLimited:
+		if limit <= activeCount {
+			return 0
+		}
+		return limit - activeCount
+	default:
+		return 0
+	}
+}
+
+func groupKeyCapacityBlockReason(policy string, limit int, activeCount int) string {
+	switch normalizeGroupKeyLimitPolicy(policy) {
+	case adminplusdomain.SupplierGroupKeyLimitPolicyInherit, adminplusdomain.SupplierGroupKeyLimitPolicyUnlimited:
+		return ""
+	case adminplusdomain.SupplierGroupKeyLimitPolicyLimited:
+		if limit <= activeCount {
+			return "group_key_capacity_exhausted"
+		}
+		return ""
+	case adminplusdomain.SupplierGroupKeyLimitPolicyUnsupported:
+		return "group_key_provisioning_unsupported"
+	default:
+		return "group_key_capacity_unknown"
+	}
+}
+
+func groupKeyCapacityStatus(policy string, limit int, activeCount int) string {
+	switch normalizeGroupKeyLimitPolicy(policy) {
+	case adminplusdomain.SupplierGroupKeyLimitPolicyInherit:
+		return adminplusdomain.SupplierGroupKeyLimitPolicyInherit
+	case adminplusdomain.SupplierGroupKeyLimitPolicyUnlimited:
+		return adminplusdomain.SupplierKeyCapacityAvailable
+	case adminplusdomain.SupplierGroupKeyLimitPolicyLimited:
+		if limit <= activeCount {
+			return adminplusdomain.SupplierKeyCapacityExhausted
+		}
+		if limit-activeCount <= 2 {
+			return adminplusdomain.SupplierKeyCapacityLimited
+		}
+		return adminplusdomain.SupplierKeyCapacityAvailable
+	case adminplusdomain.SupplierGroupKeyLimitPolicyUnsupported:
+		return adminplusdomain.SupplierKeyCapacityUnsupported
+	default:
+		return adminplusdomain.SupplierKeyCapacityUnknown
+	}
+}
+
+func remainingKeySlots(policy string, limit int, activeCount int) int {
+	switch policy {
+	case adminplusdomain.SupplierKeyLimitPolicyUnlimited:
+		return -1
+	case adminplusdomain.SupplierKeyLimitPolicyLimited:
+		if limit <= activeCount {
+			return 0
+		}
+		return limit - activeCount
+	default:
+		return 0
+	}
+}
+
+func keyCapacityStatus(policy string, limit int, activeCount int) string {
+	switch normalizeKeyLimitPolicy(policy) {
+	case adminplusdomain.SupplierKeyLimitPolicyUnlimited:
+		return adminplusdomain.SupplierKeyCapacityAvailable
+	case adminplusdomain.SupplierKeyLimitPolicyLimited:
+		if limit <= activeCount {
+			return adminplusdomain.SupplierKeyCapacityExhausted
+		}
+		if limit-activeCount <= 2 {
+			return adminplusdomain.SupplierKeyCapacityLimited
+		}
+		return adminplusdomain.SupplierKeyCapacityAvailable
+	case adminplusdomain.SupplierKeyLimitPolicyUnsupported:
+		return adminplusdomain.SupplierKeyCapacityUnsupported
+	default:
+		return adminplusdomain.SupplierKeyCapacityUnknown
+	}
+}
+
+func (s *Service) ensureSupplierKeyCapacityForCreate(ctx context.Context, supplier *adminplusdomain.Supplier, group *adminplusdomain.SupplierGroup) error {
+	if supplier == nil {
+		return infraerrors.New(http.StatusNotFound, "SUPPLIER_NOT_FOUND", "supplier not found")
+	}
+	snapshot, hasProviderSnapshot := s.readProviderKeyCapacitySnapshot(ctx, supplier)
+	if hasProviderSnapshot && group != nil && snapshot.hasActiveExternalGroup(group.ExternalGroupID) {
+		return infraerrors.New(http.StatusConflict, "SUPPLIER_PROVIDER_KEY_UNBOUND", "third-party provider already has an active key for this group; import or release it before provisioning")
+	}
+	if hasProviderSnapshot && snapshot.Incomplete {
+		return infraerrors.New(http.StatusConflict, "SUPPLIER_PROVIDER_KEY_CAPACITY_INCOMPLETE", "third-party provider key list was not fully read; retry sync before provisioning")
+	}
+	blockReason, err := s.groupKeyCapacityBlockReasonForCreate(ctx, supplier, group, snapshot, hasProviderSnapshot)
+	if err != nil {
+		return err
+	}
+	if blockReason != "" {
+		switch blockReason {
+		case "group_key_capacity_exhausted":
+			return infraerrors.New(http.StatusConflict, "SUPPLIER_GROUP_KEY_CAPACITY_EXHAUSTED", "supplier group key capacity is exhausted")
+		case "group_key_provisioning_unsupported":
+			return infraerrors.New(http.StatusConflict, "SUPPLIER_GROUP_KEY_PROVISIONING_UNSUPPORTED", "supplier group does not support automatic key provisioning")
+		default:
+			return infraerrors.New(http.StatusConflict, "SUPPLIER_GROUP_KEY_CAPACITY_UNKNOWN", "supplier group key capacity is unknown")
+		}
+	}
+	switch normalizeKeyLimitPolicy(supplier.KeyLimitPolicy) {
+	case adminplusdomain.SupplierKeyLimitPolicyUnsupported:
+		return infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_PROVISIONING_UNSUPPORTED", "supplier does not support automatic key provisioning")
+	case adminplusdomain.SupplierKeyLimitPolicyLimited:
+		activeCount, err := s.activeKeyCountForCapacity(ctx, supplier, snapshot, hasProviderSnapshot)
+		if err != nil {
+			return err
+		}
+		if supplier.KeyLimitValue <= activeCount {
+			return infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_CAPACITY_EXHAUSTED", "supplier key capacity is exhausted")
+		}
+	}
+	return nil
+}
+
+func (s *Service) groupKeyCapacityBlockReasonForCreate(ctx context.Context, supplier *adminplusdomain.Supplier, group *adminplusdomain.SupplierGroup, snapshot *providerKeyCapacitySnapshot, hasProviderSnapshot bool) (string, error) {
+	if supplier == nil || group == nil {
+		return "", nil
+	}
+	policy := normalizeGroupKeyLimitPolicy(group.KeyLimitPolicy)
+	if policy == adminplusdomain.SupplierGroupKeyLimitPolicyInherit || policy == adminplusdomain.SupplierGroupKeyLimitPolicyUnlimited {
+		return "", nil
+	}
+	if blockReason := groupKeyCapacityBlockReason(policy, group.KeyLimitValue, 0); blockReason != "" && policy != adminplusdomain.SupplierGroupKeyLimitPolicyLimited {
+		return blockReason, nil
+	}
+	localCount := 0
+	keys, err := s.repo.List(ctx, ListFilter{SupplierID: supplier.ID, Limit: 5000})
+	if err != nil {
+		return "", err
+	}
+	for _, key := range keys {
+		if key != nil && key.SupplierGroupID == group.ID && isBlockingKeyStatus(key.Status) {
+			localCount++
+		}
+	}
+	if hasProviderSnapshot && snapshot != nil {
+		localCount = maxInt(localCount, snapshot.activeExternalGroupCount(group.ExternalGroupID))
+	}
+	return groupKeyCapacityBlockReason(policy, group.KeyLimitValue, localCount), nil
+}
+
+func (s *Service) activeKeyCountForCapacity(ctx context.Context, supplier *adminplusdomain.Supplier, snapshot *providerKeyCapacitySnapshot, hasProviderSnapshot bool) (int, error) {
+	if supplier == nil {
+		return 0, infraerrors.New(http.StatusNotFound, "SUPPLIER_NOT_FOUND", "supplier not found")
+	}
+	localCount, err := s.countActiveSupplierKeys(ctx, supplier.ID)
+	if err != nil {
+		return 0, err
+	}
+	if hasProviderSnapshot && snapshot != nil {
+		return maxInt(localCount, snapshot.ActiveKeyCount), nil
+	}
+	return localCount, nil
+}
+
+func (s *Service) countActiveSupplierKeys(ctx context.Context, supplierID int64) (int, error) {
+	keys, err := s.repo.List(ctx, ListFilter{SupplierID: supplierID, Limit: 5000})
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, key := range keys {
+		if key != nil && isBlockingKeyStatus(key.Status) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (s *Service) readProviderKeyCapacitySnapshot(ctx context.Context, supplier *adminplusdomain.Supplier) (*providerKeyCapacitySnapshot, bool) {
+	if s == nil || s.session == nil || s.keyAdapter == nil || supplier == nil || !supplierSupportsKeyProvisioning(supplier.Type) {
+		return nil, false
+	}
+	input, err := s.session.DecryptedProbeInput(ctx, supplier.ID)
+	if err != nil {
+		return nil, false
+	}
+	capacity, err := s.keyAdapter.ReadKeyCapacity(ctx, input, ports.ReadProviderKeyCapacityInput{
+		SupplierID: supplier.ID,
+		Limit:      5000,
+	})
+	if err == nil && capacity != nil {
+		return providerKeyCapacitySnapshotFromCapacity(capacity), true
+	}
+	result, listErr := s.keyAdapter.ListKeys(ctx, input, ports.ListProviderKeysInput{
+		SupplierID: supplier.ID,
+		Limit:      5000,
+	})
+	if listErr != nil || result == nil {
+		return nil, false
+	}
+	return providerKeyCapacitySnapshotFromList(result.Keys), true
+}
+
+func (s *Service) readProviderKeyCapacitySnapshotRequired(ctx context.Context, supplier *adminplusdomain.Supplier) (*providerKeyCapacitySnapshot, error) {
+	if s == nil || s.session == nil || s.keyAdapter == nil || supplier == nil || !supplierSupportsKeyProvisioning(supplier.Type) {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_PROVIDER_UNSUPPORTED", "supplier key provider adapter is not available")
+	}
+	input, err := s.session.DecryptedProbeInput(ctx, supplier.ID)
+	if err != nil {
+		return nil, err
+	}
+	capacity, err := s.keyAdapter.ReadKeyCapacity(ctx, input, ports.ReadProviderKeyCapacityInput{
+		SupplierID: supplier.ID,
+		Limit:      5000,
+	})
+	if err == nil && capacity != nil {
+		return providerKeyCapacitySnapshotFromCapacity(capacity), nil
+	}
+	result, listErr := s.keyAdapter.ListKeys(ctx, input, ports.ListProviderKeysInput{
+		SupplierID: supplier.ID,
+		Limit:      5000,
+	})
+	if listErr != nil {
+		return nil, listErr
+	}
+	if result == nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_PROVIDER_KEY_LIST_EMPTY", "third-party provider key list is empty")
+	}
+	return providerKeyCapacitySnapshotFromList(result.Keys), nil
+}
+
+func providerKeyCapacitySnapshotFromCapacity(capacity *ports.ProviderKeyCapacityResult) *providerKeyCapacitySnapshot {
+	if capacity == nil {
+		return nil
+	}
+	snapshot := providerKeyCapacitySnapshotFromList(capacity.Keys)
+	if capacity.ActiveKeyCount > snapshot.ActiveKeyCount {
+		snapshot.ActiveKeyCount = capacity.ActiveKeyCount
+	}
+	if capacity.Diagnostics != nil {
+		if truncated, ok := capacity.Diagnostics["truncated"].(bool); ok && truncated {
+			snapshot.Incomplete = true
+		}
+	}
+	return snapshot
+}
+
+func providerKeyCapacitySnapshotFromList(keys []ports.ProviderKeySnapshot) *providerKeyCapacitySnapshot {
+	snapshot := &providerKeyCapacitySnapshot{
+		ActiveByExternalGroup:      make(map[string]ports.ProviderKeySnapshot),
+		ActiveCountByExternalGroup: make(map[string]int),
+	}
+	for _, key := range keys {
+		if !providerKeyStatusOccupiesCapacity(key.Status) {
+			continue
+		}
+		snapshot.ActiveKeyCount++
+		groupID := strings.TrimSpace(key.ExternalGroupID)
+		if groupID == "" {
+			continue
+		}
+		snapshot.ActiveCountByExternalGroup[groupID]++
+		if _, exists := snapshot.ActiveByExternalGroup[groupID]; !exists {
+			snapshot.ActiveByExternalGroup[groupID] = key
+		}
+	}
+	return snapshot
+}
+
+func (s *providerKeyCapacitySnapshot) hasActiveExternalGroup(externalGroupID string) bool {
+	if s == nil || len(s.ActiveByExternalGroup) == 0 {
+		return false
+	}
+	_, ok := s.ActiveByExternalGroup[strings.TrimSpace(externalGroupID)]
+	return ok
+}
+
+func (s *providerKeyCapacitySnapshot) activeExternalGroup(externalGroupID string) (ports.ProviderKeySnapshot, bool) {
+	if s == nil || len(s.ActiveByExternalGroup) == 0 {
+		return ports.ProviderKeySnapshot{}, false
+	}
+	key, ok := s.ActiveByExternalGroup[strings.TrimSpace(externalGroupID)]
+	return key, ok
+}
+
+func (s *providerKeyCapacitySnapshot) activeExternalGroupCount(externalGroupID string) int {
+	if s == nil || len(s.ActiveCountByExternalGroup) == 0 {
+		return 0
+	}
+	return s.ActiveCountByExternalGroup[strings.TrimSpace(externalGroupID)]
+}
+
+func providerKeyStatusOccupiesCapacity(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "active", "enabled", "enable":
+		return true
+	case "disabled", "inactive", "deleted":
+		return false
+	default:
+		return false
+	}
+}
+
+func maxInt(left int, right int) int {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func (s *Service) EnsureGroup(ctx context.Context, in EnsureGroupInput) (*EnsureAllResultItem, error) {
@@ -558,6 +1316,141 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]*adminplusdoma
 	return s.repo.List(ctx, filter)
 }
 
+func (s *Service) DisableLocalProjection(ctx context.Context, in DisableLocalProjectionInput) (*adminplusdomain.SupplierKey, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("supplier key service is not configured")
+	}
+	if in.SupplierID <= 0 {
+		return nil, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	if in.KeyID <= 0 {
+		return nil, badRequest("SUPPLIER_KEY_ID_INVALID", "invalid supplier key id")
+	}
+	key, err := s.repo.GetKey(ctx, in.SupplierID, in.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	if key.Status == adminplusdomain.SupplierKeyStatusDisabled {
+		return key, nil
+	}
+	if !isBlockingKeyStatus(key.Status) {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_LOCAL_PROJECTION_RELEASE_NOT_ALLOWED", "only active supplier key projection can be released")
+	}
+	reason := strings.TrimSpace(in.Reason)
+	if reason == "" {
+		reason = "released from Admin Plus local projection; third-party key is not deleted"
+	}
+	return s.repo.DisableLocalProjection(ctx, in.SupplierID, in.KeyID, reason)
+}
+
+func (s *Service) DisableProviderKey(ctx context.Context, in DisableProviderKeyInput) (*adminplusdomain.SupplierKey, error) {
+	return s.applyProviderKeyTerminalOperation(ctx, providerKeyTerminalOperationInput{
+		SupplierID:    in.SupplierID,
+		KeyID:         in.KeyID,
+		Reason:        in.Reason,
+		ErrorCode:     "PROVIDER_KEY_DISABLED",
+		DefaultReason: "third-party provider key disabled by Admin Plus; local Sub2API account scheduling is not changed",
+		Apply: func(ctx context.Context, input ports.SessionProbeInput, key *adminplusdomain.SupplierKey) (*ports.ProviderKeyResult, error) {
+			return s.keyAdapter.DisableKey(ctx, input, ports.DisableProviderKeyInput{
+				SupplierID:      key.SupplierID,
+				ExternalKeyID:   key.ExternalKeyID,
+				ExternalGroupID: key.ExternalGroupID,
+				Name:            key.Name,
+				Metadata:        providerKeyOperationMetadata(key),
+			})
+		},
+	})
+}
+
+func (s *Service) DeleteProviderKey(ctx context.Context, in DeleteProviderKeyInput) (*adminplusdomain.SupplierKey, error) {
+	return s.applyProviderKeyTerminalOperation(ctx, providerKeyTerminalOperationInput{
+		SupplierID:    in.SupplierID,
+		KeyID:         in.KeyID,
+		Reason:        in.Reason,
+		ErrorCode:     "PROVIDER_KEY_DELETED",
+		DefaultReason: "third-party provider key deleted by Admin Plus; local Sub2API account scheduling is not changed",
+		Apply: func(ctx context.Context, input ports.SessionProbeInput, key *adminplusdomain.SupplierKey) (*ports.ProviderKeyResult, error) {
+			return s.keyAdapter.DeleteKey(ctx, input, ports.DeleteProviderKeyInput{
+				SupplierID:      key.SupplierID,
+				ExternalKeyID:   key.ExternalKeyID,
+				ExternalGroupID: key.ExternalGroupID,
+				Name:            key.Name,
+				Metadata:        providerKeyOperationMetadata(key),
+			})
+		},
+	})
+}
+
+type providerKeyTerminalOperationInput struct {
+	SupplierID    int64
+	KeyID         int64
+	Reason        string
+	ErrorCode     string
+	DefaultReason string
+	Apply         func(context.Context, ports.SessionProbeInput, *adminplusdomain.SupplierKey) (*ports.ProviderKeyResult, error)
+}
+
+func (s *Service) applyProviderKeyTerminalOperation(ctx context.Context, in providerKeyTerminalOperationInput) (*adminplusdomain.SupplierKey, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("supplier key service is not configured")
+	}
+	if s.session == nil {
+		return nil, internalError("supplier browser session service is not configured")
+	}
+	if s.keyAdapter == nil {
+		return nil, internalError("supplier key provider adapter is not configured")
+	}
+	if in.SupplierID <= 0 {
+		return nil, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	if in.KeyID <= 0 {
+		return nil, badRequest("SUPPLIER_KEY_ID_INVALID", "invalid supplier key id")
+	}
+	if in.Apply == nil {
+		return nil, internalError("supplier key provider operation is not configured")
+	}
+	supplier, err := s.repo.GetSupplier(ctx, in.SupplierID)
+	if err != nil {
+		return nil, err
+	}
+	if !supplierSupportsKeyProvisioning(supplier.Type) {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_PROVIDER_UNSUPPORTED", "only Sub2API or New API supplier key operations are supported")
+	}
+	key, err := s.repo.GetKey(ctx, in.SupplierID, in.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	if key.Status == adminplusdomain.SupplierKeyStatusDisabled {
+		return key, nil
+	}
+	if strings.TrimSpace(key.ExternalKeyID) == "" {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_EXTERNAL_ID_REQUIRED", "supplier key external id is required for provider operation")
+	}
+	input, err := s.session.DecryptedProbeInput(ctx, in.SupplierID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := in.Apply(ctx, input, key); err != nil {
+		return nil, err
+	}
+	reason := strings.TrimSpace(in.Reason)
+	if reason == "" {
+		reason = in.DefaultReason
+	}
+	return s.repo.MarkKeyDisabled(ctx, in.SupplierID, in.KeyID, in.ErrorCode, reason)
+}
+
+func providerKeyOperationMetadata(key *adminplusdomain.SupplierKey) map[string]any {
+	if key == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"supplier_key_id":   key.ID,
+		"supplier_group_id": key.SupplierGroupID,
+		"provider_family":   key.ProviderFamily,
+	}
+}
+
 func (s *Service) StandardizeNames(ctx context.Context, in StandardizeNamesInput) (*StandardizeNamesResult, error) {
 	if s == nil || s.repo == nil {
 		return nil, internalError("supplier key service is not configured")
@@ -665,6 +1558,168 @@ func (s *Service) StandardizeNames(ctx context.Context, in StandardizeNamesInput
 	return result, nil
 }
 
+func (s *Service) ImportProviderProjection(ctx context.Context, in ImportProviderProjectionInput) (*adminplusdomain.SupplierKey, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("supplier key service is not configured")
+	}
+	if s.session == nil {
+		return nil, internalError("supplier browser session service is not configured")
+	}
+	if s.keyAdapter == nil {
+		return nil, internalError("supplier key provider adapter is not configured")
+	}
+	normalized, err := normalizeImportProviderProjectionInput(in)
+	if err != nil {
+		return nil, err
+	}
+	supplier, err := s.repo.GetSupplier(ctx, normalized.SupplierID)
+	if err != nil {
+		return nil, err
+	}
+	if !supplierSupportsKeyProvisioning(supplier.Type) {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_PROVIDER_UNSUPPORTED", "only Sub2API or New API supplier key operations are supported")
+	}
+	var snapshot *providerKeyCapacitySnapshot
+	var snapshotErr error
+	snapshotLoaded := false
+	snapshotGetter := func() (*providerKeyCapacitySnapshot, error) {
+		if !snapshotLoaded {
+			snapshot, snapshotErr = s.readProviderKeyCapacitySnapshotRequired(ctx, supplier)
+			snapshotLoaded = true
+		}
+		return snapshot, snapshotErr
+	}
+	key, _, err := s.importProviderProjectionWithSnapshot(ctx, normalized, supplier, snapshotGetter)
+	return key, err
+}
+
+func (s *Service) ImportProviderProjections(ctx context.Context, in ImportProviderProjectionsInput) (*ImportProviderProjectionsResult, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("supplier key service is not configured")
+	}
+	if s.session == nil {
+		return nil, internalError("supplier browser session service is not configured")
+	}
+	if s.keyAdapter == nil {
+		return nil, internalError("supplier key provider adapter is not configured")
+	}
+	normalized, err := normalizeImportProviderProjectionsInput(in)
+	if err != nil {
+		return nil, err
+	}
+	supplier, err := s.repo.GetSupplier(ctx, normalized.SupplierID)
+	if err != nil {
+		return nil, err
+	}
+	if !supplierSupportsKeyProvisioning(supplier.Type) {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_PROVIDER_UNSUPPORTED", "only Sub2API or New API supplier key operations are supported")
+	}
+	var snapshot *providerKeyCapacitySnapshot
+	var snapshotErr error
+	snapshotLoaded := false
+	snapshotGetter := func() (*providerKeyCapacitySnapshot, error) {
+		if !snapshotLoaded {
+			snapshot, snapshotErr = s.readProviderKeyCapacitySnapshotRequired(ctx, supplier)
+			snapshotLoaded = true
+		}
+		return snapshot, snapshotErr
+	}
+	result := &ImportProviderProjectionsResult{
+		SupplierID: normalized.SupplierID,
+		Total:      len(normalized.Items),
+		Items:      make([]ImportProviderProjectionResultItem, 0, len(normalized.Items)),
+	}
+	for _, itemInput := range normalized.Items {
+		item := ImportProviderProjectionResultItem{
+			SupplierGroupID: itemInput.SupplierGroupID,
+			ExternalKeyID:   itemInput.ExternalKeyID,
+		}
+		key, created, err := s.importProviderProjectionWithSnapshot(ctx, itemInput, supplier, snapshotGetter)
+		if err != nil {
+			item.Action = "failed"
+			item.ErrorCode = infraerrors.Reason(err)
+			item.ErrorMessage = infraerrors.Message(err)
+			result.Failed++
+			result.Items = append(result.Items, item)
+			continue
+		}
+		item.Key = key
+		if created {
+			item.Action = "imported"
+			result.Imported++
+		} else {
+			item.Action = "skipped_existing"
+			result.Skipped++
+		}
+		result.Items = append(result.Items, item)
+	}
+	return result, nil
+}
+
+func (s *Service) importProviderProjectionWithSnapshot(ctx context.Context, normalized ImportProviderProjectionInput, supplier *adminplusdomain.Supplier, snapshotGetter func() (*providerKeyCapacitySnapshot, error)) (*adminplusdomain.SupplierKey, bool, error) {
+	group, err := s.repo.GetGroup(ctx, normalized.SupplierID, normalized.SupplierGroupID)
+	if err != nil {
+		return nil, false, err
+	}
+	if group.Status != adminplusdomain.SupplierGroupStatusActive {
+		return nil, false, infraerrors.New(http.StatusConflict, "SUPPLIER_GROUP_NOT_ACTIVE", "supplier group is not active")
+	}
+	existing, err := s.repo.FindActiveByGroup(ctx, normalized.SupplierID, group.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	if existing != nil {
+		if existing.Status == adminplusdomain.SupplierKeyStatusManualSecretRequired && importProjectionMatchesExisting(normalized, existing) {
+			return existing, false, nil
+		}
+		return nil, false, infraerrors.New(http.StatusConflict, "SUPPLIER_GROUP_KEY_ALREADY_BOUND", "supplier group already has a bound or provisioning key")
+	}
+	if snapshotGetter == nil {
+		return nil, false, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_PROVIDER_UNSUPPORTED", "supplier key provider adapter is not available")
+	}
+	snapshot, err := snapshotGetter()
+	if err != nil {
+		return nil, false, err
+	}
+	providerKey, ok := snapshot.activeExternalGroup(group.ExternalGroupID)
+	if !ok {
+		return nil, false, infraerrors.New(http.StatusConflict, "SUPPLIER_PROVIDER_KEY_NOT_FOUND", "third-party provider active key was not found for this group")
+	}
+	if normalized.ExternalKeyID != "" && strings.TrimSpace(providerKey.ExternalKeyID) != "" && normalized.ExternalKeyID != strings.TrimSpace(providerKey.ExternalKeyID) {
+		return nil, false, infraerrors.New(http.StatusConflict, "SUPPLIER_PROVIDER_KEY_MISMATCH", "third-party provider active key does not match requested external key id")
+	}
+	now := s.now().UTC()
+	key := &adminplusdomain.SupplierKey{
+		SupplierID:      normalized.SupplierID,
+		SupplierGroupID: group.ID,
+		ExternalGroupID: firstNonEmpty(providerKey.ExternalGroupID, group.ExternalGroupID),
+		ExternalKeyID:   trimLimit(providerKey.ExternalKeyID, 160),
+		Name:            trimLimit(firstNonEmpty(providerKey.Name, standardKeyNameForGroup(supplier, group, "")), 160),
+		Status:          adminplusdomain.SupplierKeyStatusManualSecretRequired,
+		ProviderFamily:  normalizeProviderFamily(group.ProviderFamily),
+		ProvisionRequest: map[string]any{
+			"source":                   "provider_key_list_import",
+			"supplier_group_id":        group.ID,
+			"external_group_id":        group.ExternalGroupID,
+			"requested_external_key":   normalized.ExternalKeyID,
+			"provider_external_key_id": providerKey.ExternalKeyID,
+			"provider_key_name":        providerKey.Name,
+			"provider_key_status":      providerKey.Status,
+			"manual_secret_required":   true,
+		},
+		ProvisionResponse: sanitizeProviderKeyProjectionPayload(providerKey.RawPayload),
+		ErrorCode:         "SUPPLIER_KEY_SECRET_REQUIRED",
+		ErrorMessage:      "third-party key projection imported from provider list; paste the key secret to create the local Sub2API account",
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	created, err := s.repo.CreateKey(ctx, key)
+	if err != nil {
+		return nil, false, err
+	}
+	return created, true, nil
+}
+
 func (s *Service) RepairBinding(ctx context.Context, in RepairBindingInput) (*ProvisionKeyResult, error) {
 	if s == nil || s.repo == nil {
 		return nil, internalError("supplier key service is not configured")
@@ -680,10 +1735,10 @@ func (s *Service) RepairBinding(ctx context.Context, in RepairBindingInput) (*Pr
 	if err != nil {
 		return nil, err
 	}
-	if key.Status != adminplusdomain.SupplierKeyStatusFailed {
+	if !repairableKeyStatus(key.Status) {
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_REPAIR_NOT_ALLOWED", "only failed supplier key can be repaired")
 	}
-	if !repairableKeyError(key.ErrorCode) {
+	if !repairableKeyFailure(key) {
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_REPAIR_NOT_ALLOWED", "supplier key failure is not a local binding failure")
 	}
 	existing, err := s.repo.FindActiveByGroup(ctx, normalized.SupplierID, key.SupplierGroupID)
@@ -693,7 +1748,7 @@ func (s *Service) RepairBinding(ctx context.Context, in RepairBindingInput) (*Pr
 	if existing != nil && existing.ID != key.ID {
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_GROUP_KEY_ALREADY_BOUND", "supplier group already has a bound or provisioning key")
 	}
-	localAccount, err := s.sub2apiGateway.GetAccount(ctx, normalized.LocalSub2APIAccountID)
+	supplier, err := s.repo.GetSupplier(ctx, normalized.SupplierID)
 	if err != nil {
 		return nil, err
 	}
@@ -701,7 +1756,9 @@ func (s *Service) RepairBinding(ctx context.Context, in RepairBindingInput) (*Pr
 	if err != nil {
 		return nil, err
 	}
-	if _, _, err := s.ensureLocalAccountStateForGroups(ctx, localAccount, nil, "", key, group); err != nil {
+
+	localAccount, key, err := s.repairLocalAccountForKey(ctx, normalized, supplier, group, key)
+	if err != nil {
 		return nil, err
 	}
 	now := s.now().UTC()
@@ -719,7 +1776,7 @@ func (s *Service) RepairBinding(ctx context.Context, in RepairBindingInput) (*Pr
 	binding.SupplierAccountLabel = firstNonEmpty(normalized.SupplierAccountLabel, binding.SupplierAccountLabel)
 	binding.CreatedAt = now
 	binding.UpdatedAt = now
-	savedBinding, err := s.repo.CreateBinding(ctx, binding)
+	savedBinding, err := s.repo.UpsertBinding(ctx, binding)
 	if err != nil {
 		return nil, err
 	}
@@ -728,6 +1785,47 @@ func (s *Service) RepairBinding(ctx context.Context, in RepairBindingInput) (*Pr
 		return nil, err
 	}
 	return &ProvisionKeyResult{Key: savedKey, Binding: savedBinding}, nil
+}
+
+func (s *Service) repairLocalAccountForKey(ctx context.Context, in RepairBindingInput, supplier *adminplusdomain.Supplier, group *adminplusdomain.SupplierGroup, key *adminplusdomain.SupplierKey) (*service.Account, *adminplusdomain.SupplierKey, error) {
+	secret := strings.TrimSpace(in.ManualSecret)
+	if secret != "" {
+		updatedKey, err := s.repo.UpdateKeyManualSecret(ctx, key.ID, fingerprintSecret(secret), lastN(secret, 4))
+		if err != nil {
+			return nil, key, err
+		}
+		key = updatedKey
+		localAccount, _, _, boundKey, err := s.ensureLocalAccountForKey(ctx, localAccountEnsureInput{
+			Supplier:       supplier,
+			Group:          group,
+			Key:            key,
+			Secret:         secret,
+			BaseURL:        in.LocalAccountBaseURL,
+			Platform:       in.LocalAccountPlatform,
+			Name:           firstNonEmpty(in.LocalAccountName, key.LocalAccountName),
+			Concurrency:    in.ConfiguredConcurrency,
+			Priority:       in.LocalAccountPriority,
+			RateMultiplier: in.LocalAccountRateMultiplier,
+			GroupIDs:       in.LocalAccountGroupIDs,
+		})
+		if err != nil {
+			return nil, key, err
+		}
+		if boundKey != nil {
+			key = boundKey
+		}
+		return localAccount, key, nil
+	}
+	localAccount, err := s.sub2apiGateway.GetAccount(ctx, in.LocalSub2APIAccountID)
+	if err != nil {
+		return nil, key, err
+	}
+	if _, syncedAccount, err := s.ensureLocalAccountStateForGroups(ctx, localAccount, in.LocalAccountGroupIDs, in.LocalAccountBaseURL, key, group); err != nil {
+		return nil, key, err
+	} else if syncedAccount != nil {
+		localAccount = syncedAccount
+	}
+	return localAccount, key, nil
 }
 
 func (s *Service) normalizeProvisionInput(in ProvisionKeyInput) (ProvisionKeyInput, error) {
@@ -841,6 +1939,7 @@ func (s *Service) normalizeEnsureAllInput(ctx context.Context, in EnsureAllInput
 		return EnsureAllInput{}, nil, badRequest("SUPPLIER_ACCOUNT_BALANCE_INVALID", "balance values cannot be negative")
 	}
 	in.LocalAccountBaseURL = baseURL
+	in.SupplierGroupPriorityIDs = mergeInt64IDs(nil, in.SupplierGroupPriorityIDs...)
 	in.LocalAccountGroupIDs = mergeInt64IDs(nil, in.LocalAccountGroupIDs...)
 	in.RuntimeStatus = runtimeStatus
 	in.HealthStatus = healthStatus
@@ -891,11 +1990,22 @@ func (s *Service) normalizeRepairBindingInput(in RepairBindingInput) (RepairBind
 	if in.KeyID <= 0 {
 		return RepairBindingInput{}, badRequest("SUPPLIER_KEY_ID_INVALID", "invalid supplier key id")
 	}
-	if in.LocalSub2APIAccountID <= 0 {
+	manualSecret := strings.TrimSpace(in.ManualSecret)
+	if manualSecret == "" && in.LocalSub2APIAccountID <= 0 {
 		return RepairBindingInput{}, badRequest("LOCAL_ACCOUNT_ID_INVALID", "invalid local Sub2API account id")
+	}
+	if manualSecret != "" && strings.TrimSpace(in.LocalAccountBaseURL) == "" {
+		return RepairBindingInput{}, badRequest("LOCAL_ACCOUNT_BASE_URL_REQUIRED", "local account base url is required")
+	}
+	platform := strings.ToLower(strings.TrimSpace(in.LocalAccountPlatform))
+	if platform != "" && !validLocalPlatform(platform) {
+		return RepairBindingInput{}, badRequest("LOCAL_ACCOUNT_PLATFORM_INVALID", "invalid local account platform")
 	}
 	if in.ConfiguredConcurrency < 0 {
 		return RepairBindingInput{}, badRequest("SUPPLIER_ACCOUNT_CONCURRENCY_INVALID", "configured concurrency cannot be negative")
+	}
+	if in.LocalAccountPriority < 0 {
+		return RepairBindingInput{}, badRequest("LOCAL_ACCOUNT_PRIORITY_INVALID", "local account priority cannot be negative")
 	}
 	runtimeStatus := in.RuntimeStatus
 	if runtimeStatus == "" {
@@ -917,6 +2027,11 @@ func (s *Service) normalizeRepairBindingInput(in RepairBindingInput) (RepairBind
 	if in.BalanceThresholdCents < 0 || in.BalanceCents < 0 {
 		return RepairBindingInput{}, badRequest("SUPPLIER_ACCOUNT_BALANCE_INVALID", "balance values cannot be negative")
 	}
+	in.ManualSecret = manualSecret
+	in.LocalAccountPlatform = platform
+	in.LocalAccountName = trimLimit(in.LocalAccountName, 160)
+	in.LocalAccountBaseURL = strings.TrimSpace(in.LocalAccountBaseURL)
+	in.LocalAccountGroupIDs = mergeInt64IDs(nil, in.LocalAccountGroupIDs...)
 	in.RuntimeStatus = runtimeStatus
 	in.HealthStatus = healthStatus
 	in.BalanceCurrency = normalizeCurrency(in.BalanceCurrency)
@@ -925,9 +2040,77 @@ func (s *Service) normalizeRepairBindingInput(in RepairBindingInput) (RepairBind
 	return in, nil
 }
 
+func normalizeImportProviderProjectionInput(in ImportProviderProjectionInput) (ImportProviderProjectionInput, error) {
+	if in.SupplierID <= 0 {
+		return ImportProviderProjectionInput{}, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	if in.SupplierGroupID <= 0 {
+		return ImportProviderProjectionInput{}, badRequest("SUPPLIER_GROUP_ID_INVALID", "invalid supplier group id")
+	}
+	in.ExternalKeyID = trimLimit(in.ExternalKeyID, 160)
+	return in, nil
+}
+
+func normalizeImportProviderProjectionsInput(in ImportProviderProjectionsInput) (ImportProviderProjectionsInput, error) {
+	if in.SupplierID <= 0 {
+		return ImportProviderProjectionsInput{}, badRequest("SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	if len(in.Items) == 0 {
+		return ImportProviderProjectionsInput{}, badRequest("SUPPLIER_PROVIDER_KEY_IMPORT_ITEMS_REQUIRED", "provider key import items are required")
+	}
+	if len(in.Items) > 200 {
+		return ImportProviderProjectionsInput{}, badRequest("SUPPLIER_PROVIDER_KEY_IMPORT_ITEMS_LIMIT_EXCEEDED", "provider key import items exceed the maximum batch size")
+	}
+	out := ImportProviderProjectionsInput{
+		SupplierID: in.SupplierID,
+		Items:      make([]ImportProviderProjectionInput, 0, len(in.Items)),
+	}
+	for _, item := range in.Items {
+		item.SupplierID = in.SupplierID
+		normalized, err := normalizeImportProviderProjectionInput(item)
+		if err != nil {
+			return ImportProviderProjectionsInput{}, err
+		}
+		out.Items = append(out.Items, normalized)
+	}
+	return out, nil
+}
+
+func importProjectionMatchesExisting(in ImportProviderProjectionInput, key *adminplusdomain.SupplierKey) bool {
+	if key == nil {
+		return false
+	}
+	if key.SupplierID != in.SupplierID || key.SupplierGroupID != in.SupplierGroupID {
+		return false
+	}
+	if in.ExternalKeyID == "" {
+		return true
+	}
+	return strings.TrimSpace(key.ExternalKeyID) == in.ExternalKeyID
+}
+
+func repairableKeyStatus(status adminplusdomain.SupplierKeyStatus) bool {
+	switch status {
+	case adminplusdomain.SupplierKeyStatusFailed, adminplusdomain.SupplierKeyStatusManualSecretRequired:
+		return true
+	default:
+		return false
+	}
+}
+
+func repairableKeyFailure(key *adminplusdomain.SupplierKey) bool {
+	if key == nil {
+		return false
+	}
+	if key.Status == adminplusdomain.SupplierKeyStatusManualSecretRequired {
+		return true
+	}
+	return repairableKeyError(key.ErrorCode)
+}
+
 func repairableKeyError(errorCode string) bool {
 	switch strings.TrimSpace(errorCode) {
-	case "LOCAL_ACCOUNT_CREATE_FAILED", "SUPPLIER_ACCOUNT_BIND_FAILED":
+	case "LOCAL_ACCOUNT_CREATE_FAILED", "SUPPLIER_ACCOUNT_BIND_FAILED", "LOCAL_SUB2API_ACCOUNT_SECRET_UNAVAILABLE", "SUPPLIER_KEY_SECRET_REQUIRED":
 		return true
 	default:
 		return false
@@ -1564,6 +2747,35 @@ func cloneMap(in map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+func sanitizeProviderKeyProjectionPayload(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		if providerKeyProjectionSensitiveField(key) {
+			out[key] = "[redacted]"
+			continue
+		}
+		if nested, ok := value.(map[string]any); ok {
+			out[key] = sanitizeProviderKeyProjectionPayload(nested)
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func providerKeyProjectionSensitiveField(key string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(key), "-", "_"))
+	switch normalized {
+	case "key", "api_key", "apikey", "token", "secret", "access_token", "refresh_token":
+		return true
+	default:
+		return strings.Contains(normalized, "secret") || strings.Contains(normalized, "token")
+	}
 }
 
 func firstNonEmpty(values ...string) string {

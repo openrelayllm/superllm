@@ -22,6 +22,18 @@ func executeAdminPlusIdempotentJSON(
 	successStatus int,
 	execute func(context.Context) (any, error),
 ) {
+	executeAdminPlusIdempotentJSONWithReplay(c, scope, payload, ttl, successStatus, execute, nil)
+}
+
+func executeAdminPlusIdempotentJSONWithReplay(
+	c *gin.Context,
+	scope string,
+	payload any,
+	ttl time.Duration,
+	successStatus int,
+	execute func(context.Context) (any, error),
+	onReplay func(context.Context) error,
+) {
 	coordinator := service.DefaultIdempotencyCoordinator()
 	if coordinator == nil {
 		data, err := execute(c.Request.Context())
@@ -61,6 +73,11 @@ func executeAdminPlusIdempotentJSON(
 	}
 	if result != nil && result.Replayed {
 		c.Header("X-Idempotency-Replayed", "true")
+		if onReplay != nil {
+			if replayErr := onReplay(c.Request.Context()); replayErr != nil {
+				logger.LegacyPrintf("handler.adminplus.idempotency", "[Idempotency] replay hook failed: method=%s route=%s scope=%s err=%v", c.Request.Method, c.FullPath(), scope, replayErr)
+			}
+		}
 	}
 	if result == nil {
 		writeAdminPlusIdempotentSuccess(c, successStatus, nil)

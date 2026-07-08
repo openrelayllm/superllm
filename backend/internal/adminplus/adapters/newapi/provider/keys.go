@@ -113,6 +113,188 @@ func (c *Client) RenameKey(ctx context.Context, in ports.SessionProbeInput, requ
 	return newAPIRenamedProviderKeyResult(request, token, c.now().UTC()), nil
 }
 
+func (c *Client) DisableKey(ctx context.Context, in ports.SessionProbeInput, request ports.DisableProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	if c == nil || c.httpClient == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", "new api provider adapter is not configured")
+	}
+	tokenID, err := strconv.ParseInt(strings.TrimSpace(request.ExternalKeyID), 10, 64)
+	if err != nil || tokenID <= 0 {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_KEY_EXTERNAL_ID_INVALID", "invalid new api token id")
+	}
+	apiBaseURL, _, err := normalizeBaseURLs(firstNonEmpty(in.APIBaseURL, stringValueAt(in.Bundle, "context", "api_base_url"), stringValue(in.Bundle, "api_base_url")), firstNonEmpty(in.Origin, stringValue(in.Bundle, "origin")))
+	if err != nil {
+		return nil, err
+	}
+	tokenEndpoint, err := buildEndpointURL(apiBaseURL, "/api/token/")
+	if err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(map[string]any{
+		"id":     tokenID,
+		"status": 2,
+	})
+	if err != nil {
+		return nil, err
+	}
+	raw, err := c.doSessionJSONBody(ctx, http.MethodPut, newAPITokenStatusOnlyEndpoint(tokenEndpoint), in.Bundle, body)
+	if err != nil {
+		return nil, err
+	}
+	envelope, err := decodeEnvelope(raw)
+	if err != nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_KEY_RESPONSE_INVALID", "new api token disable response is invalid").WithCause(err)
+	}
+	if !envelope.Success {
+		return nil, classifyKeyBusinessFailure(envelope.Message)
+	}
+	token := parseNewAPITokenSnapshot(envelope.Data)
+	return &ports.ProviderKeyResult{
+		SupplierID:      request.SupplierID,
+		ExternalGroupID: firstNonEmpty(token.Group, request.ExternalGroupID),
+		ExternalKeyID:   strconv.FormatInt(tokenID, 10),
+		Name:            firstNonEmpty(token.Name, request.Name),
+		Status:          "disabled",
+		RawPayload:      token.RawPayload,
+		CreatedAt:       c.now().UTC(),
+	}, nil
+}
+
+func (c *Client) DeleteKey(ctx context.Context, in ports.SessionProbeInput, request ports.DeleteProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	if c == nil || c.httpClient == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", "new api provider adapter is not configured")
+	}
+	tokenID, err := strconv.ParseInt(strings.TrimSpace(request.ExternalKeyID), 10, 64)
+	if err != nil || tokenID <= 0 {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_KEY_EXTERNAL_ID_INVALID", "invalid new api token id")
+	}
+	apiBaseURL, _, err := normalizeBaseURLs(firstNonEmpty(in.APIBaseURL, stringValueAt(in.Bundle, "context", "api_base_url"), stringValue(in.Bundle, "api_base_url")), firstNonEmpty(in.Origin, stringValue(in.Bundle, "origin")))
+	if err != nil {
+		return nil, err
+	}
+	tokenEndpoint, err := buildEndpointURL(apiBaseURL, "/api/token/")
+	if err != nil {
+		return nil, err
+	}
+	deleteEndpoint := strings.TrimRight(tokenEndpoint, "/") + "/" + strconv.FormatInt(tokenID, 10)
+	raw, err := c.doSessionJSON(ctx, http.MethodDelete, deleteEndpoint, in.Bundle)
+	if err != nil {
+		return nil, err
+	}
+	envelope, err := decodeEnvelope(raw)
+	if err != nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_KEY_RESPONSE_INVALID", "new api token delete response is invalid").WithCause(err)
+	}
+	if !envelope.Success {
+		return nil, classifyKeyBusinessFailure(envelope.Message)
+	}
+	return &ports.ProviderKeyResult{
+		SupplierID:      request.SupplierID,
+		ExternalGroupID: request.ExternalGroupID,
+		ExternalKeyID:   strconv.FormatInt(tokenID, 10),
+		Name:            request.Name,
+		Status:          "deleted",
+		RawPayload:      sanitizeNewAPIKeyPayload(envelope.Raw),
+		CreatedAt:       c.now().UTC(),
+	}, nil
+}
+
+func (c *Client) ListKeys(ctx context.Context, in ports.SessionProbeInput, request ports.ListProviderKeysInput) (*ports.ListProviderKeysResult, error) {
+	if c == nil || c.httpClient == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", "new api provider adapter is not configured")
+	}
+	apiBaseURL, _, err := normalizeBaseURLs(firstNonEmpty(in.APIBaseURL, stringValueAt(in.Bundle, "context", "api_base_url"), stringValue(in.Bundle, "api_base_url")), firstNonEmpty(in.Origin, stringValue(in.Bundle, "origin")))
+	if err != nil {
+		return nil, err
+	}
+	tokenEndpoint, err := buildEndpointURL(apiBaseURL, "/api/token/")
+	if err != nil {
+		return nil, err
+	}
+	limit := providerKeyListLimit(request.Limit)
+	page := providerKeyListPage(request.Page)
+	query := url.Values{}
+	query.Set("p", strconv.Itoa(page))
+	query.Set("page_size", strconv.Itoa(limit))
+	listEndpoint := tokenEndpoint
+	if encoded := query.Encode(); encoded != "" {
+		listEndpoint += "?" + encoded
+	}
+	raw, err := c.doSessionJSON(ctx, http.MethodGet, listEndpoint, in.Bundle)
+	if err != nil {
+		return nil, err
+	}
+	envelope, err := decodeEnvelope(raw)
+	if err != nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_KEY_RESPONSE_INVALID", "new api token list response is invalid").WithCause(err)
+	}
+	if !envelope.Success {
+		return nil, classifyKeyBusinessFailure(envelope.Message)
+	}
+	supplierID := request.SupplierID
+	if supplierID <= 0 {
+		supplierID = in.SupplierID
+	}
+	tokens := parseNewAPITokenList(envelope.Raw)
+	keys := make([]ports.ProviderKeySnapshot, 0, len(tokens))
+	for _, token := range tokens {
+		keys = append(keys, ports.ProviderKeySnapshot{
+			SupplierID:      supplierID,
+			ExternalGroupID: token.Group,
+			ExternalKeyID:   strconv.FormatInt(token.ID, 10),
+			Name:            token.Name,
+			Status:          firstNonEmpty(token.Status, "active"),
+			RawPayload:      token.RawPayload,
+		})
+	}
+	total := newAPITokenListTotal(envelope.Raw)
+	if total <= 0 {
+		total = len(keys)
+	}
+	return &ports.ListProviderKeysResult{
+		SupplierID: supplierID,
+		SystemType: "new_api",
+		Origin:     in.Origin,
+		APIBaseURL: apiBaseURL,
+		Keys:       keys,
+		Total:      total,
+		CapturedAt: c.now().UTC(),
+	}, nil
+}
+
+func (c *Client) ReadKeyCapacity(ctx context.Context, in ports.SessionProbeInput, request ports.ReadProviderKeyCapacityInput) (*ports.ProviderKeyCapacityResult, error) {
+	firstPage, err := c.ListKeys(ctx, in, ports.ListProviderKeysInput{
+		SupplierID: request.SupplierID,
+		Page:       1,
+		Limit:      request.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	keys, diagnostics := collectProviderKeysFromPages(ctx, firstPage, func(page int) (*ports.ListProviderKeysResult, error) {
+		return c.ListKeys(ctx, in, ports.ListProviderKeysInput{
+			SupplierID: request.SupplierID,
+			Page:       page,
+			Limit:      request.Limit,
+		})
+	})
+	activeCount := countProviderKeysOccupyingCapacity(keys)
+	return &ports.ProviderKeyCapacityResult{
+		SupplierID:        firstPage.SupplierID,
+		SystemType:        firstPage.SystemType,
+		Origin:            firstPage.Origin,
+		APIBaseURL:        firstPage.APIBaseURL,
+		KeyLimitPolicy:    "unknown",
+		KeyLimitValue:     0,
+		ActiveKeyCount:    activeCount,
+		RemainingKeySlots: 0,
+		KeyCapacityStatus: "unknown",
+		LimitKnown:        false,
+		Keys:              keys,
+		Diagnostics:       diagnostics,
+		CapturedAt:        c.now().UTC(),
+	}, nil
+}
+
 func (c *Client) findNewAPIProviderToken(ctx context.Context, tokenEndpoint string, bundle map[string]any, request ports.CreateProviderKeyInput) (*ports.ProviderKeyResult, error) {
 	name := newAPITokenName(request.Name)
 	if name == "" {
@@ -313,6 +495,21 @@ func parseNewAPITokenSnapshot(raw map[string]any) newAPITokenSnapshot {
 	}
 }
 
+func newAPITokenListTotal(payload map[string]any) int {
+	if payload == nil {
+		return 0
+	}
+	if total := int64FromAny(payload["total"]); total > 0 {
+		return int(total)
+	}
+	if data, ok := payload["data"].(map[string]any); ok {
+		if total := int64FromAny(data["total"]); total > 0 {
+			return int(total)
+		}
+	}
+	return 0
+}
+
 func newAPIProviderKeyResult(request ports.CreateProviderKeyInput, token newAPITokenSnapshot, secret string, capturedAt time.Time) *ports.ProviderKeyResult {
 	return &ports.ProviderKeyResult{
 		SupplierID:      request.SupplierID,
@@ -365,6 +562,21 @@ func newAPITokenName(name string) string {
 	return name
 }
 
+func newAPITokenStatusOnlyEndpoint(tokenEndpoint string) string {
+	parsed, err := url.Parse(tokenEndpoint)
+	if err != nil {
+		separator := "?"
+		if strings.Contains(tokenEndpoint, "?") {
+			separator = "&"
+		}
+		return tokenEndpoint + separator + "status_only=true"
+	}
+	q := parsed.Query()
+	q.Set("status_only", "true")
+	parsed.RawQuery = q.Encode()
+	return parsed.String()
+}
+
 func normalizeNewAPISecret(secret string) string {
 	secret = strings.TrimSpace(secret)
 	if secret == "" || strings.HasPrefix(secret, "sk-") {
@@ -375,7 +587,15 @@ func normalizeNewAPISecret(secret string) string {
 
 func normalizeNewAPITokenStatus(value any) string {
 	if text := stringFromAny(value); text != "" {
-		return text
+		normalized := strings.ToLower(strings.TrimSpace(text))
+		switch normalized {
+		case "1", "active", "enabled", "enable":
+			return "active"
+		case "2", "disabled", "disable", "inactive", "deleted":
+			return "disabled"
+		default:
+			return normalized
+		}
 	}
 	switch int64FromAny(value) {
 	case 1:
@@ -385,6 +605,89 @@ func normalizeNewAPITokenStatus(value any) string {
 	default:
 		return ""
 	}
+}
+
+func providerKeyListLimit(limit int) int {
+	if limit <= 0 {
+		return 1000
+	}
+	if limit > 1000 {
+		return 1000
+	}
+	return limit
+}
+
+func providerKeyListPage(page int) int {
+	if page <= 0 {
+		return 1
+	}
+	return page
+}
+
+func collectProviderKeysFromPages(ctx context.Context, firstPage *ports.ListProviderKeysResult, readPage func(page int) (*ports.ListProviderKeysResult, error)) ([]ports.ProviderKeySnapshot, map[string]any) {
+	diagnostics := map[string]any{
+		"capacity_source": "list_keys",
+		"limit_source":    "not_exposed_by_provider",
+	}
+	if firstPage == nil {
+		diagnostics["pages_read"] = 0
+		return nil, diagnostics
+	}
+	keys := append([]ports.ProviderKeySnapshot(nil), firstPage.Keys...)
+	pageSize := len(firstPage.Keys)
+	if pageSize <= 0 {
+		diagnostics["pages_read"] = 1
+		diagnostics["provider_total"] = firstPage.Total
+		return keys, diagnostics
+	}
+	total := firstPage.Total
+	pagesRead := 1
+	for total > len(keys) && pagesRead < 100 {
+		select {
+		case <-ctx.Done():
+			diagnostics["truncated"] = true
+			diagnostics["truncated_reason"] = "context_cancelled"
+			diagnostics["pages_read"] = pagesRead
+			diagnostics["provider_total"] = total
+			return keys, diagnostics
+		default:
+		}
+		nextPage, err := readPage(pagesRead + 1)
+		if err != nil || nextPage == nil || len(nextPage.Keys) == 0 {
+			diagnostics["truncated"] = true
+			if err != nil {
+				diagnostics["truncated_reason"] = err.Error()
+			} else {
+				diagnostics["truncated_reason"] = "empty_page"
+			}
+			break
+		}
+		keys = append(keys, nextPage.Keys...)
+		pagesRead++
+		if nextPage.Total > total {
+			total = nextPage.Total
+		}
+		if len(nextPage.Keys) < pageSize {
+			break
+		}
+	}
+	if total > len(keys) {
+		diagnostics["truncated"] = true
+	}
+	diagnostics["pages_read"] = pagesRead
+	diagnostics["provider_total"] = total
+	return keys, diagnostics
+}
+
+func countProviderKeysOccupyingCapacity(keys []ports.ProviderKeySnapshot) int {
+	count := 0
+	for _, key := range keys {
+		switch strings.ToLower(strings.TrimSpace(key.Status)) {
+		case "", "active", "enabled", "enable":
+			count++
+		}
+	}
+	return count
 }
 
 func sanitizeNewAPIKeyPayload(raw map[string]any) map[string]any {

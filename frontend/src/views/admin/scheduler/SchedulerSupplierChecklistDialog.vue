@@ -18,6 +18,36 @@
         </div>
       </div>
 
+      <div v-if="checklist.candidate_summary" class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <p class="text-sm font-medium text-gray-900 dark:text-white">候选池</p>
+              <span class="badge" :class="candidateStatusClass(checklist.candidate_summary.candidate_status)">
+                {{ candidateStatusLabel(checklist.candidate_summary.candidate_status) }}
+              </span>
+            </div>
+            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+              {{ candidateCountsLabel(checklist.candidate_summary) }}
+            </p>
+          </div>
+          <div class="grid w-full gap-3 text-xs text-gray-600 dark:text-dark-300 sm:w-auto sm:grid-cols-3">
+            <div>
+              <span class="block text-gray-500 dark:text-dark-400">最低倍率</span>
+              <span class="font-medium text-gray-900 dark:text-white">{{ candidateRateLabel(checklist.candidate_summary.lowest_effective_rate_multiplier) }}</span>
+            </div>
+            <div>
+              <span class="block text-gray-500 dark:text-dark-400">来源</span>
+              <span class="font-medium text-gray-900 dark:text-white">{{ candidateCheckSourceLabel(checklist.candidate_summary.check_source) }}</span>
+            </div>
+            <div>
+              <span class="block text-gray-500 dark:text-dark-400">阻断</span>
+              <span class="font-medium text-gray-900 dark:text-white">{{ candidateReasonLabel(checklist.candidate_summary.blocked_reason) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="grid gap-3 md:grid-cols-2">
         <div v-for="item in checklist.items" :key="item.key" class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
           <div class="flex items-start justify-between gap-3">
@@ -67,7 +97,17 @@
 import { computed } from 'vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import type { SchedulerSupplierChecklist } from '@/api/admin/adminPlus'
-import { formatDateTime, statusBadgeClass, statusValueLabel } from './presentation'
+import {
+  candidateCheckSourceLabel,
+  candidateCountsLabel,
+  candidateRateLabel,
+  candidateReasonLabel,
+  candidateStatusClass,
+  candidateStatusLabel,
+  formatDateTime,
+  statusBadgeClass,
+  statusValueLabel
+} from './presentation'
 import { checklistActionForKey, checklistManualActionLabel, supplierActionKey, supplierActionLabel } from './supplierAutomation'
 
 const props = defineProps<{

@@ -71,6 +71,30 @@
 
     <div class="grid gap-4 sm:grid-cols-2">
       <label class="block">
+        <span class="input-label">Key 配额策略</span>
+        <select v-model="form.key_limit_policy" class="input">
+          <option value="unknown">未知</option>
+          <option value="unlimited">无限制</option>
+          <option value="limited">限制数量</option>
+          <option value="unsupported">不支持自动创建</option>
+        </select>
+      </label>
+      <label class="block">
+        <span class="input-label">Key 上限</span>
+        <input
+          v-model.number="form.key_limit_value"
+          type="number"
+          :min="form.key_limit_policy === 'limited' ? 1 : 0"
+          step="1"
+          class="input"
+          :disabled="form.key_limit_policy !== 'limited'"
+          placeholder="例如 10"
+        />
+      </label>
+    </div>
+
+    <div class="grid gap-4 sm:grid-cols-2">
+      <label class="block">
         <span class="input-label">后台地址</span>
         <input v-model.trim="form.dashboard_url" class="input" placeholder="https://supplier.example.com" />
       </label>

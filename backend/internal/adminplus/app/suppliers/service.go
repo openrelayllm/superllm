@@ -29,6 +29,8 @@ type CreateSupplierInput struct {
 	BalanceCents          int64
 	BalanceCurrency       string
 	RechargeMultiplier    float64
+	KeyLimitPolicy        string
+	KeyLimitValue         int
 }
 
 type UpdateSupplierInput struct {
@@ -52,6 +54,8 @@ type UpdateSupplierInput struct {
 	BalanceCents          int64
 	BalanceCurrency       string
 	RechargeMultiplier    float64
+	KeyLimitPolicy        string
+	KeyLimitValue         int
 }
 
 type UpdateSupplierStatusInput struct {
@@ -103,6 +107,8 @@ func (s *Service) Create(ctx context.Context, in CreateSupplierInput) (*adminplu
 		BalanceCents:          in.BalanceCents,
 		BalanceCurrency:       in.BalanceCurrency,
 		RechargeMultiplier:    in.RechargeMultiplier,
+		KeyLimitPolicy:        in.KeyLimitPolicy,
+		KeyLimitValue:         in.KeyLimitValue,
 	})
 	if err != nil {
 		return nil, err
@@ -128,6 +134,9 @@ func (s *Service) Create(ctx context.Context, in CreateSupplierInput) (*adminplu
 		BalanceCents:          normalized.BalanceCents,
 		BalanceCurrency:       normalized.BalanceCurrency,
 		RechargeMultiplier:    normalized.RechargeMultiplier,
+		KeyLimitPolicy:        normalized.KeyLimitPolicy,
+		KeyLimitValue:         normalized.KeyLimitValue,
+		KeyCapacityStatus:     supplierKeyCapacityStatus(normalized.KeyLimitPolicy, normalized.KeyLimitValue, 0),
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}
@@ -212,6 +221,8 @@ func (s *Service) Update(ctx context.Context, id int64, in UpdateSupplierInput) 
 		BalanceCents:          in.BalanceCents,
 		BalanceCurrency:       in.BalanceCurrency,
 		RechargeMultiplier:    in.RechargeMultiplier,
+		KeyLimitPolicy:        in.KeyLimitPolicy,
+		KeyLimitValue:         in.KeyLimitValue,
 	})
 	if err != nil {
 		return nil, err
@@ -240,6 +251,9 @@ func (s *Service) Update(ctx context.Context, id int64, in UpdateSupplierInput) 
 	updated.BalanceCents = normalized.BalanceCents
 	updated.BalanceCurrency = normalized.BalanceCurrency
 	updated.RechargeMultiplier = normalized.RechargeMultiplier
+	updated.KeyLimitPolicy = normalized.KeyLimitPolicy
+	updated.KeyLimitValue = normalized.KeyLimitValue
+	updated.KeyCapacityStatus = supplierKeyCapacityStatus(updated.KeyLimitPolicy, updated.KeyLimitValue, updated.ActiveKeyCount)
 	updated.UpdatedAt = now
 	supplier, err := s.repo.Update(ctx, &updated)
 	if err != nil {

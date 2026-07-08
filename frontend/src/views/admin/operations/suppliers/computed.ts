@@ -398,12 +398,28 @@ export function attachSuppliersComputed(ctx: any) {
     const out = new Map<number, SupplierKey>()
     for (const key of supplierKeys.value) {
       const existing = out.get(key.supplier_group_id)
-      if (!existing || key.id > existing.id) {
+      if (!isPreferredSupplierGroupKey(existing, key)) {
         out.set(key.supplier_group_id, key)
       }
     }
     return out
   })
+
+  function isPreferredSupplierGroupKey(existing: SupplierKey | undefined, next: SupplierKey): boolean {
+    if (!existing) return false
+    const existingRank = supplierKeyProjectionRank(existing.status)
+    const nextRank = supplierKeyProjectionRank(next.status)
+    if (existingRank !== nextRank) {
+      return existingRank < nextRank
+    }
+    return existing.id > next.id
+  }
+
+  function supplierKeyProjectionRank(status?: string): number {
+    if (status === 'provisioning' || status === 'bound' || status === 'manual_secret_required') return 0
+    if (status === 'failed') return 1
+    return 2
+  }
 
   const summaryCookieCount = computed(() => {
     const value = currentSessionSummary.value.cookie_count

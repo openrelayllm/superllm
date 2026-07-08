@@ -5,13 +5,17 @@ import "time"
 type ActionType string
 
 const (
-	ActionTypeSwitchSupplier    ActionType = "switch_supplier"
-	ActionTypePauseSupplier     ActionType = "pause_supplier"
-	ActionTypeDegradeSupplier   ActionType = "degrade_supplier"
-	ActionTypeIncreaseWeight    ActionType = "increase_weight"
-	ActionTypeRechargeSupplier  ActionType = "recharge_supplier"
-	ActionTypeInvestigateProfit ActionType = "investigate_profit"
-	ActionTypeReviewCredential  ActionType = "review_credential"
+	ActionTypeSwitchSupplier                  ActionType = "switch_supplier"
+	ActionTypePauseSupplier                   ActionType = "pause_supplier"
+	ActionTypeDegradeSupplier                 ActionType = "degrade_supplier"
+	ActionTypeIncreaseWeight                  ActionType = "increase_weight"
+	ActionTypeRechargeSupplier                ActionType = "recharge_supplier"
+	ActionTypeInvestigateProfit               ActionType = "investigate_profit"
+	ActionTypeReviewCredential                ActionType = "review_credential"
+	ActionTypeRoutingRefill                   ActionType = "routing_refill"
+	ActionTypeLocalAccountScheduleDisable     ActionType = "local_account_schedule_disable"
+	ActionTypeLocalAccountManualOps           ActionType = "local_account_manual_ops"
+	ActionTypeSupplierCostReconcileAdjustment ActionType = "supplier_cost_reconcile_adjustment"
 )
 
 type ActionSeverity string
@@ -58,23 +62,29 @@ type ActionRecommendation struct {
 }
 
 type ActionExecution struct {
-	ID               int64                 `json:"id"`
-	RecommendationID int64                 `json:"recommendation_id"`
-	ActionType       ActionType            `json:"action_type"`
-	SupplierID       int64                 `json:"supplier_id"`
-	TargetSupplierID *int64                `json:"target_supplier_id,omitempty"`
-	Status           ActionExecutionStatus `json:"status"`
-	RequestPayload   map[string]any        `json:"request_payload,omitempty"`
-	ResponsePayload  map[string]any        `json:"response_payload,omitempty"`
-	ErrorMessage     string                `json:"error_message,omitempty"`
-	OperatorUserID   int64                 `json:"operator_user_id,omitempty"`
-	CreatedAt        time.Time             `json:"created_at"`
-	UpdatedAt        time.Time             `json:"updated_at"`
+	ID                  int64                 `json:"id"`
+	RecommendationID    int64                 `json:"recommendation_id"`
+	ActionType          ActionType            `json:"action_type"`
+	SupplierID          int64                 `json:"supplier_id"`
+	TargetSupplierID    *int64                `json:"target_supplier_id,omitempty"`
+	Status              ActionExecutionStatus `json:"status"`
+	RequestPayload      map[string]any        `json:"request_payload,omitempty"`
+	ResponsePayload     map[string]any        `json:"response_payload,omitempty"`
+	ErrorMessage        string                `json:"error_message,omitempty"`
+	OperatorUserID      int64                 `json:"operator_user_id,omitempty"`
+	SchedulerRunID      string                `json:"scheduler_run_id,omitempty"`
+	SchedulerStepID     int64                 `json:"scheduler_step_id,omitempty"`
+	IdempotencyKeyHash  string                `json:"idempotency_key_hash,omitempty"`
+	IdempotencyReplayed bool                  `json:"idempotency_replayed,omitempty"`
+	BeforeSnapshot      map[string]any        `json:"before_snapshot,omitempty"`
+	AfterSnapshot       map[string]any        `json:"after_snapshot,omitempty"`
+	CreatedAt           time.Time             `json:"created_at"`
+	UpdatedAt           time.Time             `json:"updated_at"`
 }
 
 func (t ActionType) Valid() bool {
 	switch t {
-	case ActionTypeSwitchSupplier, ActionTypePauseSupplier, ActionTypeDegradeSupplier, ActionTypeIncreaseWeight, ActionTypeRechargeSupplier, ActionTypeInvestigateProfit, ActionTypeReviewCredential:
+	case ActionTypeSwitchSupplier, ActionTypePauseSupplier, ActionTypeDegradeSupplier, ActionTypeIncreaseWeight, ActionTypeRechargeSupplier, ActionTypeInvestigateProfit, ActionTypeReviewCredential, ActionTypeRoutingRefill, ActionTypeLocalAccountScheduleDisable, ActionTypeLocalAccountManualOps, ActionTypeSupplierCostReconcileAdjustment:
 		return true
 	default:
 		return false

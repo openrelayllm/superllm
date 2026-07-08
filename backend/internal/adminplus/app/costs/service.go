@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,12 +58,58 @@ type LedgerFilter struct {
 	Limit      int
 }
 
+type ReconcileAdjustmentInput struct {
+	SupplierID             int64
+	SnapshotID             int64
+	ActionRecommendationID int64
+	AdjustmentAmountCents  *int64
+	Reason                 string
+	OccurredAt             *time.Time
+}
+
+type ReconcileDetailRepairInput struct {
+	SupplierID             int64
+	SnapshotID             int64
+	ActionRecommendationID int64
+	DetailType             string
+	AmountCents            *int64
+	ExternalID             string
+	Model                  string
+	Reason                 string
+	OccurredAt             *time.Time
+}
+
+type ReconcileAdjustmentResult struct {
+	SupplierID            int64                                    `json:"supplier_id"`
+	SnapshotID            int64                                    `json:"snapshot_id"`
+	Currency              string                                   `json:"currency"`
+	AdjustmentAmountCents int64                                    `json:"adjustment_amount_cents"`
+	LedgerEntry           *adminplusdomain.SupplierCostLedgerEntry `json:"ledger_entry,omitempty"`
+	BeforeSnapshot        *adminplusdomain.SupplierCostSnapshot    `json:"before_snapshot,omitempty"`
+	AfterSnapshot         *adminplusdomain.SupplierCostSnapshot    `json:"after_snapshot,omitempty"`
+}
+
+type ReconcileDetailRepairResult struct {
+	SupplierID             int64                                           `json:"supplier_id"`
+	SnapshotID             int64                                           `json:"snapshot_id"`
+	Currency               string                                          `json:"currency"`
+	DetailType             string                                          `json:"detail_type"`
+	AmountCents            int64                                           `json:"amount_cents"`
+	FundingTransaction     *adminplusdomain.SupplierFundingTransaction     `json:"funding_transaction,omitempty"`
+	EntitlementTransaction *adminplusdomain.SupplierEntitlementTransaction `json:"entitlement_transaction,omitempty"`
+	UsageCostLine          *adminplusdomain.SupplierUsageCostLine          `json:"usage_cost_line,omitempty"`
+	LedgerEntry            *adminplusdomain.SupplierCostLedgerEntry        `json:"ledger_entry,omitempty"`
+	BeforeSnapshot         *adminplusdomain.SupplierCostSnapshot           `json:"before_snapshot,omitempty"`
+	AfterSnapshot          *adminplusdomain.SupplierCostSnapshot           `json:"after_snapshot,omitempty"`
+}
+
 type Repository interface {
 	UpsertFundingTransaction(ctx context.Context, item *adminplusdomain.SupplierFundingTransaction) (*adminplusdomain.SupplierFundingTransaction, bool, error)
 	UpsertEntitlementTransaction(ctx context.Context, item *adminplusdomain.SupplierEntitlementTransaction) (*adminplusdomain.SupplierEntitlementTransaction, bool, error)
 	UpsertLedgerEntry(ctx context.Context, entry *adminplusdomain.SupplierCostLedgerEntry) (*adminplusdomain.SupplierCostLedgerEntry, bool, error)
 	DeleteLedgerEntryForSource(ctx context.Context, supplierID int64, providerType string, entryType string, sourceType string, sourceID int64) error
 	RefreshSnapshot(ctx context.Context, supplierID int64, currency string, capturedAt time.Time) (*adminplusdomain.SupplierCostSnapshot, error)
+	GetSnapshot(ctx context.Context, id int64) (*adminplusdomain.SupplierCostSnapshot, error)
 	ListSnapshots(ctx context.Context, filter SummaryFilter) ([]*adminplusdomain.SupplierCostSnapshot, error)
 	GetLedgerOverview(ctx context.Context) (*adminplusdomain.SupplierCostLedgerOverview, error)
 	ListFundingTransactions(ctx context.Context, filter TransactionFilter) ([]*adminplusdomain.SupplierFundingTransaction, error)
@@ -76,6 +123,10 @@ type SessionReader interface {
 
 type UsageCostSyncer interface {
 	SyncFromSession(ctx context.Context, in usagecostsapp.SyncFromSessionInput) (*usagecostsapp.SyncFromSessionResult, error)
+}
+
+type UsageCostImporter interface {
+	ImportUsageCostLines(ctx context.Context, lines []usagecostsapp.ImportUsageCostLineInput) ([]*adminplusdomain.SupplierUsageCostLine, error)
 }
 
 type BalanceSyncer interface {
@@ -97,6 +148,7 @@ type Service struct {
 	fundingReader     ports.SessionFundingAdapter
 	entitlementReader ports.SessionEntitlementAdapter
 	usageCostSyncer   UsageCostSyncer
+	usageCostImporter UsageCostImporter
 	balanceSyncer     BalanceSyncer
 	supplierLookup    SupplierLookup
 	now               func() time.Time
@@ -117,6 +169,9 @@ func NewServiceWithDependenciesAndNotifier(repo Repository, notifier Notifier, s
 	service.fundingReader = fundingReader
 	service.entitlementReader = entitlementReader
 	service.usageCostSyncer = usageCostSyncer
+	if importer, ok := usageCostSyncer.(UsageCostImporter); ok {
+		service.usageCostImporter = importer
+	}
 	service.balanceSyncer = balanceSyncer
 	service.supplierLookup = supplierLookup
 	return service
@@ -368,6 +423,272 @@ func (s *Service) ListLedgerEntries(ctx context.Context, filter LedgerFilter) ([
 	return s.repo.ListLedgerEntries(ctx, filter)
 }
 
+func (s *Service) ApplyReconcileAdjustment(ctx context.Context, in ReconcileAdjustmentInput) (*ReconcileAdjustmentResult, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("cost service is not configured")
+	}
+	if in.SupplierID <= 0 {
+		return nil, badRequest("COST_SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	if in.SnapshotID <= 0 {
+		return nil, badRequest("COST_SNAPSHOT_ID_INVALID", "invalid cost snapshot id")
+	}
+	if in.ActionRecommendationID <= 0 {
+		return nil, badRequest("COST_RECONCILE_ACTION_ID_INVALID", "invalid action recommendation id")
+	}
+	before, delta, err := s.loadReconcileSnapshot(ctx, in.SupplierID, in.SnapshotID)
+	if err != nil {
+		return nil, err
+	}
+	if delta == 0 {
+		return nil, infraerrors.New(http.StatusConflict, "COST_RECONCILE_DELTA_EMPTY", "cost snapshot does not need reconciliation")
+	}
+	amount := delta
+	if in.AdjustmentAmountCents != nil {
+		amount = *in.AdjustmentAmountCents
+	}
+	if amount != delta {
+		return nil, infraerrors.New(http.StatusConflict, "COST_RECONCILE_ADJUSTMENT_MISMATCH", "reconcile adjustment must equal the snapshot balance delta")
+	}
+	now := s.now().UTC()
+	occurredAt := now
+	if in.OccurredAt != nil && !in.OccurredAt.IsZero() {
+		occurredAt = in.OccurredAt.UTC()
+	}
+	reason := strings.TrimSpace(in.Reason)
+	if reason == "" {
+		reason = "action_recommendation"
+	}
+	entry, _, err := s.repo.UpsertLedgerEntry(ctx, &adminplusdomain.SupplierCostLedgerEntry{
+		SupplierID:       before.SupplierID,
+		ProviderType:     "admin_plus",
+		EntryType:        "manual_adjustment",
+		SourceType:       "action_recommendation",
+		SourceID:         in.ActionRecommendationID,
+		SourceExternalID: "cost_snapshot:" + strconv.FormatInt(before.ID, 10),
+		Currency:         normalizeCurrency(before.Currency),
+		AmountCents:      amount,
+		OccurredAt:       occurredAt,
+		RawPayload: map[string]any{
+			"mode":                     "supplier_cost_reconcile_adjustment",
+			"reason":                   reason,
+			"cost_snapshot_id":         before.ID,
+			"action_recommendation_id": in.ActionRecommendationID,
+			"expected_balance_cents":   before.ExpectedBalanceCents,
+			"actual_balance_cents":     *before.ActualBalanceCents,
+			"balance_delta_cents":      delta,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	after, err := s.repo.RefreshSnapshot(ctx, before.SupplierID, normalizeCurrency(before.Currency), now)
+	if err != nil {
+		return nil, err
+	}
+	return &ReconcileAdjustmentResult{
+		SupplierID:            before.SupplierID,
+		SnapshotID:            before.ID,
+		Currency:              normalizeCurrency(before.Currency),
+		AdjustmentAmountCents: amount,
+		LedgerEntry:           entry,
+		BeforeSnapshot:        before,
+		AfterSnapshot:         after,
+	}, nil
+}
+
+func (s *Service) ApplyReconcileDetailRepair(ctx context.Context, in ReconcileDetailRepairInput) (*ReconcileDetailRepairResult, error) {
+	if s == nil || s.repo == nil {
+		return nil, internalError("cost service is not configured")
+	}
+	if in.ActionRecommendationID <= 0 {
+		return nil, badRequest("COST_RECONCILE_ACTION_ID_INVALID", "invalid action recommendation id")
+	}
+	before, delta, err := s.loadReconcileSnapshot(ctx, in.SupplierID, in.SnapshotID)
+	if err != nil {
+		return nil, err
+	}
+	if delta == 0 {
+		return nil, infraerrors.New(http.StatusConflict, "COST_RECONCILE_DELTA_EMPTY", "cost snapshot does not need reconciliation")
+	}
+	detailType := normalizeReconcileDetailType(in.DetailType)
+	if detailType == "" {
+		return nil, badRequest("COST_RECONCILE_DETAIL_TYPE_INVALID", "invalid reconcile detail type")
+	}
+	amount := absInt64(delta)
+	if in.AmountCents != nil {
+		amount = *in.AmountCents
+	}
+	if amount <= 0 {
+		return nil, badRequest("COST_RECONCILE_DETAIL_AMOUNT_INVALID", "reconcile detail amount must be positive")
+	}
+	if amount != absInt64(delta) {
+		return nil, infraerrors.New(http.StatusConflict, "COST_RECONCILE_DETAIL_AMOUNT_MISMATCH", "reconcile detail amount must equal the absolute snapshot balance delta")
+	}
+	if err := validateReconcileDetailDirection(detailType, delta); err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	occurredAt := now
+	if in.OccurredAt != nil && !in.OccurredAt.IsZero() {
+		occurredAt = in.OccurredAt.UTC()
+	}
+	reason := strings.TrimSpace(in.Reason)
+	if reason == "" {
+		reason = "action_recommendation"
+	}
+	externalID := trimLimit(strings.TrimSpace(in.ExternalID), 160)
+	if externalID == "" {
+		externalID = reconcileDetailExternalID(in.ActionRecommendationID, before.ID, detailType)
+	}
+	result := &ReconcileDetailRepairResult{
+		SupplierID:     before.SupplierID,
+		SnapshotID:     before.ID,
+		Currency:       normalizeCurrency(before.Currency),
+		DetailType:     detailType,
+		AmountCents:    amount,
+		BeforeSnapshot: before,
+	}
+	rawPayload := reconcileDetailRawPayload(reason, before, in.ActionRecommendationID, detailType, delta)
+	switch detailType {
+	case "funding_credit":
+		result.FundingTransaction, result.LedgerEntry, err = s.recordReconcileFundingCredit(ctx, before.SupplierID, externalID, result.Currency, amount, occurredAt, now, rawPayload)
+	case "entitlement_credit":
+		result.EntitlementTransaction, result.LedgerEntry, err = s.recordReconcileEntitlementCredit(ctx, before.SupplierID, externalID, result.Currency, amount, occurredAt, now, rawPayload)
+	case "refund_debit":
+		result.FundingTransaction, result.LedgerEntry, err = s.recordReconcileRefundDebit(ctx, before.SupplierID, externalID, result.Currency, amount, occurredAt, now, rawPayload)
+	case "usage_cost":
+		result.UsageCostLine, err = s.recordReconcileUsageCost(ctx, before.SupplierID, externalID, result.Currency, amount, occurredAt, strings.TrimSpace(in.Model), rawPayload)
+	default:
+		return nil, badRequest("COST_RECONCILE_DETAIL_TYPE_INVALID", "invalid reconcile detail type")
+	}
+	if err != nil {
+		return nil, err
+	}
+	after, err := s.repo.RefreshSnapshot(ctx, before.SupplierID, result.Currency, now)
+	if err != nil {
+		return nil, err
+	}
+	result.AfterSnapshot = after
+	return result, nil
+}
+
+func (s *Service) loadReconcileSnapshot(ctx context.Context, supplierID int64, snapshotID int64) (*adminplusdomain.SupplierCostSnapshot, int64, error) {
+	if supplierID <= 0 {
+		return nil, 0, badRequest("COST_SUPPLIER_ID_INVALID", "invalid supplier id")
+	}
+	if snapshotID <= 0 {
+		return nil, 0, badRequest("COST_SNAPSHOT_ID_INVALID", "invalid cost snapshot id")
+	}
+	before, err := s.repo.GetSnapshot(ctx, snapshotID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if before == nil {
+		return nil, 0, infraerrors.New(http.StatusNotFound, "COST_SNAPSHOT_NOT_FOUND", "cost snapshot not found")
+	}
+	if before.SupplierID != supplierID {
+		return nil, 0, infraerrors.New(http.StatusConflict, "COST_SNAPSHOT_SUPPLIER_MISMATCH", "cost snapshot does not belong to the supplier")
+	}
+	if before.ActualBalanceCents == nil || before.BalanceDeltaCents == nil {
+		return nil, 0, infraerrors.New(http.StatusConflict, "COST_RECONCILE_ACTUAL_BALANCE_REQUIRED", "cost snapshot does not have an actual balance delta")
+	}
+	return before, *before.BalanceDeltaCents, nil
+}
+
+func (s *Service) recordReconcileFundingCredit(ctx context.Context, supplierID int64, externalID string, currency string, amount int64, occurredAt time.Time, now time.Time, rawPayload map[string]any) (*adminplusdomain.SupplierFundingTransaction, *adminplusdomain.SupplierCostLedgerEntry, error) {
+	stored, _, err := s.repo.UpsertFundingTransaction(ctx, &adminplusdomain.SupplierFundingTransaction{
+		SupplierID:         supplierID,
+		ProviderType:       "admin_plus",
+		ExternalID:         externalID,
+		Status:             "COMPLETED",
+		Currency:           currency,
+		AmountCents:        amount,
+		CashAmountCents:    amount,
+		RechargeMultiplier: 1,
+		ActualPaymentCents: amount,
+		PaidAt:             &occurredAt,
+		CompletedAt:        &occurredAt,
+		RawPayload:         rawPayload,
+		LastSeenAt:         now,
+	})
+	if err != nil || stored == nil {
+		return stored, nil, err
+	}
+	ledger, _, err := s.repo.UpsertLedgerEntry(ctx, ledgerFromFunding(stored))
+	return stored, ledger, err
+}
+
+func (s *Service) recordReconcileEntitlementCredit(ctx context.Context, supplierID int64, externalID string, currency string, amount int64, occurredAt time.Time, now time.Time, rawPayload map[string]any) (*adminplusdomain.SupplierEntitlementTransaction, *adminplusdomain.SupplierCostLedgerEntry, error) {
+	stored, _, err := s.repo.UpsertEntitlementTransaction(ctx, &adminplusdomain.SupplierEntitlementTransaction{
+		SupplierID:        supplierID,
+		ProviderType:      "admin_plus",
+		ExternalID:        externalID,
+		SourceFamily:      "manual_redeem",
+		Type:              "balance",
+		Status:            "used",
+		Currency:          currency,
+		ValueCents:        amount,
+		RawValue:          float64(amount) / 100,
+		UsedAt:            &occurredAt,
+		CreatedAtExternal: &occurredAt,
+		RawPayload:        rawPayload,
+		LastSeenAt:        now,
+	})
+	if err != nil || stored == nil {
+		return stored, nil, err
+	}
+	ledger, _, err := s.repo.UpsertLedgerEntry(ctx, ledgerFromEntitlement(stored))
+	return stored, ledger, err
+}
+
+func (s *Service) recordReconcileRefundDebit(ctx context.Context, supplierID int64, externalID string, currency string, amount int64, occurredAt time.Time, now time.Time, rawPayload map[string]any) (*adminplusdomain.SupplierFundingTransaction, *adminplusdomain.SupplierCostLedgerEntry, error) {
+	stored, _, err := s.repo.UpsertFundingTransaction(ctx, &adminplusdomain.SupplierFundingTransaction{
+		SupplierID:         supplierID,
+		ProviderType:       "admin_plus",
+		ExternalID:         externalID,
+		Status:             "REFUNDED",
+		Currency:           currency,
+		AmountCents:        amount,
+		CashAmountCents:    amount,
+		RechargeMultiplier: 1,
+		ActualPaymentCents: amount,
+		RefundAmountCents:  amount,
+		CompletedAt:        &occurredAt,
+		RawPayload:         rawPayload,
+		LastSeenAt:         now,
+	})
+	if err != nil || stored == nil {
+		return stored, nil, err
+	}
+	ledger, _, err := s.repo.UpsertLedgerEntry(ctx, ledgerFromFunding(stored))
+	return stored, ledger, err
+}
+
+func (s *Service) recordReconcileUsageCost(ctx context.Context, supplierID int64, externalID string, currency string, amount int64, occurredAt time.Time, model string, rawPayload map[string]any) (*adminplusdomain.SupplierUsageCostLine, error) {
+	if s.usageCostImporter == nil {
+		return nil, infraerrors.New(http.StatusConflict, "COST_RECONCILE_USAGE_IMPORTER_REQUIRED", "usage cost importer is not configured")
+	}
+	if strings.TrimSpace(model) == "" {
+		model = "manual-reconcile"
+	}
+	items, err := s.usageCostImporter.ImportUsageCostLines(ctx, []usagecostsapp.ImportUsageCostLineInput{{
+		SupplierID:          supplierID,
+		Source:              "manual_reconcile",
+		ExternalUsageCostID: externalID,
+		Model:               model,
+		Endpoint:            "admin_plus_cost_reconcile",
+		Currency:            currency,
+		CostCents:           amount,
+		StartedAt:           occurredAt,
+		RawPayload:          rawPayload,
+	}})
+	if err != nil || len(items) == 0 {
+		return nil, err
+	}
+	return items[0], nil
+}
+
 func normalizeWindow(startedAt *time.Time, endedAt *time.Time, now func() time.Time) (*time.Time, *time.Time, error) {
 	end := time.Now().UTC()
 	if now != nil {
@@ -606,9 +927,78 @@ func normalizeSourceFamily(value string) string {
 	return value
 }
 
+func normalizeReconcileDetailType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "funding", "funding_credit", "recharge", "recharge_credit":
+		return "funding_credit"
+	case "entitlement", "entitlement_credit", "redeem", "redemption":
+		return "entitlement_credit"
+	case "refund", "refund_debit":
+		return "refund_debit"
+	case "usage", "usage_cost", "usage_debit":
+		return "usage_cost"
+	default:
+		return ""
+	}
+}
+
+func validateReconcileDetailDirection(detailType string, delta int64) error {
+	if delta > 0 {
+		switch detailType {
+		case "funding_credit", "entitlement_credit":
+			return nil
+		default:
+			return infraerrors.New(http.StatusConflict, "COST_RECONCILE_DETAIL_DIRECTION_MISMATCH", "positive balance delta must be repaired by a missing funding or entitlement credit")
+		}
+	}
+	if delta < 0 {
+		switch detailType {
+		case "refund_debit", "usage_cost":
+			return nil
+		default:
+			return infraerrors.New(http.StatusConflict, "COST_RECONCILE_DETAIL_DIRECTION_MISMATCH", "negative balance delta must be repaired by a missing refund or usage cost")
+		}
+	}
+	return infraerrors.New(http.StatusConflict, "COST_RECONCILE_DELTA_EMPTY", "cost snapshot does not need reconciliation")
+}
+
+func reconcileDetailExternalID(actionID int64, snapshotID int64, detailType string) string {
+	return strings.Join([]string{
+		"admin-plus-reconcile",
+		strconv.FormatInt(actionID, 10),
+		strconv.FormatInt(snapshotID, 10),
+		detailType,
+	}, ":")
+}
+
+func reconcileDetailRawPayload(reason string, snapshot *adminplusdomain.SupplierCostSnapshot, actionID int64, detailType string, delta int64) map[string]any {
+	payload := map[string]any{
+		"mode":                     "supplier_cost_reconcile_detail_repair",
+		"detail_type":              detailType,
+		"reason":                   reason,
+		"action_recommendation_id": actionID,
+		"balance_delta_cents":      delta,
+	}
+	if snapshot != nil {
+		payload["cost_snapshot_id"] = snapshot.ID
+		payload["expected_balance_cents"] = snapshot.ExpectedBalanceCents
+		if snapshot.ActualBalanceCents != nil {
+			payload["actual_balance_cents"] = *snapshot.ActualBalanceCents
+		}
+	}
+	return payload
+}
+
 func nonNegative(value int64) int64 {
 	if value < 0 {
 		return 0
+	}
+	return value
+}
+
+func absInt64(value int64) int64 {
+	if value < 0 {
+		return -value
 	}
 	return value
 }

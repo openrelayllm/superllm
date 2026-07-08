@@ -283,6 +283,18 @@ function parseJSON(text) {
 
 
 globalThis.adminPlusHandleMessage = handleMessage
+if (globalThis.chrome?.runtime?.onMessage) {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    Promise.resolve(handleMessage(message, sender || {}))
+      .then((result) => sendResponse({ __adminPlusOK: true, result }))
+      .catch((error) => sendResponse({
+        __adminPlusError: true,
+        message: error?.message || String(error),
+        reason: error?.reason || ''
+      }))
+    return true
+  })
+}
 
 const ADMIN_PLUS_PATH_HINTS = [
   '/admin',
@@ -565,8 +577,11 @@ async function captureSupplierSession(supplierID, autoCreate, candidate = null, 
   const identification = await identifyCurrentSite()
   const client = new AdminPlusClient(config)
   let supplier = resolveSupplierFromIdentification(identification, supplierID)
-  if (!supplier && candidate?.supplier_id) {
-    supplier = supplierFromCandidateHint(candidate)
+  if (!supplier && candidate && (candidate.supplier_id || autoCreate)) {
+    const hinted = supplierFromCandidateHint(candidate)
+    if (supplierHasCaptureContext(hinted)) {
+      supplier = hinted
+    }
   }
   if (!supplier) {
     supplier = supplierFromCurrentSite(identification, autoCreate)
@@ -794,6 +809,15 @@ function supplierFromCandidateHint(candidate) {
       masked_browser_login_username: ''
     }
   }
+}
+
+function supplierHasCaptureContext(supplier) {
+  return Boolean(
+    Number(supplier?.id || 0) > 0 ||
+    supplier?.type ||
+    supplier?.dashboard_url ||
+    supplier?.api_base_url
+  )
 }
 
 function normalizeSiteCandidate(candidate) {
@@ -1230,7 +1254,40 @@ async function enrichCaptureResult(result, supplier, fallbackURL) {
 }
 
 function supplierFromCurrentSite(identification, autoCreate) {
-  const error = new Error(autoCreate ? '请先完成注册并入库供应商后再上报当前会话' : '当前网站未匹配可上报的供应商')
+  if (autoCreate) {
+    const activeTab = identification?.activeTab || {}
+    const siteCandidate = identification?.candidate || {}
+    const defaults = siteCandidate?.defaults || {}
+    const page = siteCandidate?.page || {}
+    const providerType = providerTypeFromIdentification(identification)
+    const dashboardURL = firstNonEmpty(defaults.dashboard_url, page.url, activeTab.url, page.origin, activeTab.origin)
+    const apiBaseURL = firstNonEmpty(defaults.api_base_url, page.origin, activeTab.origin, originFromURL(page.url), originFromURL(activeTab.url))
+    if (!providerType) {
+      const error = new Error('无法判断系统类型，请选择')
+      error.reason = 'SUPPLIER_TYPE_REQUIRED'
+      throw error
+    }
+    if (dashboardURL || apiBaseURL) {
+      return {
+        id: 0,
+        supplier_id: 0,
+        name: firstNonEmpty(defaults.name, page.title, activeTab.title, page.host, activeTab.host, '当前供应商'),
+        type: providerType,
+        dashboard_url: dashboardURL,
+        api_base_url: apiBaseURL,
+        third_party_recharge_url: firstNonEmpty(defaults.third_party_recharge_url, inferThirdPartyRechargeURL(page.url), inferThirdPartyRechargeURL(activeTab.url)),
+        local_recharge_url: defaults.local_recharge_url || '',
+        credential: {
+          browser_login_enabled: false,
+          browser_login_username_configured: false,
+          browser_login_password_configured: false,
+          browser_login_token_configured: false,
+          masked_browser_login_username: ''
+        }
+      }
+    }
+  }
+  const error = new Error(autoCreate ? '当前页面缺少可创建供应商的站点信息' : '当前网站未匹配可上报的供应商')
   error.reason = 'SUPPLIER_SITE_NOT_MATCHED'
   throw error
 }

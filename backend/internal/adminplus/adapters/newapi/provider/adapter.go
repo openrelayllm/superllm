@@ -129,9 +129,6 @@ func (c *Client) DirectLogin(ctx context.Context, in ports.DirectLoginInput) (*p
 			return nil, err
 		}
 		applyProfileToSessionBundle(bundle, probe)
-		if err := requireAdminSessionForDirectLogin(in.LoginContext, bundle); err != nil {
-			return nil, err
-		}
 		return &ports.DirectLoginResult{
 			SupplierID:    in.SupplierID,
 			Origin:        origin,
@@ -169,9 +166,6 @@ func (c *Client) DirectLogin(ctx context.Context, in ports.DirectLoginInput) (*p
 		diagnostics["profile_probe_reason"] = infraerrors.Reason(err)
 		diagnostics["profile_probe_message"] = infraerrors.Message(err)
 	} else {
-		return nil, err
-	}
-	if err := requireAdminSessionForDirectLogin(in.LoginContext, bundle); err != nil {
 		return nil, err
 	}
 	return &ports.DirectLoginResult{
@@ -236,9 +230,6 @@ func (c *Client) directLoginFromToken(ctx context.Context, in ports.DirectLoginI
 		return nil, err
 	}
 	applyProfileToSessionBundle(bundle, probe)
-	if err := requireAdminSessionForDirectLogin(in.LoginContext, bundle); err != nil {
-		return nil, err
-	}
 	return &ports.DirectLoginResult{
 		SupplierID:    in.SupplierID,
 		Origin:        origin,

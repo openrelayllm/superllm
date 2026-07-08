@@ -30,11 +30,18 @@ func RegisterAdminPlusRoutes(
 			suppliers.GET("/:id/groups", h.AdminPlus.SupplierGroup.List)
 			suppliers.GET("/:id/groups/events", h.AdminPlus.SupplierGroup.ListEvents)
 			suppliers.POST("/:id/groups/sync", h.AdminPlus.SupplierGroup.Sync)
+			suppliers.PUT("/:id/groups/:groupID/key-capacity", h.AdminPlus.SupplierGroup.UpdateKeyCapacity)
 			suppliers.GET("/:id/keys", h.AdminPlus.SupplierKey.List)
+			suppliers.POST("/:id/keys/ensure-all-plan", h.AdminPlus.SupplierKey.EnsureAllPlan)
 			suppliers.POST("/:id/keys/ensure-all", h.AdminPlus.SupplierKey.EnsureAll)
 			suppliers.POST("/:id/keys/provision", h.AdminPlus.SupplierKey.Provision)
 			suppliers.POST("/:id/keys/standardize-names", h.AdminPlus.SupplierKey.StandardizeNames)
+			suppliers.POST("/:id/keys/import-provider-projection", h.AdminPlus.SupplierKey.ImportProviderProjection)
+			suppliers.POST("/:id/keys/import-provider-projections", h.AdminPlus.SupplierKey.ImportProviderProjections)
 			suppliers.POST("/:id/keys/:keyID/repair-binding", h.AdminPlus.SupplierKey.RepairBinding)
+			suppliers.POST("/:id/keys/:keyID/disable-local-projection", h.AdminPlus.SupplierKey.DisableLocalProjection)
+			suppliers.POST("/:id/keys/:keyID/disable-provider", h.AdminPlus.SupplierKey.DisableProviderKey)
+			suppliers.POST("/:id/keys/:keyID/delete-provider", h.AdminPlus.SupplierKey.DeleteProviderKey)
 			suppliers.POST("/:id/rates/sync", h.AdminPlus.Rate.SyncSupplierRates)
 			suppliers.GET("/:id/balance/current", h.AdminPlus.Balance.GetSupplierCurrent)
 			suppliers.POST("/:id/usage-costs/sync", h.AdminPlus.UsageCost.SyncSupplierUsageCosts)
@@ -57,6 +64,7 @@ func RegisterAdminPlusRoutes(
 
 		adminPlus.GET("/supplier-channel-checks/best", h.AdminPlus.ChannelCheck.ListBest)
 		adminPlus.GET("/supplier-channel-checks/overview", h.AdminPlus.ChannelCheck.Overview)
+		adminPlus.GET("/supplier-groups", h.AdminPlus.SupplierGroup.ListAll)
 
 		kanban := adminPlus.Group("/kanban")
 		{
@@ -120,6 +128,18 @@ func RegisterAdminPlusRoutes(
 		sub2api := adminPlus.Group("/sub2api")
 		{
 			sub2api.GET("/accounts", h.AdminPlus.Supplier.ListLocalAccounts)
+			sub2api.GET("/groups", h.AdminPlus.Sub2API.ListLocalGroups)
+			sub2api.GET("/local-account-ops", h.AdminPlus.Sub2API.ListLocalAccountOps)
+			sub2api.POST("/local-account-ops/sync-local-state", h.AdminPlus.Sub2API.SyncLocalAccountState)
+			sub2api.POST("/local-account-ops/accept-local-state", h.AdminPlus.Sub2API.AcceptLocalAccountState)
+			sub2api.POST("/local-account-ops/restore-local-state", h.AdminPlus.Sub2API.RestoreLocalAccountState)
+			sub2api.POST("/local-account-ops/preview", h.AdminPlus.Sub2API.PreviewLocalAccountOpsAction)
+			sub2api.POST("/local-account-ops/apply", h.AdminPlus.Sub2API.ApplyLocalAccountOpsAction)
+			sub2api.GET("/routing/refill-runs", h.AdminPlus.Sub2API.ListRoutingRefillRuns)
+			sub2api.GET("/routing/group-impact/api-keys", h.AdminPlus.Sub2API.ListRoutingImpactAPIKeys)
+			sub2api.GET("/routing/group-impact/failures", h.AdminPlus.Sub2API.ListRoutingImpactFailureRequests)
+			sub2api.POST("/routing/group-impact/failures/:failureID/sensitive-detail", h.AdminPlus.Sub2API.GetRoutingFailureSensitiveDetail)
+			sub2api.POST("/routing/refill-local-group", h.AdminPlus.Sub2API.RefillLocalGroup)
 			sub2api.GET("/accounts/:accountID/models", h.AdminPlus.Sub2API.ListLocalAccountModels)
 			sub2api.POST("/accounts/:accountID/test", h.AdminPlus.Sub2API.TestLocalAccount)
 			sub2api.POST("/accounts/:accountID/purity/checks/stream", h.AdminPlus.Purity.AccountCheckStream)
@@ -309,6 +329,10 @@ func RegisterAdminPlusRoutes(
 			actions.PATCH("/recommendations/:id/status", h.AdminPlus.Action.UpdateRecommendationStatus)
 			actions.POST("/recommendations/:id/execute", h.AdminPlus.Action.ExecuteRecommendation)
 			actions.GET("/recommendations/:id/executions", h.AdminPlus.Action.ListExecutions)
+			actions.POST("/recommendations/:id/cost-reconcile-adjustment", h.AdminPlus.Cost.ApplyReconcileAdjustment)
+			actions.POST("/recommendations/:id/cost-reconcile-detail-repair", h.AdminPlus.Cost.ApplyReconcileDetailRepair)
+			actions.POST("/recommendations/:id/executions/:executionID/retry", h.AdminPlus.Sub2API.RetryActionExecution)
+			actions.POST("/recommendations/:id/executions/:executionID/rollback", h.AdminPlus.Sub2API.RollbackActionExecution)
 		}
 	}
 }

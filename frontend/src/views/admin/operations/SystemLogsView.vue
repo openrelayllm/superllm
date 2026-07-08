@@ -164,7 +164,8 @@ const componentOptions: Array<{ value: AdminPlusSystemLogComponent; label: strin
   { value: 'admin_plus.balance', label: '余额同步' },
   { value: 'admin_plus.mail', label: '邮箱验证码' },
   { value: 'admin_plus.registration', label: '注册任务' },
-  { value: 'admin_plus.extension', label: '插件任务' }
+  { value: 'admin_plus.extension', label: '插件任务' },
+  { value: 'admin_plus.sub2api', label: '本地账号动作' }
 ]
 
 const loading = ref(false)

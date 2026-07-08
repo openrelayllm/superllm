@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -20,6 +21,13 @@ type SQLRepository struct {
 
 func NewSQLRepository(db *sql.DB) *SQLRepository {
 	return &SQLRepository{db: db}
+}
+
+func supplierGroupActiveKeyCountSQL(groupIDExpr string) string {
+	return `(SELECT COUNT(*)::int
+		FROM admin_plus_supplier_keys sk
+		WHERE sk.supplier_group_id = ` + groupIDExpr + `
+			AND sk.status IN ('provisioning', 'bound', 'manual_secret_required'))`
 }
 
 func (r *SQLRepository) GetSupplierName(ctx context.Context, supplierID int64) (string, error) {
@@ -138,7 +146,10 @@ func upsertGroup(ctx context.Context, tx *sql.Tx, group *adminplusdomain.Supplie
 			official_name, model_family, model_spec, standard_key_name,
 			rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
 			rpm_limit, daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
-			allow_image_generation, is_private, status, raw_payload,
+			allow_image_generation, is_private,
+			COALESCE(key_limit_policy, 'inherit'), COALESCE(key_limit_value, 0),
+			`+supplierGroupActiveKeyCountSQL("admin_plus_supplier_groups.id")+`,
+			status, raw_payload,
 			last_seen_at, naming_updated_at, created_at, updated_at
 	`,
 		group.SupplierID,
@@ -173,11 +184,14 @@ func (r *SQLRepository) List(ctx context.Context, filter ListFilter) ([]*adminpl
 	if r == nil || r.db == nil {
 		return nil, dbNotConfigured()
 	}
-	where := []string{"supplier_id = $1"}
-	args := []any{filter.SupplierID}
+	where := make([]string, 0, 3)
+	args := make([]any, 0, 4)
 	addArg := func(value any) string {
 		args = append(args, value)
 		return fmt.Sprintf("$%d", len(args))
+	}
+	if filter.SupplierID > 0 {
+		where = append(where, "supplier_id = "+addArg(filter.SupplierID))
 	}
 	if filter.Status != "" {
 		where = append(where, "status = "+addArg(string(filter.Status)))
@@ -192,10 +206,13 @@ func (r *SQLRepository) List(ctx context.Context, filter ListFilter) ([]*adminpl
 			official_name, model_family, model_spec, standard_key_name,
 			rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
 			rpm_limit, daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
-			allow_image_generation, is_private, status, raw_payload,
+			allow_image_generation, is_private,
+			COALESCE(key_limit_policy, 'inherit'), COALESCE(key_limit_value, 0),
+			` + supplierGroupActiveKeyCountSQL("admin_plus_supplier_groups.id") + `,
+			status, raw_payload,
 			last_seen_at, naming_updated_at, created_at, updated_at
 		FROM admin_plus_supplier_groups
-		WHERE ` + strings.Join(where, " AND ") + `
+		` + supplierGroupWhereClause(where) + `
 		ORDER BY last_seen_at DESC, id DESC
 		LIMIT ` + limitRef
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -216,6 +233,36 @@ func (r *SQLRepository) List(ctx context.Context, filter ListFilter) ([]*adminpl
 		return nil, err
 	}
 	return items, nil
+}
+
+func (r *SQLRepository) UpdateKeyCapacity(ctx context.Context, in UpdateKeyCapacityInput) (*adminplusdomain.SupplierGroup, error) {
+	if r == nil || r.db == nil {
+		return nil, dbNotConfigured()
+	}
+	row := r.db.QueryRowContext(ctx, `
+		UPDATE admin_plus_supplier_groups
+		SET key_limit_policy = $3,
+			key_limit_value = $4,
+			updated_at = NOW()
+		WHERE supplier_id = $1 AND id = $2
+		RETURNING id, supplier_id, external_group_id, name, description, provider_family,
+			official_name, model_family, model_spec, standard_key_name,
+			rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
+			rpm_limit, daily_limit_usd, weekly_limit_usd, monthly_limit_usd,
+			allow_image_generation, is_private,
+			COALESCE(key_limit_policy, 'inherit'), COALESCE(key_limit_value, 0),
+			`+supplierGroupActiveKeyCountSQL("admin_plus_supplier_groups.id")+`,
+			status, raw_payload,
+			last_seen_at, naming_updated_at, created_at, updated_at
+	`, in.SupplierID, in.SupplierGroupID, in.KeyLimitPolicy, in.KeyLimitValue)
+	return scanSupplierGroup(row)
+}
+
+func supplierGroupWhereClause(where []string) string {
+	if len(where) == 0 {
+		return ""
+	}
+	return "WHERE " + strings.Join(where, " AND ")
 }
 
 func (r *SQLRepository) CreateChangeEvents(ctx context.Context, events []*adminplusdomain.SupplierGroupChangeEvent) ([]*adminplusdomain.SupplierGroupChangeEvent, error) {
@@ -338,6 +385,9 @@ func scanSupplierGroup(scanner supplierGroupScanner) (*adminplusdomain.SupplierG
 		&monthlyLimit,
 		&group.AllowImageGeneration,
 		&group.IsPrivate,
+		&group.KeyLimitPolicy,
+		&group.KeyLimitValue,
+		&group.ActiveKeyCount,
 		&status,
 		&rawPayload,
 		&group.LastSeenAt,
@@ -345,10 +395,15 @@ func scanSupplierGroup(scanner supplierGroupScanner) (*adminplusdomain.SupplierG
 		&group.CreatedAt,
 		&group.UpdatedAt,
 	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, infraerrors.New(http.StatusNotFound, "SUPPLIER_GROUP_NOT_FOUND", "supplier group not found")
+	}
 	if err != nil {
 		return nil, err
 	}
 	group.Status = adminplusdomain.SupplierGroupStatus(status)
+	group.KeyLimitPolicy = normalizeGroupKeyLimitPolicy(group.KeyLimitPolicy)
+	group.KeyCapacityStatus = groupKeyCapacityStatus(group.KeyLimitPolicy, group.KeyLimitValue, group.ActiveKeyCount)
 	if userRate.Valid {
 		value := userRate.Float64
 		group.UserRateMultiplier = &value
@@ -381,6 +436,27 @@ func scanSupplierGroup(scanner supplierGroupScanner) (*adminplusdomain.SupplierG
 		group.RawPayload = payload
 	}
 	return &group, nil
+}
+
+func groupKeyCapacityStatus(policy string, limit int, activeCount int) string {
+	switch normalizeGroupKeyLimitPolicy(policy) {
+	case adminplusdomain.SupplierGroupKeyLimitPolicyInherit:
+		return adminplusdomain.SupplierGroupKeyLimitPolicyInherit
+	case adminplusdomain.SupplierGroupKeyLimitPolicyUnlimited:
+		return adminplusdomain.SupplierKeyCapacityAvailable
+	case adminplusdomain.SupplierGroupKeyLimitPolicyLimited:
+		if limit <= activeCount {
+			return adminplusdomain.SupplierKeyCapacityExhausted
+		}
+		if limit-activeCount <= 2 {
+			return adminplusdomain.SupplierKeyCapacityLimited
+		}
+		return adminplusdomain.SupplierKeyCapacityAvailable
+	case adminplusdomain.SupplierGroupKeyLimitPolicyUnsupported:
+		return adminplusdomain.SupplierKeyCapacityUnsupported
+	default:
+		return adminplusdomain.SupplierKeyCapacityUnknown
+	}
 }
 
 func scanSupplierGroupChangeEvent(scanner supplierGroupScanner) (*adminplusdomain.SupplierGroupChangeEvent, error) {

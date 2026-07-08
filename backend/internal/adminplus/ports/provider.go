@@ -276,6 +276,68 @@ type RenameProviderKeyInput struct {
 	Metadata        map[string]any
 }
 
+type DisableProviderKeyInput struct {
+	SupplierID      int64
+	ExternalKeyID   string
+	ExternalGroupID string
+	Name            string
+	Metadata        map[string]any
+}
+
+type DeleteProviderKeyInput struct {
+	SupplierID      int64
+	ExternalKeyID   string
+	ExternalGroupID string
+	Name            string
+	Metadata        map[string]any
+}
+
+type ListProviderKeysInput struct {
+	SupplierID int64
+	Page       int
+	Limit      int
+}
+
+type ProviderKeySnapshot struct {
+	SupplierID      int64
+	ExternalGroupID string
+	ExternalKeyID   string
+	Name            string
+	Status          string
+	RawPayload      map[string]any
+}
+
+type ListProviderKeysResult struct {
+	SupplierID int64
+	SystemType string
+	Origin     string
+	APIBaseURL string
+	Keys       []ProviderKeySnapshot
+	Total      int
+	CapturedAt time.Time
+}
+
+type ReadProviderKeyCapacityInput struct {
+	SupplierID int64
+	Limit      int
+}
+
+type ProviderKeyCapacityResult struct {
+	SupplierID        int64
+	SystemType        string
+	Origin            string
+	APIBaseURL        string
+	KeyLimitPolicy    string
+	KeyLimitValue     int
+	ActiveKeyCount    int
+	RemainingKeySlots int
+	KeyCapacityStatus string
+	LimitKnown        bool
+	Keys              []ProviderKeySnapshot
+	Diagnostics       map[string]any
+	CapturedAt        time.Time
+}
+
 type ProviderKeyResult struct {
 	SupplierID      int64
 	ExternalGroupID string
@@ -288,8 +350,12 @@ type ProviderKeyResult struct {
 }
 
 type SessionKeyAdapter interface {
+	ListKeys(ctx context.Context, in SessionProbeInput, request ListProviderKeysInput) (*ListProviderKeysResult, error)
+	ReadKeyCapacity(ctx context.Context, in SessionProbeInput, request ReadProviderKeyCapacityInput) (*ProviderKeyCapacityResult, error)
 	CreateKey(ctx context.Context, in SessionProbeInput, request CreateProviderKeyInput) (*ProviderKeyResult, error)
 	RenameKey(ctx context.Context, in SessionProbeInput, request RenameProviderKeyInput) (*ProviderKeyResult, error)
+	DisableKey(ctx context.Context, in SessionProbeInput, request DisableProviderKeyInput) (*ProviderKeyResult, error)
+	DeleteKey(ctx context.Context, in SessionProbeInput, request DeleteProviderKeyInput) (*ProviderKeyResult, error)
 }
 
 type ProviderRateEntry struct {

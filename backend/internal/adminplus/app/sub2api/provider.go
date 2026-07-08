@@ -2,11 +2,13 @@ package sub2api
 
 import (
 	"database/sql"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/google/wire"
 	_ "github.com/lib/pq"
@@ -20,8 +22,24 @@ var ProviderSet = wire.NewSet(
 	NewRuntimeRepository,
 	wire.Bind(new(Repository), new(*SQLRepository)),
 	wire.Bind(new(RuntimeReader), new(*RuntimeRepository)),
-	NewService,
+	ProvideRoutingPort,
+	ProvideService,
 )
+
+func ProvideService(repo Repository, routing Sub2APIRoutingPort, runtimeRepo RuntimeReader, recorder *bizlogs.Recorder) *Service {
+	return NewService(repo, runtimeRepo).WithRoutingPort(routing).WithDiagnostics(recorder)
+}
+
+func ProvideRoutingPort(local *SQLRepository, cfg *config.Config, client *http.Client) Sub2APIRoutingPort {
+	if ShouldUseRemoteAdminAPIRoutingPortFromConfig(cfg) {
+		remote, err := NewRemoteAdminAPIRoutingPortFromConfig(cfg, client, local)
+		if err != nil {
+			return NewFailingRoutingPort(err)
+		}
+		return remote
+	}
+	return local
+}
 
 type ReadDB struct {
 	DB *sql.DB
