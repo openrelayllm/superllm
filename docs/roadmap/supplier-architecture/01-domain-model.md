@@ -61,7 +61,8 @@ erDiagram
 | `admin_plus_supplier_groups` | `supplier_id/external_group_id/name/provider_family/effective_rate_multiplier/status` | 第三方分组投影和倍率排序依据 |
 | `admin_plus_supplier_keys` | `supplier_id/supplier_group_id/external_key_id/key_fingerprint/key_last4/status/local_sub2api_account_id` | 第三方 Key 脱敏投影和本地落地状态 |
 | `admin_plus_supplier_accounts` | `supplier_id/supplier_key_id/local_sub2api_account_id/source_display_name/local_group_names/effective_rate_multiplier` | 供应商到本地账号的运营绑定投影 |
-| `accounts` | `id/name/platform/status/schedulable/rate_multiplier` | 本地网关真实调度对象 |
+| `accounts` | `id/name/platform/status/schedulable/rate_multiplier/proxy_id` | 本地网关真实调度对象；`proxy_id` 指向 Sub2API 网关实际使用的代理 |
+| `proxies` | `id/name/status/expires_at/deleted_at` | 本地账号绑定代理事实源，用于区分代理故障和供应商故障 |
 | `groups` / `account_groups` | `groups.id/name`、`account_groups.account_id/group_id` | 本地调度分组和账号分组绑定 |
 | `api_keys` / `usage_logs` | `api_keys.user_id/group_id`、`usage_logs.api_key_id/account_id/group_id/model/actual_cost` | 用户请求入口和最终调度事实 |
 | `admin_plus_supplier_channel_check_snapshots` | `supplier_group_id/supplier_key_id/local_sub2api_account_id/check_source/recommended/blocked_reason` | 候选可用性、排除原因和实测成本控制 |
@@ -229,7 +230,7 @@ Sub2API 原后台兼容规则：
 | `recharge_required` | 明确需要充值或兑换 | 生成充值动作，不关闭供应商分组 |
 | `balance_unknown` | 暂无余额事实 | 降级为人工确认候选 |
 
-`blocked_reason` 必须区分 `balance_blocked`、`key_limit_reached`、`health_failed`、`local_unschedulable`。只有 `health_failed/local_unschedulable` 这类真实链路失败，才可能进入坏账号关闭调度流程。
+`blocked_reason` 必须区分 `balance_blocked`、`key_limit_reached`、`health_failed`、`local_unschedulable`、`proxy_unavailable`。代理类故障只要求修复账号绑定代理或网络出口，不能误判供应商坏；只有 `health_failed/local_unschedulable` 这类真实链路失败，才可能进入坏账号关闭调度流程。
 
 ## 6. 命名建议
 

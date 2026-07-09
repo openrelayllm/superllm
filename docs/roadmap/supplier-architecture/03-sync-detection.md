@@ -13,6 +13,7 @@
 6. 余额不足不是渠道不可用；低倍率但余额不足的供应商要保留为 `balance_blocked/recharge_required` 候选，提示充值后复测。
 7. Key 配额不足不是供应商不可用；它只阻塞新 Key 开通，应该生成“选择优先开通分组”的动作。
 8. 检测流程必须明确读写哪些表；完整表级流转见 [08-database-design.md](08-database-design.md)。
+9. 代理异常不是供应商坏；候选评估第一阶段读取 Sub2API 网关真实绑定的 `accounts.proxy_id -> proxies`，明确不可用时只输出 `check_source=proxy` 和代理类阻断原因。
 
 ## 2. 同步任务总图
 
@@ -135,6 +136,7 @@ flowchart TD
 | P1 | Key 配额状态 | `ListKeys/ReadKeyCapacity` | `key_limit_policy`、`key_capacity_status`、`active_key_count` | 不消耗模型 token | 判断是否能继续自动创建第三方 Key |
 | P2 | 第三方 Key 事实 | `admin_plus_supplier_keys` | `status`、`external_key_id`、`local_sub2api_account_id` | 不消耗模型 token | 判断该分组是否已落地本地账号 |
 | P2 | 本地调度状态 | 本地 Sub2API `accounts` / `OpsService` | `schedulable`、429、error、temp unsched | 不消耗供应商 token | 判断本地网关能否调度 |
+| P2 | 本地账号代理绑定 | 本地 Sub2API `accounts.proxy_id`、`proxies` | `local_account_proxy_status`、`proxy_deleted/proxy_disabled/proxy_expired/proxy_unavailable` | 不消耗供应商 token | 区分代理故障和供应商/账号故障；无代理或未知不误阻断 |
 | P2 | 纯度检测快照 | `admin_plus_scheduler_steps.result_snapshot` | `run_purity_check`、`local_sub2api_account_id`、`verdict`、`score`、`model_identity_status` | 不新增本次 token 消耗，复用最近检测结果 | 明确能力不匹配时阻断，风险态降级，未知不阻断 |
 | P2 | 主动健康探测 | `health.Service`、`channelchecks.Check` | `probe_status`、`status_code`、`first_token_ms`、`active_probe_daily_budget_tokens`、`channel_check_probe_cooldown_seconds` | 消耗模型 token 和供应商余额 | 只在监控缺失/过期/冲突、人工触发或自动写回前验证真实链路；第一阶段已有每日预算和同分组冷却 |
 
@@ -168,10 +170,13 @@ flowchart TD
     I -->|是| J[读取本地账号可调度状态]
     J --> K{本地账号可调度?}
     K -->|否| K1[候选排除: local_unschedulable]
-    K -->|是| L[读取最近纯度检测快照]
-    L --> L1{纯度是否明确失败?}
-    L1 -->|是| L2[候选排除: purity_failed]
-    L1 -->|否| L3[读取最近通道监控快照]
+    K -->|是| L[读取账号绑定代理]
+    L --> L1{代理是否明确不可用?}
+    L1 -->|是| L2[候选排除: proxy_unavailable]
+    L1 -->|否| L3[读取最近纯度检测快照]
+    L3 --> L4{纯度是否明确失败?}
+    L4 -->|是| L5[候选排除: purity_failed]
+    L4 -->|否| L6[读取最近通道监控快照]
 ```
 
 ### 5.2 监控、实测与排序
@@ -206,12 +211,13 @@ flowchart TD
 | `provider_family` | 供应商分组 | OpenAI/Anthropic/Gemini 等协议族 |
 | `health_status` | 检测快照 | 是否推荐 |
 | `last_checked_at` | 检测快照 | 新鲜度 |
-| `check_source` | 检测快照 | `channel_monitor/balance/local_state/model_scope/purity/active_probe` |
+| `check_source` | 检测快照 | `channel_monitor/balance/local_state/model_scope/purity/proxy/active_probe` |
 | `balance_status` | 余额同步 | `balance_ok/balance_low/balance_blocked/recharge_required/balance_unknown` |
 | `key_capacity_status` | Key 配额同步 | `unknown/available/limited/exhausted/manual_only` |
 | `model_scope/model_match_status` | 第三方分组能力范围 | 模型范围匹配结果，明确不匹配输出 `model_scope_unsupported` |
 | `purity_status/purity_verdict` | 最近纯度检测 step | `pass/warn/fail/unknown`；明确失败阻断，风险态降级 |
-| `blocked_reason` | 候选生成 | `recharge_required/key_capacity_exhausted/health_failed/local_unschedulable/channel_monitor_failed/model_scope_unsupported/purity_failed/purity_risk` |
+| `local_account_proxy_id/proxy_status` | 本地 Sub2API `accounts` + `proxies` | 账号绑定代理状态；`active/unbound/unknown` 不阻断，`deleted/disabled/expired/error` 阻断候选 |
+| `blocked_reason` | 候选生成 | `recharge_required/key_capacity_exhausted/health_failed/local_unschedulable/channel_monitor_failed/model_scope_unsupported/purity_failed/purity_risk/proxy_deleted/proxy_disabled/proxy_expired/proxy_unavailable` |
 | `probe_cost_class` | 健康探测 | `free/low_token/standard_token`，用于控制实测成本 |
 
 ## 6. 检测优先级时序图

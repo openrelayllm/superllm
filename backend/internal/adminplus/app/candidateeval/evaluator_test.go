@@ -131,6 +131,31 @@ func TestEvaluateKeepsUnknownPurityAvailable(t *testing.T) {
 	require.Equal(t, PurityUnknown, result.PurityStatus)
 }
 
+func TestEvaluateBlocksUnavailableBoundProxy(t *testing.T) {
+	result := Evaluate(baseInput(Input{
+		LocalAccountProxyID:     9,
+		LocalAccountProxyStatus: "expired",
+	}))
+
+	require.Equal(t, StatusBlocked, result.CandidateStatus)
+	require.Equal(t, "proxy_expired", result.BlockedReason)
+	require.Equal(t, SourceProxy, result.CheckSource)
+}
+
+func TestEvaluateKeepsUnboundOrUnknownProxyAvailable(t *testing.T) {
+	unbound := Evaluate(baseInput(Input{}))
+	require.Equal(t, StatusAvailable, unbound.CandidateStatus)
+	require.Empty(t, unbound.BlockedReason)
+
+	unknown := Evaluate(baseInput(Input{
+		LocalAccountProxyID:     9,
+		LocalAccountProxyStatus: "unknown",
+	}))
+	require.Equal(t, StatusAvailable, unknown.CandidateStatus)
+	require.Empty(t, unknown.BlockedReason)
+	require.Equal(t, SourceChannelMonitor, unknown.CheckSource)
+}
+
 func TestEvaluateDoesNotHideChannelFailureWithPurityWarning(t *testing.T) {
 	result := Evaluate(baseInput(Input{
 		ChannelCheckStatus: "remote_unavailable",
@@ -262,6 +287,12 @@ func baseInput(overrides Input) Input {
 	}
 	if overrides.LocalAccountTempBlocked {
 		input.LocalAccountTempBlocked = true
+	}
+	if overrides.LocalAccountProxyID != 0 {
+		input.LocalAccountProxyID = overrides.LocalAccountProxyID
+	}
+	if overrides.LocalAccountProxyStatus != "" {
+		input.LocalAccountProxyStatus = overrides.LocalAccountProxyStatus
 	}
 	if overrides.DriftStatus != "" {
 		input.DriftStatus = overrides.DriftStatus

@@ -324,6 +324,17 @@ func TestDefaultSettingsCoverKnownBusinessEventTypes(t *testing.T) {
 		"supplier_group.price_increase",
 		"supplier_group.super_low_rate",
 		"cost.reconcile_anomaly",
+		"action.balance_required",
+		"action.key_capacity",
+		"action.routing_capacity",
+		"action.local_state",
+		"action.channel_failure",
+		"action.proxy_review",
+		"action.purity_review",
+		"action.credential_review",
+		"action.cost_reconcile",
+		"action.profit_review",
+		"action.operational_review",
 		"system.test",
 	}
 	for _, eventType := range knownEvents {

@@ -237,6 +237,9 @@
                   <span v-if="showPurityBadge(groupOpsRow(group))" class="badge" :class="purityStatusClass(groupOpsRow(group)?.purity_status)">
                     {{ purityStatusLabel(groupOpsRow(group)?.purity_status) }}
                   </span>
+                  <span v-if="showProxyBadge(groupOpsRow(group))" class="badge" :class="proxyStatusClass(groupOpsRow(group)?.local_account_proxy_status)">
+                    {{ proxyStatusLabel(groupOpsRow(group)?.local_account_proxy_status) }}
+                  </span>
                 </div>
                 <div v-if="groupOpsRow(group)?.blocked_reason" class="mt-1 max-w-[240px] truncate text-xs text-amber-600 dark:text-amber-300" :title="candidateReasonLabel(groupOpsRow(group)?.blocked_reason)">
                   {{ candidateReasonLabel(groupOpsRow(group)?.blocked_reason) }}
@@ -247,6 +250,9 @@
                 </div>
                 <div v-if="showPurityBadge(groupOpsRow(group))" class="mt-1 max-w-[240px] truncate text-xs text-gray-500 dark:text-dark-400" :title="purityTitle(groupOpsRow(group))">
                   {{ puritySummary(groupOpsRow(group)) }}
+                </div>
+                <div v-if="showProxyBadge(groupOpsRow(group))" class="mt-1 max-w-[240px] truncate text-xs text-gray-500 dark:text-dark-400" :title="proxyTitle(groupOpsRow(group))">
+                  {{ proxySummary(groupOpsRow(group)) }}
                 </div>
               </td>
             </tr>
@@ -407,6 +413,9 @@
                     <span v-if="showPurityBadge(accountOpsRow(account))" class="badge" :class="purityStatusClass(accountOpsRow(account)?.purity_status)">
                       {{ purityStatusLabel(accountOpsRow(account)?.purity_status) }}
                     </span>
+                    <span v-if="showProxyBadge(accountOpsRow(account))" class="badge" :class="proxyStatusClass(accountOpsRow(account)?.local_account_proxy_status)">
+                      {{ proxyStatusLabel(accountOpsRow(account)?.local_account_proxy_status) }}
+                    </span>
                   </div>
                   <div v-if="accountOpsRow(account)?.blocked_reason" class="mt-1 max-w-[220px] truncate text-xs text-amber-600 dark:text-amber-300" :title="candidateReasonLabel(accountOpsRow(account)?.blocked_reason)">
                     {{ candidateReasonLabel(accountOpsRow(account)?.blocked_reason) }}
@@ -417,6 +426,9 @@
                   </div>
                   <div v-if="showPurityBadge(accountOpsRow(account))" class="mt-1 max-w-[220px] truncate text-xs text-gray-500 dark:text-dark-400" :title="purityTitle(accountOpsRow(account))">
                     {{ puritySummary(accountOpsRow(account)) }}
+                  </div>
+                  <div v-if="showProxyBadge(accountOpsRow(account))" class="mt-1 max-w-[220px] truncate text-xs text-gray-500 dark:text-dark-400" :title="proxyTitle(accountOpsRow(account))">
+                    {{ proxySummary(accountOpsRow(account)) }}
                   </div>
                 </td>
               </tr>
@@ -867,7 +879,8 @@ function checkSourceLabel(value?: string): string {
     local_state: '本地状态',
     channel_monitor: '通道监控',
     active_probe: '实测',
-    purity: '纯度检测'
+    purity: '纯度检测',
+    proxy: '代理'
   }
   return labels[String(value || '')] || String(value || '-')
 }
@@ -901,7 +914,11 @@ function candidateReasonLabel(value?: string): string {
     key_local_account_mismatch: 'Key 绑定账号不一致',
     rate_missing: '倍率缺失',
     purity_failed: '纯度检测失败',
-    purity_risk: '纯度检测有风险'
+    purity_risk: '纯度检测有风险',
+    proxy_deleted: '代理已删除',
+    proxy_disabled: '代理已禁用',
+    proxy_expired: '代理已过期',
+    proxy_unavailable: '代理不可用'
   }
   return labels[String(value || '')] || String(value || '-')
 }
@@ -958,6 +975,43 @@ function purityTitle(row?: LocalAccountOpsRow): string {
   if (!row) return ''
   const report = row.purity_report_id ? `报告 ${row.purity_report_id}` : '最近一次纯度检测'
   return `${report}：${puritySummary(row)}`
+}
+
+function showProxyBadge(row?: LocalAccountOpsRow): boolean {
+  return Boolean(row?.local_account_proxy_id && String(row.local_account_proxy_status || 'unbound').toLowerCase() !== 'unbound')
+}
+
+function proxyStatusLabel(value?: string): string {
+  const labels: Record<string, string> = {
+    active: '代理正常',
+    disabled: '代理禁用',
+    expired: '代理过期',
+    error: '代理异常',
+    deleted: '代理删除',
+    missing: '代理缺失',
+    unavailable: '代理不可用',
+    unknown: '代理未知'
+  }
+  return labels[String(value || '').toLowerCase()] || String(value || '代理未知')
+}
+
+function proxyStatusClass(value?: string): string {
+  const status = String(value || '').toLowerCase()
+  if (status === 'active') return 'badge-success'
+  if (status === 'unknown') return 'badge-warning'
+  return 'badge-danger'
+}
+
+function proxySummary(row?: LocalAccountOpsRow): string {
+  if (!row) return '-'
+  const parts = [row.local_account_proxy_name || `代理 #${row.local_account_proxy_id}`]
+  if (row.local_account_proxy_expires_at) parts.push(`到期 ${formatDateTime(row.local_account_proxy_expires_at)}`)
+  return parts.join(' · ')
+}
+
+function proxyTitle(row?: LocalAccountOpsRow): string {
+  if (!row) return ''
+  return `${proxyStatusLabel(row.local_account_proxy_status)}：${proxySummary(row)}`
 }
 
 function groupStatusPriority(status?: string): number {

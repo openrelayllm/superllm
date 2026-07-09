@@ -229,6 +229,7 @@ flowchart LR
 - 队列内“刷新余额”会调用供应商余额读取并重新加载本地账号运营镜像，用于充值后重算候选；“批量刷新余额”按当前余额机会涉及的供应商去重刷新，并限制并发，避免逐个供应商手工点击。
 - “通道检测”是运营显式提交的检测任务，不作为余额不足时的默认实测。
 - 余额从耗尽或低于阈值恢复时，后端会生成 `balance.recovered` 通知事件；动作建议生成器会把 open 的恢复事件转成 `supplier_balance_recovered_recheck`，提醒运营刷新候选、确认是否进入补池或调度。
+- 动作建议通知第一阶段已接入通知中心：持久化后的余额、Key 配额、本地分组容量、drift/本地状态、通道失败、代理、纯度、成本和利润复核建议会映射为 `action.*` 通知事件，复用通知规则、投递记录、去重和静默窗口；飞书未配置时记录为 suppressed，不阻断动作建议生成。
 - 动作建议页已读取最新 `SupplierCostSnapshot`：当充值、兑换、退款、调整、usage 成本账本推导的 `expected_balance_cents` 与实际余额快照不一致时，生成 `supplier_cost_balance_reconcile_anomaly`，提示运营优先排查账单差异，避免把余额异常误判为渠道不可用。该建议已使用 `supplier_cost_reconcile_adjustment` 动作类型，审批后可优先选择补充值、补兑换、补退款或补 usage，写回原始业务明细表并刷新成本快照；已人工复核但无法定位原始明细时，才使用 `manual_adjustment` 账本项做差额闭合。两类执行都会进入 `admin_plus_action_executions`，可查看前后快照和幂等回执。
 
 ### 4.4 当前已落地的本地账号运营闭环
@@ -556,7 +557,7 @@ flowchart TD
 - 当前版本已支持手动补池：选择目标本地调度分组后，可 dry-run 预览最低倍率候选，也可在分组耗尽时补入最低倍率可用账号。
 - 目标本地调度分组选项来自 `sub2api/groups` 投影，能显示没有账号绑定但仍绑定用户 Key 的空池分组。
 - 调度中心 Dashboard 也提供同一手动补池入口和最近补池记录，运营可在调度面板里直接处理耗尽分组，再回到本地账号运营页做细粒度筛选。
-- 当前版本已展示统一候选状态：`candidate_status`、`blocked_reason`、`check_source`。余额不足会显示为 `balance_blocked/recharge_required`，不会被通道失败原因覆盖。
+- 当前版本已展示统一候选状态：`candidate_status`、`blocked_reason`、`check_source`。余额不足会显示为 `balance_blocked/recharge_required`，不会被通道失败原因覆盖；账号绑定代理明确不可用时会显示 `check_source=proxy`，用于区分代理故障和供应商故障。
 - 执行前必须 preview，展示本地分组影响、启用用户 API Key 数、操作前后可调度账号数、空池风险和 warning。
 - 写回前会同步当前 Sub2API 本地状态；发现 `local_account_state_drift` 时以 `LOCAL_ACCOUNT_STATE_DRIFT_PENDING` 阻断，避免覆盖原后台手工变更。
 - apply 写入本地 `accounts/account_groups` 后，会写 `scheduler_outbox` 的 `account_bulk_changed` 和相关 `group_changed`，触发调度刷新。

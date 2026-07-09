@@ -215,6 +215,10 @@ func TestSQLRepositoryListLocalAccountOpsReadsBindingsAndHealth(t *testing.T) {
 			now,
 			pq.Int64Array{1001},
 			pq.StringArray{"Lime"},
+			int64(9),
+			"Lime proxy",
+			"active",
+			nil,
 			int64(88),
 			int64(7),
 			"Lime Supplier",
@@ -274,6 +278,9 @@ func TestSQLRepositoryListLocalAccountOpsReadsBindingsAndHealth(t *testing.T) {
 	require.Len(t, items, 1)
 	require.Equal(t, int64(42), items[0].LocalSub2APIAccountID)
 	require.Equal(t, []int64{1001}, items[0].LocalAccountGroupIDs)
+	require.Equal(t, int64(9), items[0].LocalAccountProxyID)
+	require.Equal(t, "Lime proxy", items[0].LocalAccountProxyName)
+	require.Equal(t, "active", items[0].LocalAccountProxyStatus)
 	require.Equal(t, "Lime Supplier", items[0].SupplierName)
 	require.Equal(t, int64(77), items[0].SupplierGroupID)
 	require.Equal(t, "OpenAI", items[0].SupplierGroupModelFamily)
@@ -1170,6 +1177,10 @@ func newLocalAccountOpsRows() *sqlmock.Rows {
 		"local_account_updated_at",
 		"local_account_group_ids",
 		"local_account_group_names",
+		"local_account_proxy_id",
+		"local_account_proxy_name",
+		"local_account_proxy_status",
+		"local_account_proxy_expires_at",
 		"supplier_account_id",
 		"supplier_id",
 		"supplier_name",

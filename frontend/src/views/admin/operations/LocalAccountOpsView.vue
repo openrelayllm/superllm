@@ -319,6 +319,9 @@
                     <span v-if="showPurityBadge(row)" class="badge" :class="purityStatusClass(row.purity_status)">
                       {{ purityStatusLabel(row.purity_status) }}
                     </span>
+                    <span v-if="showProxyBadge(row)" class="badge" :class="proxyStatusClass(row.local_account_proxy_status)">
+                      {{ proxyStatusLabel(row.local_account_proxy_status) }}
+                    </span>
                   </div>
                   <div v-if="row.channel_error_message" class="mt-1 max-w-[240px] truncate text-xs text-rose-500">
                     {{ row.channel_error_message }}
@@ -329,6 +332,9 @@
                   </div>
                   <div v-if="showPurityBadge(row)" class="mt-1 max-w-[240px] truncate text-xs text-gray-500 dark:text-dark-400" :title="purityTitle(row)">
                     {{ puritySummary(row) }}
+                  </div>
+                  <div v-if="showProxyBadge(row)" class="mt-1 max-w-[240px] truncate text-xs text-gray-500 dark:text-dark-400" :title="proxyTitle(row)">
+                    {{ proxySummary(row) }}
                   </div>
                   <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
                     {{ row.last_channel_check_at ? formatDateTime(row.last_channel_check_at) : '未检测' }}
@@ -1264,6 +1270,7 @@ function visibleLocalGroups(row: LocalAccountOpsRow): string[] {
 function rowNeedsAction(row: LocalAccountOpsRow): boolean {
   if (row.drift_status && !['synced', 'unbound'].includes(row.drift_status)) return true
   if (['fail', 'warn'].includes(String(row.purity_status || '').toLowerCase())) return true
+  if (proxyNeedsAction(row.local_account_proxy_status)) return true
   if (['insufficient', 'unknown'].includes(row.balance_status) && row.drift_status !== 'unbound') return true
   return ['request_error', 'remote_unavailable', 'probe_failed', 'slow_first_token', 'slow_total'].includes(row.channel_check_status)
 }
@@ -1397,7 +1404,8 @@ function checkSourceLabel(value?: string): string {
     local_state: '本地状态',
     channel_monitor: '通道监控',
     active_probe: '实测',
-    purity: '纯度检测'
+    purity: '纯度检测',
+    proxy: '代理'
   }[value || ''] || value || '-'
 }
 
@@ -1430,7 +1438,11 @@ function blockedReasonLabel(value?: string): string {
     key_local_account_mismatch: 'Key 绑定账号不一致',
     rate_missing: '倍率缺失',
     purity_failed: '纯度检测失败',
-    purity_risk: '纯度检测有风险'
+    purity_risk: '纯度检测有风险',
+    proxy_deleted: '代理已删除',
+    proxy_disabled: '代理已禁用',
+    proxy_expired: '代理已过期',
+    proxy_unavailable: '代理不可用'
   }[value || ''] || value || '-'
 }
 
@@ -1482,6 +1494,44 @@ function puritySummary(row: LocalAccountOpsRow): string {
 function purityTitle(row: LocalAccountOpsRow): string {
   const report = row.purity_report_id ? `报告 ${row.purity_report_id}` : '最近一次纯度检测'
   return `${report}：${puritySummary(row)}`
+}
+
+function showProxyBadge(row: LocalAccountOpsRow): boolean {
+  return Boolean(row.local_account_proxy_id && String(row.local_account_proxy_status || 'unbound').toLowerCase() !== 'unbound')
+}
+
+function proxyStatusLabel(value?: string): string {
+  return {
+    active: '代理正常',
+    disabled: '代理禁用',
+    expired: '代理过期',
+    error: '代理异常',
+    deleted: '代理删除',
+    missing: '代理缺失',
+    unavailable: '代理不可用',
+    unknown: '代理未知'
+  }[String(value || '').toLowerCase()] || value || '代理未知'
+}
+
+function proxyStatusClass(value?: string): string {
+  const status = String(value || '').toLowerCase()
+  if (status === 'active') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+  if (status === 'unknown') return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+  return 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300'
+}
+
+function proxyNeedsAction(value?: string): boolean {
+  return ['deleted', 'missing', 'disabled', 'expired', 'error', 'unavailable'].includes(String(value || '').toLowerCase())
+}
+
+function proxySummary(row: LocalAccountOpsRow): string {
+  const parts = [row.local_account_proxy_name || `代理 #${row.local_account_proxy_id}`]
+  if (row.local_account_proxy_expires_at) parts.push(`到期 ${formatDateTime(row.local_account_proxy_expires_at)}`)
+  return parts.join(' · ')
+}
+
+function proxyTitle(row: LocalAccountOpsRow): string {
+  return `${proxyStatusLabel(row.local_account_proxy_status)}：${proxySummary(row)}`
 }
 
 function driftStatusLabel(value?: string): string {

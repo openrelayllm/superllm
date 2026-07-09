@@ -935,6 +935,10 @@ export interface LocalAccountOpsRow {
   local_account_updated_at: string
   local_account_group_ids?: number[]
   local_account_group_names?: string[]
+  local_account_proxy_id?: number
+  local_account_proxy_name?: string
+  local_account_proxy_status?: string
+  local_account_proxy_expires_at?: string | null
   supplier_account_id?: number
   supplier_id?: number
   supplier_name?: string

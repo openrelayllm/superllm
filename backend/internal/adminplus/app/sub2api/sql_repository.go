@@ -287,6 +287,15 @@ func (r *SQLRepository) ListLocalAccountOps(ctx context.Context, filter LocalAcc
 			a.updated_at,
 			COALESCE(lg.group_ids, ARRAY[]::BIGINT[]),
 			COALESCE(lg.group_names, ARRAY[]::TEXT[]),
+			COALESCE(a.proxy_id, 0),
+			COALESCE(p.name, ''),
+			CASE
+				WHEN a.proxy_id IS NULL THEN 'unbound'
+				WHEN p.id IS NULL OR p.deleted_at IS NOT NULL THEN 'deleted'
+				WHEN p.expires_at IS NOT NULL AND p.expires_at <= NOW() THEN 'expired'
+				ELSE COALESCE(p.status, 'unknown')
+			END AS local_account_proxy_status,
+			p.expires_at,
 			COALESCE(asa.id, 0),
 			COALESCE(s.id, 0),
 			COALESCE(s.name, ''),
@@ -408,6 +417,7 @@ func (r *SQLRepository) ListLocalAccountOps(ctx context.Context, filter LocalAcc
 			COALESCE(purity.finished_at, purity.started_at) AS purity_checked_at
 		FROM accounts a
 		LEFT JOIN local_groups lg ON lg.account_id = a.id
+		LEFT JOIN proxies p ON p.id = a.proxy_id
 		LEFT JOIN admin_plus_supplier_accounts asa ON asa.local_sub2api_account_id = a.id
 		LEFT JOIN admin_plus_suppliers s ON s.id = asa.supplier_id
 		LEFT JOIN supplier_key_counts skc ON skc.supplier_id = s.id
@@ -2312,6 +2322,7 @@ func scanLocalAccountOpsRow(scanner interface{ Scan(dest ...any) error }) (*admi
 	var lastChannelCheckAt sql.NullTime
 	var lastLocalSyncAt sql.NullTime
 	var purityCheckedAt sql.NullTime
+	var proxyExpiresAt sql.NullTime
 	if err := scanner.Scan(
 		&item.LocalSub2APIAccountID,
 		&item.LocalAccountName,
@@ -2331,6 +2342,10 @@ func scanLocalAccountOpsRow(scanner interface{ Scan(dest ...any) error }) (*admi
 		&item.LocalAccountUpdatedAt,
 		&groupIDs,
 		&groupNames,
+		&item.LocalAccountProxyID,
+		&item.LocalAccountProxyName,
+		&item.LocalAccountProxyStatus,
+		&proxyExpiresAt,
 		&item.SupplierAccountID,
 		&item.SupplierID,
 		&item.SupplierName,
@@ -2389,6 +2404,9 @@ func scanLocalAccountOpsRow(scanner interface{ Scan(dest ...any) error }) (*admi
 	if tempUnschedulableUntil.Valid {
 		item.LocalAccountTempUnschedAt = &tempUnschedulableUntil.Time
 	}
+	if proxyExpiresAt.Valid {
+		item.LocalAccountProxyExpiresAt = &proxyExpiresAt.Time
+	}
 	if lastChannelCheckAt.Valid {
 		item.LastChannelCheckAt = &lastChannelCheckAt.Time
 	}
@@ -2412,6 +2430,13 @@ func scanLocalAccountOpsRow(scanner interface{ Scan(dest ...any) error }) (*admi
 	}
 	if item.PurityStatus == "" {
 		item.PurityStatus = "unknown"
+	}
+	if item.LocalAccountProxyStatus == "" {
+		if item.LocalAccountProxyID > 0 {
+			item.LocalAccountProxyStatus = "unknown"
+		} else {
+			item.LocalAccountProxyStatus = "unbound"
+		}
 	}
 	return &item, nil
 }

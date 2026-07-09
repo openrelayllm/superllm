@@ -77,6 +77,7 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(costsapp.BalanceSyncer), new(*balancesapp.Service)),
 	wire.Bind(new(costsapp.SupplierLookup), new(*suppliersapp.Service)),
 	wire.Bind(new(actionsapp.SupplierStatusUpdater), new(*suppliersapp.Service)),
+	wire.Bind(new(actionsapp.NotificationDispatcher), new(*notificationsapp.Service)),
 	wire.Bind(new(ratesapp.SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(usagecostsapp.SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(provisionjobsapp.GroupSyncer), new(*suppliergroupsapp.Service)),

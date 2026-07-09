@@ -306,6 +306,28 @@ func TestServiceGenerateCandidateEvaluationCreatesPurityActions(t *testing.T) {
 	require.Contains(t, risk.Signals, "blocked_reason=purity_risk")
 }
 
+func TestServiceGenerateCandidateEvaluationCreatesProxyAction(t *testing.T) {
+	svc := NewRuleService()
+
+	result, err := svc.Generate(context.Background(), GenerateInput{
+		CandidateEvaluations: []CandidateSignal{{
+			SupplierID:              7,
+			SupplierGroupID:         1001,
+			LocalSub2APIAccountID:   42,
+			CandidateStatus:         "blocked",
+			BlockedReason:           "proxy_expired",
+			CheckSource:             "proxy",
+			EffectiveRateMultiplier: 0.1,
+		}},
+	})
+
+	require.NoError(t, err)
+	action := requireAction(t, result.Items, adminplusdomain.ActionTypeReviewCredential, "candidate_proxy_unavailable")
+	require.Equal(t, adminplusdomain.ActionSeverityWarning, action.Severity)
+	require.Contains(t, action.Signals, "blocked_reason=proxy_expired")
+	require.Contains(t, action.Signals, "check_source=proxy")
+}
+
 func TestServiceGenerateSupplierKeyCapacityActions(t *testing.T) {
 	svc := NewRuleService()
 
@@ -459,6 +481,28 @@ func TestServiceGenerateReusesEquivalentOpenRoutingRefillAction(t *testing.T) {
 	require.Len(t, result.Items, 1)
 	require.Equal(t, int64(10), result.Items[0].ID)
 	require.Len(t, repo.actions, 1)
+}
+
+func TestServiceGenerateDispatchesNotificationForStoredRecommendation(t *testing.T) {
+	repo := newFakeActionRepository()
+	notifier := &fakeActionNotificationDispatcher{}
+	svc := NewServiceWithDependencies(repo, nil, notifier)
+
+	result, err := svc.Generate(context.Background(), GenerateInput{
+		LocalGroupCapacity: []LocalGroupCapacitySignal{{
+			LocalGroupID:                9,
+			SchedulableAccounts:         0,
+			ActiveAPIKeyCount:           3,
+			BestCandidateSupplierID:     7,
+			BestCandidateLocalAccountID: 42,
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Items, 1)
+	require.Len(t, notifier.actions, 1)
+	require.Equal(t, result.Items[0].ID, notifier.actions[0].ID)
+	require.Equal(t, "local_group_routing_refill_required", notifier.actions[0].ReasonCode)
 }
 
 func TestServiceGenerateCreatesNewRecommendationWhenEquivalentWasExecuted(t *testing.T) {
@@ -898,4 +942,13 @@ func (u *fakeSupplierStatusUpdater) UpdateStatus(_ context.Context, id int64, in
 		RuntimeStatus: in.RuntimeStatus,
 		HealthStatus:  in.HealthStatus,
 	}, nil
+}
+
+type fakeActionNotificationDispatcher struct {
+	actions []*adminplusdomain.ActionRecommendation
+}
+
+func (d *fakeActionNotificationDispatcher) DispatchActionRecommendation(_ context.Context, action *adminplusdomain.ActionRecommendation) error {
+	d.actions = append(d.actions, action)
+	return nil
 }

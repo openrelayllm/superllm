@@ -28,6 +28,7 @@ const (
 	SourceActiveProbe    = "active_probe"
 	SourceModelScope     = "model_scope"
 	SourcePurity         = "purity"
+	SourceProxy          = "proxy"
 )
 
 const (
@@ -49,6 +50,9 @@ const (
 	PurityWarn             = "warn"
 	PurityFail             = "fail"
 	PurityUnknown          = "unknown"
+	ProxyUnbound           = "unbound"
+	ProxyActive            = "active"
+	ProxyUnknown           = "unknown"
 )
 
 type Input struct {
@@ -66,6 +70,8 @@ type Input struct {
 	LocalAccountStatus           string
 	LocalAccountSchedulable      bool
 	LocalAccountTempBlocked      bool
+	LocalAccountProxyID          int64
+	LocalAccountProxyStatus      string
 	DriftStatus                  string
 	HasUsableBalance             bool
 	BalanceStatus                string
@@ -164,6 +170,9 @@ func Evaluate(input Input) Evaluation {
 	if normalized.purityRiskStatus() == PurityFail {
 		return normalized.blocked(StatusBlocked, "purity_failed", SourcePurity)
 	}
+	if reason := normalized.proxyBlockedReason(); reason != "" {
+		return normalized.blocked(StatusBlocked, reason, SourceProxy)
+	}
 	switch normalized.ChannelCheckStatus {
 	case "available":
 		if normalized.purityRiskStatus() == PurityWarn {
@@ -208,6 +217,8 @@ func FromLocalAccountOpsRowWithModel(row *adminplusdomain.LocalAccountOpsRow, re
 		LocalAccountStatus:           row.LocalAccountStatus,
 		LocalAccountSchedulable:      row.LocalAccountSchedulable,
 		LocalAccountTempBlocked:      row.LocalAccountTempUnschedAt != nil,
+		LocalAccountProxyID:          row.LocalAccountProxyID,
+		LocalAccountProxyStatus:      row.LocalAccountProxyStatus,
 		DriftStatus:                  row.DriftStatus,
 		HasUsableBalance:             row.HasUsableBalance,
 		BalanceStatus:                row.BalanceStatus,
@@ -254,6 +265,7 @@ func normalizeInput(input Input) Input {
 	input.SupplierGroupStatus = normalize(input.SupplierGroupStatus)
 	input.SupplierKeyStatus = normalize(input.SupplierKeyStatus)
 	input.LocalAccountStatus = normalize(input.LocalAccountStatus)
+	input.LocalAccountProxyStatus = normalizeProxyStatus(input.LocalAccountProxyStatus, input.LocalAccountProxyID)
 	input.DriftStatus = normalize(input.DriftStatus)
 	input.BalanceStatus = normalizeBalanceStatus(input.BalanceStatus, input.HasUsableBalance)
 	input.KeyCapacityStatus = normalizeKeyCapacityStatus(input.KeyCapacityStatus)
@@ -324,6 +336,23 @@ func normalizePurityStatus(value string) string {
 		return PurityUnknown
 	default:
 		return normalize(value)
+	}
+}
+
+func normalizeProxyStatus(value string, proxyID int64) string {
+	value = normalize(value)
+	if proxyID <= 0 || value == "" || value == "none" || value == "no_proxy" {
+		return ProxyUnbound
+	}
+	switch value {
+	case ProxyActive, "ok", "healthy":
+		return ProxyActive
+	case "disabled", "expired", "error", "deleted", "missing", "unavailable":
+		return value
+	case "unknown":
+		return ProxyUnknown
+	default:
+		return value
 	}
 }
 
@@ -432,6 +461,24 @@ func (input Input) purityRiskStatus() string {
 		return PurityPass
 	}
 	return PurityUnknown
+}
+
+func (input Input) proxyBlockedReason() string {
+	if input.LocalAccountProxyID <= 0 || input.LocalAccountProxyStatus == ProxyUnbound || input.LocalAccountProxyStatus == ProxyActive || input.LocalAccountProxyStatus == ProxyUnknown {
+		return ""
+	}
+	switch input.LocalAccountProxyStatus {
+	case "deleted", "missing":
+		return "proxy_deleted"
+	case "disabled":
+		return "proxy_disabled"
+	case "expired":
+		return "proxy_expired"
+	case "error", "unavailable":
+		return "proxy_unavailable"
+	default:
+		return "proxy_unavailable"
+	}
 }
 
 func positivePurityVerdict(value string) bool {

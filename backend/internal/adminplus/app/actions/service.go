@@ -155,9 +155,14 @@ type SupplierStatusUpdater interface {
 	UpdateStatus(ctx context.Context, id int64, in suppliersapp.UpdateSupplierStatusInput) (*adminplusdomain.Supplier, error)
 }
 
+type NotificationDispatcher interface {
+	DispatchActionRecommendation(ctx context.Context, action *adminplusdomain.ActionRecommendation) error
+}
+
 type Service struct {
 	repo            Repository
 	supplierUpdater SupplierStatusUpdater
+	notifier        NotificationDispatcher
 	now             func() time.Time
 }
 
@@ -165,10 +170,15 @@ func NewService(repo Repository) *Service {
 	return NewServiceWithDependencies(repo, nil)
 }
 
-func NewServiceWithDependencies(repo Repository, supplierUpdater SupplierStatusUpdater) *Service {
+func NewServiceWithDependencies(repo Repository, supplierUpdater SupplierStatusUpdater, notifiers ...NotificationDispatcher) *Service {
+	var notifier NotificationDispatcher
+	if len(notifiers) > 0 {
+		notifier = notifiers[0]
+	}
 	return &Service{
 		repo:            repo,
 		supplierUpdater: supplierUpdater,
+		notifier:        notifier,
 		now:             time.Now,
 	}
 }
@@ -203,11 +213,22 @@ func (s *Service) Generate(ctx context.Context, in GenerateInput) (*GenerateResu
 			if err != nil {
 				return nil, err
 			}
+			if err := s.dispatchRecommendationNotification(ctx, created); err != nil {
+				return nil, err
+			}
 			stored = append(stored, created)
 		}
 		items = stored
 	}
 	return &GenerateResult{Items: items, Total: len(items)}, nil
+}
+
+func (s *Service) dispatchRecommendationNotification(ctx context.Context, item *adminplusdomain.ActionRecommendation) error {
+	if s == nil || s.notifier == nil || item == nil {
+		return nil
+	}
+	_ = s.notifier.DispatchActionRecommendation(ctx, item)
+	return nil
 }
 
 func (s *Service) createOrReuseRecommendation(ctx context.Context, item *adminplusdomain.ActionRecommendation) (*adminplusdomain.ActionRecommendation, error) {
@@ -655,6 +676,8 @@ func (s *Service) actionsFromCandidateEvaluations(now time.Time, evaluations []C
 			items = append(items, newAction(now, evaluation.SupplierID, nil, adminplusdomain.ActionTypeReviewCredential, adminplusdomain.ActionSeverityWarning, "candidate_purity_failed", "Review candidate purity failure", "A candidate is blocked by the latest purity check. Re-run purity detection or remove it from refill candidates.", "verify model identity and capability before routing", signals))
 		case reason == "purity_risk":
 			items = append(items, newAction(now, evaluation.SupplierID, nil, adminplusdomain.ActionTypeReviewCredential, adminplusdomain.ActionSeverityInfo, "candidate_purity_risk", "Review candidate purity risk", "A candidate is degraded by purity risk. It should be reviewed before automated refill.", "confirm model identity, token audit, and compatibility evidence", signals))
+		case source == candidateeval.SourceProxy:
+			items = append(items, newAction(now, evaluation.SupplierID, nil, adminplusdomain.ActionTypeReviewCredential, adminplusdomain.ActionSeverityWarning, "candidate_proxy_unavailable", "Review candidate proxy", "A candidate is blocked by its bound Sub2API proxy. Check the proxy binding or move the account to an active proxy before routing refill.", "avoid misclassifying proxy failures as supplier failures", signals))
 		case reason == "channel_monitor_failed":
 			items = append(items, newAction(now, evaluation.SupplierID, nil, adminplusdomain.ActionTypeReviewCredential, adminplusdomain.ActionSeverityWarning, "candidate_channel_monitor_failed", "Review candidate channel monitor", "A candidate is blocked by channel monitor status; no active token probe is triggered by this recommendation.", "avoid spending probe tokens until low-cost monitor facts are resolved", signals))
 		}

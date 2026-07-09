@@ -12,7 +12,7 @@
 3. Admin Plus 核心链路必须能从 `admin_plus_suppliers` 追到 `admin_plus_supplier_groups`、`admin_plus_supplier_keys`、`admin_plus_supplier_accounts`、本地 `accounts`、本地 `groups` 和用户 `api_keys`。
 4. 运行历史、检测快照、通知投递、插件任务、调度 run/step/attempt 不属于核心迁移数据；换服务器时默认不导出或只归档。
 5. 第三方 Key 明文、浏览器会话密文、邮箱凭据、代理订阅等敏感数据必须单独标记，不进入普通导出。
-6. 本地账号状态基线、drift 事件、供应商级 Key 配额字段、分组级 Key 配额字段、批量开通计划、计划优先级覆盖、Provider `ListKeys/ReadKeyCapacity` 第一阶段、第三方未绑定 Key 脱敏投影导入、`manual_secret_required` 手动补密钥修复绑定、余额机会队列、余额恢复通知/复检建议、充值/兑换账单对账异常动作建议、对账差额人工调整闭环、账单明细级修复第一阶段、路由补池运行、模型级候选第一阶段、纯度检测联动第一阶段、渠道检测实测预算/冷却第一阶段、动作建议路径下的补池/关调度执行历史、普通本地账号手工写执行历史、动作执行到调度 run/step 的反向来源、动作执行幂等指纹、replay 回填和前后快照，以及本地路由类失败执行安全重试和成功执行回滚已经落地；真实最大 Key 上限自动读取、成本利润看板、通知矩阵、代理质量联动、纯度检测批量复检和过期策略、账单明细自动定位和批量导入、非本地路由类动作回滚仍是下一阶段必须补齐的能力。
+6. 本地账号状态基线、drift 事件、供应商级 Key 配额字段、分组级 Key 配额字段、批量开通计划、计划优先级覆盖、Provider `ListKeys/ReadKeyCapacity` 第一阶段、第三方未绑定 Key 脱敏投影导入、`manual_secret_required` 手动补密钥修复绑定、余额机会队列、余额恢复通知/复检建议、充值/兑换账单对账异常动作建议、对账差额人工调整闭环、账单明细级修复第一阶段、路由补池运行、模型级候选第一阶段、纯度检测联动第一阶段、代理联动第一阶段、通知矩阵第一阶段、渠道检测实测预算/冷却第一阶段、动作建议路径下的补池/关调度执行历史、普通本地账号手工写执行历史、动作执行到调度 run/step 的反向来源、动作执行幂等指纹、replay 回填和前后快照，以及本地路由类失败执行安全重试和成功执行回滚已经落地；真实最大 Key 上限自动读取、成本利润看板细化、通知升级策略、代理中心深度质量联动、纯度检测批量复检和过期策略、账单明细自动定位和批量导入、非本地路由类动作回滚仍是下一阶段必须补齐的能力。
 7. 当前同库部署下，本地账号运营动作层已在 Admin Plus 内事务写 `accounts/account_groups` 并补写 `scheduler_outbox`；P1 第一阶段已从 service 层收口为 `Sub2APIRoutingPort`，并提供分组可用性、账号快照、加入分组和开关调度语义化方法。远程写回第一阶段已通过 `RemoteAdminAPIRoutingPort` 调用现有 Sub2API Admin API，不新增 Admin Plus 表；多实例仍沿同一写回边界扩展。
 
 ## 2. 表域划分
@@ -75,13 +75,15 @@ erDiagram
     SUB2API_USERS ||--o{ SUB2API_API_KEYS : owns
     SUB2API_API_KEYS ||--o{ SUB2API_USAGE_LOGS : request
     SUB2API_ACCOUNTS ||--o{ SUB2API_USAGE_LOGS : routed_to
+    SUB2API_PROXIES ||--o{ SUB2API_ACCOUNTS : bound_proxy
 ```
 
 本地核心字段：
 
 | 表 | 关键字段 | 说明 |
 |----|----------|------|
-| `accounts` | `id/name/platform/type/status/schedulable/rate_multiplier` | 本地上游账号，网关真实调度对象 |
+| `accounts` | `id/name/platform/type/status/schedulable/rate_multiplier/proxy_id` | 本地上游账号，网关真实调度对象；`proxy_id` 是候选代理联动第一阶段事实源 |
+| `proxies` | `id/name/protocol/host/port/status/expires_at/deleted_at` | Sub2API 网关账号绑定代理；不同于 Admin Plus `admin_plus_proxy_*` 代理中心 |
 | `groups` | `id/name/platform` | 本地调度分组，用户 Key 绑定它 |
 | `account_groups` | `account_id/group_id` | 本地账号加入本地分组 |
 | `api_keys` | `id/user_id/group_id/status/quota` | 用户 API Key |
@@ -195,11 +197,12 @@ erDiagram
 | `admin_plus_balance_snapshots` | `supplier_id/balance_cents/currency/captured_at` | 余额门禁事实，余额不足不等于渠道不可用 |
 | `admin_plus_health_samples` | `supplier_id/model/status/first_token_ms/captured_at` | 消耗 token 的主动探测结果，优先级最低 |
 | `admin_plus_scheduler_steps.result_snapshot` | `task_type=run_purity_check/local_sub2api_account_id/report_id/model/status/verdict/score/token_audit_status/model_identity_status` | 纯度检测联动事实源；第一阶段不新增候选表，从最近 step 快照派生 `purity_status` |
+| 本地 Sub2API `accounts.proxy_id/proxies` | `proxy_id/status/expires_at/deleted_at` | 代理联动第一阶段事实源；不新增 Admin Plus 候选表，读模型派生 `local_account_proxy_status` |
 
 质量判断必须遵循：
 
 ```text
-通道监控 -> 余额门禁 -> Key 配额 -> 本地调度状态 -> 纯度检测快照 -> 必要时最小 token 实测
+通道监控 -> 余额门禁 -> Key 配额 -> 本地调度状态 -> 绑定代理状态 -> 纯度检测快照 -> 必要时最小 token 实测
 ```
 
 当前 Key 配额事实先落在 `admin_plus_suppliers.key_limit_policy/key_limit_value` 和 `admin_plus_supplier_groups.key_limit_policy/key_limit_value`；`active_key_count` 从 `admin_plus_supplier_keys` 中 `provisioning/bound/manual_secret_required` 状态派生，`key_capacity_status` 在读模型层计算，避免保存重复计数。
@@ -232,6 +235,8 @@ erDiagram
     AP_PROXY_RUNTIME_SLOTS ||--o{ AP_PROXY_ASSIGNMENTS : assignments
     AP_PROXY_NODES ||--o{ AP_PROXY_HEALTH_CHECKS : checks
 ```
+
+边界：`admin_plus_proxy_*` 服务于 Admin Plus 注册、站点发现、供应商采集等运营任务；Sub2API 网关实际请求绑定仍以本地 `accounts.proxy_id -> proxies` 为准。候选代理联动第一阶段只读取后者，避免把运营代理策略误判为网关账号代理故障。
 
 插件与会话核心字段：
 
@@ -627,11 +632,12 @@ routing_refill_max_rate_multiplier
 
 | 字段 | 说明 |
 |------|------|
-| `check_source` | `channel_monitor/balance/local_state/active_probe/model_scope/purity` |
+| `check_source` | `channel_monitor/balance/local_state/active_probe/model_scope/purity/proxy` |
 | `balance_status` | 余额门禁状态 |
 | `key_capacity_status` | Key 配额状态 |
 | `model_scope/model_match_status` | 目标模型和第三方分组能力范围匹配结果 |
 | `purity_status/purity_verdict` | 从最近 `run_purity_check` step 派生的纯度风险状态和结论 |
+| `local_account_proxy_id/proxy_status` | 从本地 Sub2API `accounts.proxy_id -> proxies` 派生的代理绑定状态 |
 | `blocked_reason` | 候选排除原因 |
 | `probe_cost_class` | 实测成本等级 |
 
@@ -1066,8 +1072,10 @@ flowchart TD
 | P1 | 已扩展 `admin_plus_action_executions.idempotency_key_hash/idempotency_replayed/before_snapshot/after_snapshot` | 让执行历史能证明幂等来源、replay 命中和执行前后影响 |
 | P2 | 已接入模型级候选第一阶段 | 复用 `admin_plus_supplier_groups.model_family/model_spec` 和 `admin_plus_routing_refill_runs.model_scope`，不新增表；补池按 `model_scope` 选择候选，明确不匹配输出 `model_scope_unsupported` |
 | P2 | 已接入纯度检测联动第一阶段 | 复用 `admin_plus_scheduler_steps.result_snapshot` 中最近 `run_purity_check` 结果，不新增表；明确失败输出 `purity_failed`，风险态输出 `purity_risk`，未知不阻断 |
+| P2 | 已接入代理联动第一阶段 | 复用 Sub2API `accounts.proxy_id -> proxies`，不新增表；明确代理 deleted/disabled/expired/error 输出 `check_source=proxy` 和代理类阻断原因，无代理或 unknown 不阻断 |
+| P2 | 已接入通知矩阵第一阶段 | 复用 `admin_plus_action_recommendations`、`admin_plus_notification_settings` 和 `admin_plus_notification_deliveries`，不新增表；动作建议按余额、Key 配额、分组容量、drift/本地状态、通道失败、代理、纯度、成本和利润风险映射为 `action.*` 通知事件 |
 | P2 | 已接入渠道检测实测预算/冷却第一阶段 | 复用 `admin_plus_supplier_channel_check_snapshots` 估算当天主动实测消耗和同分组冷却，不新增表；调度设置新增 `channel_check_probe_cooldown_seconds` JSON 字段 |
-| P2 | 成本利润、通知矩阵、代理质量、纯度检测过期策略和细粒度实测预算字段 | 待补齐，用于支撑模型级运营质量和利润判断 |
+| P2 | 成本利润细化、通知升级策略、代理中心深度质量联动、纯度检测过期策略和细粒度实测预算字段 | 待补齐，用于支撑模型级运营质量和利润判断 |
 | P3 | `sub2api_instance_id` 维度 | 本轮不实施多 Sub2API 实例 |
 
 ## 13. 相关文档

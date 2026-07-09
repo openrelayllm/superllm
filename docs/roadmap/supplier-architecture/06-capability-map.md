@@ -112,13 +112,13 @@ flowchart TD
 | 健康探测 | `app/health`、`app/channelchecks` | 主动请求验证延迟和错误，优先级最低 | 第一阶段已支持渠道检测每日预算、同分组冷却和预算/冷却跳过；后续补按模型/动作来源的预算和成本归集 |
 | 费率同步 | `app/rates`、`app/accountratesync` | 保证倍率排序准确 | 账号倍率同步历史、过期标记 |
 | 成本/账务 | `app/costs`、`app/usagecosts` | 核算供应商成本和利润 | 充值、兑换、usage、差异 |
-| 代理管理 | `app/proxy` | 保证上游请求网络质量 | 代理质量、账号影响、fallback |
+| 代理管理 | `app/proxy`、本地 Sub2API `accounts.proxy_id/proxies`、`app/candidateeval` | 保证上游请求网络质量 | 代理中心管理注册/采集代理；候选评估第一阶段读取网关真实绑定代理，明确不可用输出 `check_source=proxy`，无代理或未知不阻断 |
 | 模型级候选 | `app/candidateeval`、`app/sub2api`、`admin_plus_supplier_groups.model_family/model_spec` | 避免给目标模型补入明确不支持的账号 | 第一阶段已支持 `model_scope/model_match_status`，补池按模型范围筛选；未知模型不阻断，明确不匹配才阻断 |
 | 纯度检测 | `app/purity`、`app/scheduler`、`app/candidateeval`、`app/sub2api` | 验证账号是否符合目标模型/能力 | 第一阶段已联动候选评估：本地账号运营镜像读取最近纯度检测 step，明确失败输出 `purity_failed`，风险态输出 `purity_risk`，未知不阻断；本地账号运营页、供应商详情和动作建议展示纯度状态 |
 | 看板/验收 | `app/kanban` | 汇总缓存效率、价格源、验收证据 | 运营验收报告、证据链 |
 | 调度中心 | `app/scheduler` | 统一计划、run、step、attempt | 运行详情、失败重试、队列状态 |
 | 智能动作 | `app/actions`、`/admin/actions` | 把异常转成可执行建议 | 已有待办队列、开放信号、配额建议到开通计划深链、本地路由执行历史、成本对账调整和明细修复执行；后续补自动明细定位和批量导入向导 |
-| 通知 | `app/notifications` | 飞书等外部提醒 | 通知规则、投递记录、抑制记录 |
+| 通知 | `app/notifications`、`app/actions` | 飞书等外部提醒 | 已覆盖余额、健康、费率、成本和动作建议通知第一阶段；动作建议按分组容量、Key 配额、通道失败、代理、纯度、drift/本地状态等映射到通知规则、投递记录和抑制记录 |
 | 业务日志 | `app/bizlogs`、`/admin/action-audits`、`admin_plus_action_executions` | 自动化动作可追踪 | 已有操作审计时间线、动作执行前后快照、本地路由类失败安全重试和成功执行回滚 |
 | 导入导出 | `app/importexport` | 换服务器、迁移配置 | 核心数据导出、脱敏、恢复预检 |
 
@@ -378,7 +378,7 @@ flowchart TD
 |------|------|----------|
 | P0 | 看清链路并能人工修复 | 全局链路图、插件连接面板、供应商详情、调度面板、本地账号运营镜像、候选池、Key 配额提示、余额门禁、原后台兼容、dry-run、审计 |
 | P1 | 自动化稳定运行 | 已可收口：调度计划、动作建议、Key 配额、余额门禁、补池、关调度、重试/回滚、会话健康和核心导入导出边界 |
-| P2 | 成本和质量优化 | 模型级候选、纯度检测联动、实测预算/冷却第一阶段已完成；成本看板、代理质量、通知矩阵、验收看板和细粒度实测成本归集待补齐 |
+| P2 | 成本和质量优化 | 模型级候选、纯度检测联动、代理联动、通知矩阵、实测预算/冷却第一阶段已完成；成本看板细化、通知升级策略、验收看板和细粒度实测成本归集待补齐 |
 | P3 | 本轮不实施 | `RemoteAdminAPIRoutingPort` 第一阶段已保留；多 Sub2API 实例、实例维度容量和跨实例策略不进入当前实施范围 |
 
 ## 7. 不能遗漏的导航入口
