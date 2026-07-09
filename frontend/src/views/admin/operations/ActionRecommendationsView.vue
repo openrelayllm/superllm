@@ -1121,6 +1121,7 @@ function candidateEvaluationSignals() {
       check_source: row.check_source,
       balance_status: row.balance_status,
       key_capacity_status: row.key_capacity_status,
+      purity_freshness_status: row.purity_freshness_status,
       effective_rate_multiplier: row.effective_rate_multiplier
     }))
 }
@@ -1302,6 +1303,7 @@ function candidateReasonText(value?: string): string {
   if (value === 'balance_unknown') return '余额未知'
   if (value === 'purity_failed') return '纯度失败'
   if (value === 'purity_risk') return '纯度风险'
+  if (value === 'purity_stale') return '纯度已过期'
   if (value === 'proxy_deleted') return '代理已删除'
   if (value === 'proxy_disabled') return '代理已禁用'
   if (value === 'proxy_expired') return '代理已过期'

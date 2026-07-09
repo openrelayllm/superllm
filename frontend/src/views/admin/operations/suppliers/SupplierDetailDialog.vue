@@ -234,8 +234,8 @@
                   <span v-if="groupOpsRow(group)?.balance_status" class="badge" :class="opsBalanceStatusClass(groupOpsRow(group)?.balance_status)">
                     {{ opsBalanceStatusLabel(groupOpsRow(group)?.balance_status) }}
                   </span>
-                  <span v-if="showPurityBadge(groupOpsRow(group))" class="badge" :class="purityStatusClass(groupOpsRow(group)?.purity_status)">
-                    {{ purityStatusLabel(groupOpsRow(group)?.purity_status) }}
+                  <span v-if="showPurityBadge(groupOpsRow(group))" class="badge" :class="purityBadgeClass(groupOpsRow(group))">
+                    {{ purityBadgeLabel(groupOpsRow(group)) }}
                   </span>
                   <span v-if="showProxyBadge(groupOpsRow(group))" class="badge" :class="proxyStatusClass(groupOpsRow(group)?.local_account_proxy_status)">
                     {{ proxyStatusLabel(groupOpsRow(group)?.local_account_proxy_status) }}
@@ -410,8 +410,8 @@
                     <span class="badge" :class="driftStatusClass(accountOpsRow(account)?.drift_status)">
                       {{ driftStatusLabel(accountOpsRow(account)?.drift_status) }}
                     </span>
-                    <span v-if="showPurityBadge(accountOpsRow(account))" class="badge" :class="purityStatusClass(accountOpsRow(account)?.purity_status)">
-                      {{ purityStatusLabel(accountOpsRow(account)?.purity_status) }}
+                    <span v-if="showPurityBadge(accountOpsRow(account))" class="badge" :class="purityBadgeClass(accountOpsRow(account))">
+                      {{ purityBadgeLabel(accountOpsRow(account)) }}
                     </span>
                     <span v-if="showProxyBadge(accountOpsRow(account))" class="badge" :class="proxyStatusClass(accountOpsRow(account)?.local_account_proxy_status)">
                       {{ proxyStatusLabel(accountOpsRow(account)?.local_account_proxy_status) }}
@@ -915,6 +915,7 @@ function candidateReasonLabel(value?: string): string {
     rate_missing: '倍率缺失',
     purity_failed: '纯度检测失败',
     purity_risk: '纯度检测有风险',
+    purity_stale: '纯度检测已过期',
     proxy_deleted: '代理已删除',
     proxy_disabled: '代理已禁用',
     proxy_expired: '代理已过期',
@@ -925,7 +926,21 @@ function candidateReasonLabel(value?: string): string {
 
 function showPurityBadge(row?: LocalAccountOpsRow): boolean {
   const status = String(row?.purity_status || '').toLowerCase()
-  return Boolean(row?.purity_checked_at || (status && status !== 'unknown'))
+  return Boolean(purityIsStale(row) || row?.purity_checked_at || (status && status !== 'unknown'))
+}
+
+function purityIsStale(row?: LocalAccountOpsRow): boolean {
+  return String(row?.purity_freshness_status || '').toLowerCase() === 'stale'
+}
+
+function purityBadgeLabel(row?: LocalAccountOpsRow): string {
+  if (purityIsStale(row)) return '纯度已过期'
+  return purityStatusLabel(row?.purity_status)
+}
+
+function purityBadgeClass(row?: LocalAccountOpsRow): string {
+  if (purityIsStale(row)) return 'badge-warning'
+  return purityStatusClass(row?.purity_status)
 }
 
 function purityStatusLabel(value?: string): string {
@@ -963,6 +978,7 @@ function purityVerdictLabel(value?: string): string {
 function puritySummary(row?: LocalAccountOpsRow): string {
   if (!row) return '-'
   const parts: string[] = []
+  if (purityIsStale(row)) parts.push('已过期')
   if (row.purity_model) parts.push(row.purity_model)
   const verdict = purityVerdictLabel(row.purity_verdict)
   if (verdict) parts.push(verdict)

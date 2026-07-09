@@ -293,6 +293,16 @@ func TestServiceGenerateCandidateEvaluationCreatesPurityActions(t *testing.T) {
 				CheckSource:             "purity",
 				EffectiveRateMultiplier: 0.15,
 			},
+			{
+				SupplierID:              9,
+				SupplierGroupID:         1003,
+				LocalSub2APIAccountID:   44,
+				CandidateStatus:         "unknown",
+				BlockedReason:           "purity_stale",
+				CheckSource:             "purity",
+				PurityFreshness:         "stale",
+				EffectiveRateMultiplier: 0.12,
+			},
 		},
 	})
 
@@ -304,6 +314,10 @@ func TestServiceGenerateCandidateEvaluationCreatesPurityActions(t *testing.T) {
 	risk := requireAction(t, result.Items, adminplusdomain.ActionTypeReviewCredential, "candidate_purity_risk")
 	require.Equal(t, adminplusdomain.ActionSeverityInfo, risk.Severity)
 	require.Contains(t, risk.Signals, "blocked_reason=purity_risk")
+	stale := requireAction(t, result.Items, adminplusdomain.ActionTypeReviewCredential, "candidate_purity_stale")
+	require.Equal(t, adminplusdomain.ActionSeverityWarning, stale.Severity)
+	require.Contains(t, stale.Signals, "blocked_reason=purity_stale")
+	require.Contains(t, stale.Signals, "purity_freshness_status=stale")
 }
 
 func TestServiceGenerateCandidateEvaluationCreatesProxyAction(t *testing.T) {

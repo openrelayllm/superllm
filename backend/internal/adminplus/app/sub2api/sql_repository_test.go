@@ -260,6 +260,7 @@ func TestSQLRepositoryListLocalAccountOpsReadsBindingsAndHealth(t *testing.T) {
 			"gpt-4o",
 			91,
 			checkAt,
+			"fresh",
 		))
 
 	items, err := repo.ListLocalAccountOps(context.Background(), LocalAccountOpsFilter{
@@ -300,6 +301,7 @@ func TestSQLRepositoryListLocalAccountOpsReadsBindingsAndHealth(t *testing.T) {
 	require.Equal(t, 91, items[0].PurityScore)
 	require.NotNil(t, items[0].PurityCheckedAt)
 	require.Equal(t, checkAt, *items[0].PurityCheckedAt)
+	require.Equal(t, "fresh", items[0].PurityFreshness)
 }
 
 func TestSQLRepositoryPreviewLocalAccountOpsActionBlocksEmptyPool(t *testing.T) {
@@ -1222,6 +1224,7 @@ func newLocalAccountOpsRows() *sqlmock.Rows {
 		"purity_model",
 		"purity_score",
 		"purity_checked_at",
+		"purity_freshness_status",
 	})
 }
 

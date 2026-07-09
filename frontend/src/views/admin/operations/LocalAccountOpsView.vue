@@ -316,8 +316,8 @@
                     <span class="badge" :class="driftStatusClass(row.drift_status)">
                       {{ driftStatusLabel(row.drift_status) }}
                     </span>
-                    <span v-if="showPurityBadge(row)" class="badge" :class="purityStatusClass(row.purity_status)">
-                      {{ purityStatusLabel(row.purity_status) }}
+                    <span v-if="showPurityBadge(row)" class="badge" :class="purityBadgeClass(row)">
+                      {{ purityBadgeLabel(row) }}
                     </span>
                     <span v-if="showProxyBadge(row)" class="badge" :class="proxyStatusClass(row.local_account_proxy_status)">
                       {{ proxyStatusLabel(row.local_account_proxy_status) }}
@@ -371,6 +371,17 @@
                     >
                       <Icon name="exclamationTriangle" size="sm" />
                       变更
+                    </button>
+                    <button
+                      v-if="supportsPurity(row)"
+                      type="button"
+                      class="btn btn-secondary btn-sm"
+                      :disabled="rowActionDisabled"
+                      :title="purityIsStale(row) ? '重新执行纯度检测，刷新候选复检状态' : '执行本地账号纯度检测'"
+                      @click="openPurityDialog(row)"
+                    >
+                      <Icon name="shield" size="sm" />
+                      {{ purityIsStale(row) ? '复检' : '纯度' }}
                     </button>
                     <button
                       type="button"
@@ -617,6 +628,8 @@
           </div>
         </div>
       </div>
+
+      <LocalAccountPurityModal :show="Boolean(purityAccount)" :account="purityAccount" @close="closePurityDialog" />
     </div>
   </AppLayout>
 </template>
@@ -627,6 +640,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import Pagination from '@/components/common/Pagination.vue'
+import LocalAccountPurityModal from '@/components/admin-plus/LocalAccountPurityModal.vue'
 import RoutingRefillImpactPanel from '@/views/admin/RoutingRefillImpactPanel.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useAppStore } from '@/stores/app'
@@ -647,6 +661,7 @@ import {
   type LocalAccountOpsActionResult,
   type LocalAccountOpsRow,
   type LocalAccountStateDriftSummary,
+  type LocalSub2APIAccount,
   type LocalSub2APIGroup,
   type RoutingRefillResult,
   type Supplier,
@@ -688,6 +703,7 @@ const actionAppliedResult = ref<LocalAccountOpsActionResult | null>(null)
 const refillResult = ref<RoutingRefillResult | null>(null)
 const driftSummary = ref<LocalAccountStateDriftSummary | null>(null)
 const driftAccountId = ref(0)
+const purityAccount = ref<LocalSub2APIAccount | null>(null)
 const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0, pages: 0 })
 const filters = reactive({
   q: '',
@@ -1125,6 +1141,49 @@ function closeDriftDialog(force = false) {
   driftAccountId.value = 0
 }
 
+function openPurityDialog(row: LocalAccountOpsRow) {
+  if (!supportsPurity(row)) {
+    appStore.showError('仅支持 OpenAI API Key 账号执行纯度检测')
+    return
+  }
+  purityAccount.value = localAccountFromOpsRow(row)
+}
+
+function closePurityDialog() {
+  purityAccount.value = null
+}
+
+function supportsPurity(row?: LocalAccountOpsRow): boolean {
+  const platform = String(row?.local_account_platform || '').toLowerCase()
+  const type = String(row?.local_account_type || '').toLowerCase()
+  return platform === 'openai' && type === 'apikey'
+}
+
+function localAccountFromOpsRow(row: LocalAccountOpsRow): LocalSub2APIAccount {
+  return {
+    id: row.local_sub2api_account_id,
+    name: row.local_account_name || `#${row.local_sub2api_account_id}`,
+    platform: row.local_account_platform,
+    type: row.local_account_type,
+    status: row.local_account_status,
+    error_message: row.local_account_error_message,
+    schedulable: row.local_account_schedulable,
+    concurrency: row.local_account_concurrency,
+    priority: row.local_account_priority,
+    rate_multiplier: row.local_account_rate_multiplier,
+    rate_limited_at: row.local_account_rate_limited_at,
+    rate_limit_reset_at: row.local_account_rate_limit_reset_at,
+    overload_until: row.local_account_overload_until,
+    temp_unschedulable_until: row.local_account_temp_unschedulable_until,
+    temp_unschedulable_reason: row.local_account_temp_unschedulable_reason,
+    auto_pause_on_expired: false,
+    created_at: row.local_account_updated_at,
+    updated_at: row.local_account_updated_at,
+    group_ids: row.local_account_group_ids || [],
+    group_names: row.local_account_group_names || []
+  }
+}
+
 function closeActionDialog() {
   if (actionBusy.value) return
   resetActionDialog()
@@ -1270,6 +1329,7 @@ function visibleLocalGroups(row: LocalAccountOpsRow): string[] {
 function rowNeedsAction(row: LocalAccountOpsRow): boolean {
   if (row.drift_status && !['synced', 'unbound'].includes(row.drift_status)) return true
   if (['fail', 'warn'].includes(String(row.purity_status || '').toLowerCase())) return true
+  if (purityIsStale(row)) return true
   if (proxyNeedsAction(row.local_account_proxy_status)) return true
   if (['insufficient', 'unknown'].includes(row.balance_status) && row.drift_status !== 'unbound') return true
   return ['request_error', 'remote_unavailable', 'probe_failed', 'slow_first_token', 'slow_total'].includes(row.channel_check_status)
@@ -1439,6 +1499,7 @@ function blockedReasonLabel(value?: string): string {
     rate_missing: '倍率缺失',
     purity_failed: '纯度检测失败',
     purity_risk: '纯度检测有风险',
+    purity_stale: '纯度检测已过期',
     proxy_deleted: '代理已删除',
     proxy_disabled: '代理已禁用',
     proxy_expired: '代理已过期',
@@ -1448,7 +1509,21 @@ function blockedReasonLabel(value?: string): string {
 
 function showPurityBadge(row: LocalAccountOpsRow): boolean {
   const status = String(row.purity_status || '').toLowerCase()
-  return Boolean(row.purity_checked_at || (status && status !== 'unknown'))
+  return Boolean(purityIsStale(row) || row.purity_checked_at || (status && status !== 'unknown'))
+}
+
+function purityIsStale(row?: LocalAccountOpsRow): boolean {
+  return String(row?.purity_freshness_status || '').toLowerCase() === 'stale'
+}
+
+function purityBadgeLabel(row: LocalAccountOpsRow): string {
+  if (purityIsStale(row)) return '纯度已过期'
+  return purityStatusLabel(row.purity_status)
+}
+
+function purityBadgeClass(row: LocalAccountOpsRow): string {
+  if (purityIsStale(row)) return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+  return purityStatusClass(row.purity_status)
 }
 
 function purityStatusLabel(value?: string): string {
@@ -1483,6 +1558,7 @@ function purityVerdictLabel(value?: string): string {
 
 function puritySummary(row: LocalAccountOpsRow): string {
   const parts: string[] = []
+  if (purityIsStale(row)) parts.push('已过期')
   if (row.purity_model) parts.push(row.purity_model)
   const verdict = purityVerdictLabel(row.purity_verdict)
   if (verdict) parts.push(verdict)

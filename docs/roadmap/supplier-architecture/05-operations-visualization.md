@@ -212,6 +212,7 @@ flowchart LR
 - 前端调用 `GET /admin-plus/sub2api/local-account-ops` 获取 `candidate_status/blocked_reason/check_source`。
 - 生成建议时把候选评估传给 `POST /admin-plus/actions/generate` 的 `candidate_evaluations`。
 - 后端根据候选原因生成可解释动作：余额不足生成充值建议，Key 配额满生成配额审查建议，待开通生成开通/绑定建议，本地状态阻断生成本地状态审查建议，通道监控失败生成监控审查建议。
+- 纯度检测过期不会被当成供应商坏，也不会触发主动实测；当最近 `run_purity_check` 快照超过 7 天且通道监控可用时，候选输出 `purity_stale`，动作建议生成纯度复检待办，运营复检后再允许自动补池。
 - 前端同时把供应商级 `key_limit_policy/key_limit_value/active_key_count/key_capacity_status` 传给动作生成接口。
 - 后端会为供应商级 Key 配额生成 `supplier_key_capacity_exhausted`、`supplier_key_capacity_unknown`、`supplier_key_provisioning_unsupported`，用于提醒运营执行本地释放配额投影、通过注册用户会话停用/删除第三方 Key、配置策略、手动开通或执行显式部分开通。
 - 动作建议页的开放信号统计已包含供应商级配额耗尽、未知和不支持自动开通，避免只在供应商分组弹窗中被动发现。

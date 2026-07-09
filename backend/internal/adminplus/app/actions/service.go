@@ -134,6 +134,7 @@ type CandidateSignal struct {
 	CheckSource             string
 	BalanceStatus           string
 	KeyCapacityStatus       string
+	PurityFreshness         string
 	EffectiveRateMultiplier float64
 }
 
@@ -676,6 +677,8 @@ func (s *Service) actionsFromCandidateEvaluations(now time.Time, evaluations []C
 			items = append(items, newAction(now, evaluation.SupplierID, nil, adminplusdomain.ActionTypeReviewCredential, adminplusdomain.ActionSeverityWarning, "candidate_purity_failed", "Review candidate purity failure", "A candidate is blocked by the latest purity check. Re-run purity detection or remove it from refill candidates.", "verify model identity and capability before routing", signals))
 		case reason == "purity_risk":
 			items = append(items, newAction(now, evaluation.SupplierID, nil, adminplusdomain.ActionTypeReviewCredential, adminplusdomain.ActionSeverityInfo, "candidate_purity_risk", "Review candidate purity risk", "A candidate is degraded by purity risk. It should be reviewed before automated refill.", "confirm model identity, token audit, and compatibility evidence", signals))
+		case reason == "purity_stale":
+			items = append(items, newAction(now, evaluation.SupplierID, nil, adminplusdomain.ActionTypeReviewCredential, adminplusdomain.ActionSeverityWarning, "candidate_purity_stale", "Re-run candidate purity check", "A candidate has a stale purity check. Re-run purity detection before allowing automated refill.", "refresh model identity and compatibility evidence without active routing probes", signals))
 		case source == candidateeval.SourceProxy:
 			items = append(items, newAction(now, evaluation.SupplierID, nil, adminplusdomain.ActionTypeReviewCredential, adminplusdomain.ActionSeverityWarning, "candidate_proxy_unavailable", "Review candidate proxy", "A candidate is blocked by its bound Sub2API proxy. Check the proxy binding or move the account to an active proxy before routing refill.", "avoid misclassifying proxy failures as supplier failures", signals))
 		case reason == "channel_monitor_failed":
@@ -975,6 +978,9 @@ func candidateEvaluationSignals(evaluation CandidateSignal) []string {
 		"check_source=" + strings.TrimSpace(evaluation.CheckSource),
 		"balance_status=" + strings.TrimSpace(evaluation.BalanceStatus),
 		"key_capacity_status=" + strings.TrimSpace(evaluation.KeyCapacityStatus),
+	}
+	if strings.TrimSpace(evaluation.PurityFreshness) != "" {
+		signals = append(signals, "purity_freshness_status="+strings.TrimSpace(evaluation.PurityFreshness))
 	}
 	if evaluation.SupplierGroupID > 0 {
 		signals = append(signals, "supplier_group_id="+strconv.FormatInt(evaluation.SupplierGroupID, 10))

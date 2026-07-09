@@ -72,6 +72,7 @@ type LocalAccountOpsRow struct {
 	ModelScope        string     `json:"model_scope,omitempty"`
 	ModelMatchStatus  string     `json:"model_match_status,omitempty"`
 	PurityStatus      string     `json:"purity_status,omitempty"`
+	PurityFreshness   string     `json:"purity_freshness_status,omitempty"`
 	PurityVerdict     string     `json:"purity_verdict,omitempty"`
 	PurityReportID    string     `json:"purity_report_id,omitempty"`
 	PurityModel       string     `json:"purity_model,omitempty"`

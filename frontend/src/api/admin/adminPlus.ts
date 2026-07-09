@@ -980,6 +980,7 @@ export interface LocalAccountOpsRow {
   model_scope?: string
   model_match_status?: string
   purity_status?: string
+  purity_freshness_status?: string
   purity_verdict?: string
   purity_report_id?: string
   purity_model?: string
@@ -4466,6 +4467,7 @@ export async function generateActions(payload: {
     check_source?: string
     balance_status?: string
     key_capacity_status?: string
+    purity_freshness_status?: string
     effective_rate_multiplier?: number
   }>
   local_group_capacity?: LocalGroupCapacitySignal[]

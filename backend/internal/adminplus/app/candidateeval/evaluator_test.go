@@ -120,9 +120,24 @@ func TestEvaluateDegradesPurityRiskWhenChannelIsAvailable(t *testing.T) {
 	require.Equal(t, PurityWarn, result.PurityStatus)
 }
 
+func TestEvaluateMarksStalePurityAsUnknownWhenChannelIsAvailable(t *testing.T) {
+	result := Evaluate(baseInput(Input{
+		PurityStatus:    "pass",
+		PurityVerdict:   "official_openai",
+		PurityFreshness: "stale",
+	}))
+
+	require.Equal(t, StatusUnknown, result.CandidateStatus)
+	require.Equal(t, "purity_stale", result.BlockedReason)
+	require.Equal(t, SourcePurity, result.CheckSource)
+	require.Equal(t, PurityPass, result.PurityStatus)
+	require.Equal(t, PurityStale, result.PurityFreshness)
+}
+
 func TestEvaluateKeepsUnknownPurityAvailable(t *testing.T) {
 	result := Evaluate(baseInput(Input{
-		PurityStatus: "unknown",
+		PurityStatus:    "unknown",
+		PurityFreshness: "stale",
 	}))
 
 	require.Equal(t, StatusAvailable, result.CandidateStatus)
@@ -166,6 +181,20 @@ func TestEvaluateDoesNotHideChannelFailureWithPurityWarning(t *testing.T) {
 	require.Equal(t, "channel_monitor_failed", result.BlockedReason)
 	require.Equal(t, SourceChannelMonitor, result.CheckSource)
 	require.Equal(t, PurityWarn, result.PurityStatus)
+}
+
+func TestEvaluateDoesNotHideChannelFailureWithStalePurity(t *testing.T) {
+	result := Evaluate(baseInput(Input{
+		ChannelCheckStatus: "remote_unavailable",
+		PurityStatus:       "pass",
+		PurityVerdict:      "official_openai",
+		PurityFreshness:    "stale",
+	}))
+
+	require.Equal(t, StatusBlocked, result.CandidateStatus)
+	require.Equal(t, "channel_monitor_failed", result.BlockedReason)
+	require.Equal(t, SourceChannelMonitor, result.CheckSource)
+	require.Equal(t, PurityStale, result.PurityFreshness)
 }
 
 func TestApplyToLocalAccountOpsRow(t *testing.T) {
@@ -335,6 +364,9 @@ func baseInput(overrides Input) Input {
 	}
 	if overrides.PurityStatus != "" {
 		input.PurityStatus = overrides.PurityStatus
+	}
+	if overrides.PurityFreshness != "" {
+		input.PurityFreshness = overrides.PurityFreshness
 	}
 	if overrides.PurityVerdict != "" {
 		input.PurityVerdict = overrides.PurityVerdict

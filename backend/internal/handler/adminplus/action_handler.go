@@ -54,6 +54,7 @@ type candidateEvaluationDTO struct {
 	CheckSource             string  `json:"check_source"`
 	BalanceStatus           string  `json:"balance_status"`
 	KeyCapacityStatus       string  `json:"key_capacity_status"`
+	PurityFreshness         string  `json:"purity_freshness_status"`
 	EffectiveRateMultiplier float64 `json:"effective_rate_multiplier"`
 }
 
@@ -138,6 +139,7 @@ func (h *ActionHandler) Generate(c *gin.Context) {
 			CheckSource:             candidate.CheckSource,
 			BalanceStatus:           candidate.BalanceStatus,
 			KeyCapacityStatus:       candidate.KeyCapacityStatus,
+			PurityFreshness:         candidate.PurityFreshness,
 			EffectiveRateMultiplier: candidate.EffectiveRateMultiplier,
 		})
 	}

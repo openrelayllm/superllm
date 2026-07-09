@@ -414,7 +414,12 @@ func (r *SQLRepository) ListLocalAccountOps(ctx context.Context, filter LocalAcc
 					THEN (purity.result_snapshot->>'score')::INT
 				ELSE 0
 			END AS purity_score,
-			COALESCE(purity.finished_at, purity.started_at) AS purity_checked_at
+			COALESCE(purity.finished_at, purity.started_at, purity.created_at) AS purity_checked_at,
+			CASE
+				WHEN purity.id IS NULL THEN 'unknown'
+				WHEN COALESCE(purity.finished_at, purity.started_at, purity.created_at) < NOW() - INTERVAL '7 days' THEN 'stale'
+				ELSE 'fresh'
+			END AS purity_freshness_status
 		FROM accounts a
 		LEFT JOIN local_groups lg ON lg.account_id = a.id
 		LEFT JOIN proxies p ON p.id = a.proxy_id
@@ -2387,6 +2392,7 @@ func scanLocalAccountOpsRow(scanner interface{ Scan(dest ...any) error }) (*admi
 		&item.PurityModel,
 		&item.PurityScore,
 		&purityCheckedAt,
+		&item.PurityFreshness,
 	); err != nil {
 		return nil, err
 	}
@@ -2430,6 +2436,9 @@ func scanLocalAccountOpsRow(scanner interface{ Scan(dest ...any) error }) (*admi
 	}
 	if item.PurityStatus == "" {
 		item.PurityStatus = "unknown"
+	}
+	if item.PurityFreshness == "" {
+		item.PurityFreshness = "unknown"
 	}
 	if item.LocalAccountProxyStatus == "" {
 		if item.LocalAccountProxyID > 0 {

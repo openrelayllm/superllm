@@ -50,6 +50,8 @@ const (
 	PurityWarn             = "warn"
 	PurityFail             = "fail"
 	PurityUnknown          = "unknown"
+	PurityFresh            = "fresh"
+	PurityStale            = "stale"
 	ProxyUnbound           = "unbound"
 	ProxyActive            = "active"
 	ProxyUnknown           = "unknown"
@@ -85,6 +87,7 @@ type Input struct {
 	SupplierGroupProvider        string
 	SupplierExternalGroupID      string
 	PurityStatus                 string
+	PurityFreshness              string
 	PurityVerdict                string
 	PurityModelIdentityStatus    string
 	PurityTokenAuditStatus       string
@@ -101,6 +104,7 @@ type Evaluation struct {
 	ModelScope              string  `json:"model_scope,omitempty"`
 	ModelMatchStatus        string  `json:"model_match_status,omitempty"`
 	PurityStatus            string  `json:"purity_status,omitempty"`
+	PurityFreshness         string  `json:"purity_freshness_status,omitempty"`
 	PurityVerdict           string  `json:"purity_verdict,omitempty"`
 	EffectiveRateMultiplier float64 `json:"effective_rate_multiplier"`
 }
@@ -175,6 +179,9 @@ func Evaluate(input Input) Evaluation {
 	}
 	switch normalized.ChannelCheckStatus {
 	case "available":
+		if normalized.purityFreshnessStale() {
+			return normalized.blocked(StatusUnknown, "purity_stale", SourcePurity)
+		}
 		if normalized.purityRiskStatus() == PurityWarn {
 			return normalized.blocked(StatusDegraded, "purity_risk", SourcePurity)
 		}
@@ -232,6 +239,7 @@ func FromLocalAccountOpsRowWithModel(row *adminplusdomain.LocalAccountOpsRow, re
 		SupplierGroupProvider:        row.SupplierGroupProvider,
 		SupplierExternalGroupID:      row.SupplierExternalGroupID,
 		PurityStatus:                 row.PurityStatus,
+		PurityFreshness:              row.PurityFreshness,
 		PurityVerdict:                row.PurityVerdict,
 		PurityScore:                  row.PurityScore,
 		EffectiveRateMultiplier:      row.EffectiveRateMultiplier,
@@ -254,6 +262,7 @@ func ApplyToLocalAccountOpsRowForModel(row *adminplusdomain.LocalAccountOpsRow, 
 	row.ModelScope = evaluation.ModelScope
 	row.ModelMatchStatus = evaluation.ModelMatchStatus
 	row.PurityStatus = evaluation.PurityStatus
+	row.PurityFreshness = evaluation.PurityFreshness
 	row.PurityVerdict = evaluation.PurityVerdict
 }
 
@@ -278,6 +287,7 @@ func normalizeInput(input Input) Input {
 	input.SupplierGroupProvider = strings.TrimSpace(input.SupplierGroupProvider)
 	input.SupplierExternalGroupID = strings.TrimSpace(input.SupplierExternalGroupID)
 	input.PurityStatus = normalizePurityStatus(input.PurityStatus)
+	input.PurityFreshness = normalizePurityFreshness(input.PurityFreshness)
 	input.PurityVerdict = normalize(input.PurityVerdict)
 	input.PurityModelIdentityStatus = normalize(input.PurityModelIdentityStatus)
 	input.PurityTokenAuditStatus = normalize(input.PurityTokenAuditStatus)
@@ -339,6 +349,19 @@ func normalizePurityStatus(value string) string {
 	}
 }
 
+func normalizePurityFreshness(value string) string {
+	switch normalize(value) {
+	case "fresh", "current", "valid":
+		return PurityFresh
+	case "stale", "expired", "outdated":
+		return PurityStale
+	case "", "unknown", "not_checked":
+		return PurityUnknown
+	default:
+		return normalize(value)
+	}
+}
+
 func normalizeProxyStatus(value string, proxyID int64) string {
 	value = normalize(value)
 	if proxyID <= 0 || value == "" || value == "none" || value == "no_proxy" {
@@ -372,6 +395,7 @@ func (input Input) ok(status string, source string) Evaluation {
 		ModelScope:              input.modelScope(),
 		ModelMatchStatus:        input.modelMatchStatus(),
 		PurityStatus:            input.purityRiskStatus(),
+		PurityFreshness:         input.PurityFreshness,
 		PurityVerdict:           input.PurityVerdict,
 		EffectiveRateMultiplier: input.EffectiveRateMultiplier,
 	}
@@ -461,6 +485,13 @@ func (input Input) purityRiskStatus() string {
 		return PurityPass
 	}
 	return PurityUnknown
+}
+
+func (input Input) purityFreshnessStale() bool {
+	if input.PurityFreshness != PurityStale {
+		return false
+	}
+	return input.purityRiskStatus() != PurityUnknown
 }
 
 func (input Input) proxyBlockedReason() string {
