@@ -89,7 +89,71 @@ P2 不再阻塞的增强项：
 | A11 | 调度来源追溯 | `/admin/scheduler` 运行详情弹窗、`GET /api/v1/admin-plus/scheduler/runs/:id`、`/admin/actions` | 从调度 run/step 详情进入补池或关调度建议并执行 | action execution 记录 `scheduler_run_id/scheduler_step_id`；执行历史可反跳回调度运行详情 |
 | A12 | 幂等 replay | 本地账号运营 apply 或补池 apply API | 使用相同 `Idempotency-Key` 重放同一写动作 | 不新增重复 execution，不重复写回；原执行记录或最新同指纹记录标记 `idempotency_replayed=true` |
 
-### 4.2 不纳入当前发布阻塞
+### 4.2 代码级证据矩阵
+
+本矩阵只证明入口、接口、服务链路和测试覆盖存在，不替代第 4.1 节的真实数据验收。发布前仍必须在测试、预发或生产灰度环境留存 A1-A12 的运行证据。为避免宽表在 Markdown 中难以阅读，本节按验收项分块记录。
+
+**A1 本地分组空池发现**
+
+- 代码级证据：`backend/internal/server/routes/admin_plus_surface_test.go` 覆盖 `GET /api/v1/admin-plus/sub2api/groups` 和 `/api/v1/admin-plus/actions/recommendations`；`backend/internal/adminplus/app/scheduler/service_test.go` 覆盖容量 watch 生成 `routing_refill` 动作；`frontend/src/router/adminPlusRoutes.ts` 和侧栏测试覆盖 `/admin/scheduler`、`/admin/actions`。
+- 仍需人工确认：真实环境存在空池或低容量本地分组，并能从容量矩阵跳转到补池建议。
+
+**A2 补池 dry-run**
+
+- 代码级证据：`backend/internal/handler/adminplus/sub2api_handler.go` 暴露 `RefillLocalGroup`；`backend/internal/adminplus/app/sub2api/routing_refill_test.go` 覆盖 dry-run 选择最低倍率候选、模型匹配、冷却和确认窗口；`routing_refill.go` 返回 `availability_before`。
+- 仍需人工确认：dry-run 页面或 API 响应确认没有写入目标本地分组。
+
+**A3 审批后真实补池**
+
+- 代码级证据：`backend/internal/handler/adminplus/action_handler.go` 和 `sub2api_handler.go` 承载动作执行；`backend/internal/adminplus/app/actions/service_test.go` 覆盖 `routing_refill` 外部执行记录；`backend/internal/handler/adminplus/sub2api_action_handler_test.go` 覆盖执行记录写入幂等键和调度来源。
+- 仍需人工确认：审批后的真实补池在 `admin_plus_action_executions` 留下本次执行记录，并可看到补池后容量变化。
+
+**A4 补池影响追溯**
+
+- 代码级证据：`backend/internal/server/routes/adminplus.go` 暴露 `GET /routing/group-impact/api-keys`、`GET /routing/group-impact/failures` 和敏感明细 reason 接口；`backend/internal/adminplus/app/sub2api/sql_repository_test.go` 覆盖补池运行历史、失败请求脱敏和敏感字段读取；前端入口 `/admin/scheduler/routing-refill-history` 已在路由测试覆盖。
+- 仍需人工确认：补池影响历史能关联到本次运行，并按原因查询敏感明细。
+
+**A5 坏账号关调度建议**
+
+- 代码级证据：`backend/internal/adminplus/app/actions/service_test.go` 覆盖 `local_account_schedule_disable_required`，并验证余额阻断候选走充值建议；`backend/internal/adminplus/app/candidateeval/evaluator.go` 区分余额、配额、纯度、代理和通道信号。
+- 仍需人工确认：真实通道失败账号生成关调度建议，余额不足或配额不足账号不生成坏账号关调度建议。
+
+**A6 关调度执行与回滚**
+
+- 代码级证据：`backend/internal/handler/adminplus/sub2api_action_handler_test.go` 覆盖 `local_account_schedule_disable` 执行、失败重试和成功回滚；回滚 payload 保留 `rollback_source_execution_id`；前端 `ActionRecommendationsView.vue` 暴露 retry/rollback 操作。
+- 仍需人工确认：真实执行和回滚各产生一条 execution，且本地账号调度状态符合预期。
+
+**A7 原后台 drift 写前保护**
+
+- 代码级证据：`backend/internal/adminplus/app/sub2api/sql_repository_test.go` 覆盖 pending drift 阻断写回、同步、采纳和恢复；`backend/internal/handler/adminplus/sub2api_handler.go` 暴露 sync/accept/restore；前端 `LocalAccountOpsView.vue` 展示 drift 弹窗和 `LOCAL_ACCOUNT_STATE_DRIFT_PENDING` 提示。
+- 仍需人工确认：在 Sub2API 原后台手工改动后，Admin Plus 能检测差异且写前保护生效。
+
+**A8 Key 配额开通计划**
+
+- 代码级证据：`backend/internal/server/routes/admin_plus_surface_test.go` 覆盖 `POST /api/v1/admin-plus/suppliers/:id/keys/ensure-all-plan`；`backend/internal/adminplus/app/supplierkeys/service_test.go` 覆盖有限配额最低倍率优先、分组配额阻断、Provider active Key 读取、未知配额阻断和显式部分开通；`ReadKeyCapacity` 已在 new-api/sub2api adapter 测试覆盖分页读取。
+- 仍需人工确认：真实供应商配额有限时，计划明确展示阻塞原因，未显式 `allow_partial` 时不静默部分创建。
+
+**A9 余额不足低倍率保护**
+
+- 代码级证据：`backend/internal/adminplus/app/candidateeval/evaluator.go` 输出 `balance_blocked/recharge_required`；`backend/internal/adminplus/app/actions/service_test.go` 覆盖余额不足生成充值建议而不是关调度；前端 `ActionRecommendationsView.vue` 和 `LocalAccountOpsView.vue` 展示低倍率余额机会与余额阻断标签。
+- 仍需人工确认：低倍率但余额不足的账号仍保留为充值机会，不被标记为渠道坏。
+
+**A10 纯度过期受控复检**
+
+- 代码级证据：`backend/internal/adminplus/app/candidateeval/evaluator_test.go` 覆盖 `purity_stale`；`backend/internal/adminplus/app/actions/service_test.go` 覆盖 `candidate_purity_stale` 复检建议；`backend/internal/handler/adminplus/purity_handler.go` 和 `frontend/src/views/admin/operations/LocalAccountOpsView.vue` 支持账号纯度复检和当前页队列。
+- 仍需人工确认：批量复检只逐个打开受控队列，不默认后台批量消耗 token。
+
+**A11 调度来源追溯**
+
+- 代码级证据：`backend/internal/server/routes/admin_plus_surface_test.go` 覆盖 `GET /api/v1/admin-plus/scheduler/runs/:id`；`frontend/src/views/admin/scheduler/SchedulerRunDetailDialog.vue` 把 run/step 来源带入 `/admin/actions`；`frontend/src/views/admin/operations/ActionRecommendationsView.vue` 执行时传递并反跳 `scheduler_run_id/scheduler_step_id`；后端 action execution 结构持久化来源字段。
+- 仍需人工确认：从真实 run/step 进入并执行后，execution 可反跳回对应调度运行详情。
+
+**A12 幂等 replay**
+
+- 代码级证据：`backend/internal/handler/adminplus/idempotency_helper.go` 统一处理 `Idempotency-Key`；`backend/internal/handler/adminplus/sub2api_action_handler_test.go` 覆盖本地账号 apply 和动作执行 replay 标记；`backend/internal/adminplus/app/actions/sql_repository_test.go` 覆盖 `idempotency_replayed` 写回。
+- 仍需人工确认：真实重放同一写动作不重复写本地分组/调度，也不新增重复 execution。
+
+### 4.3 不纳入当前发布阻塞
 
 以下项目可以继续排入 P1.x/P2.x/P3，但不应阻塞当前 P1/P2 收口验收：
 
@@ -103,7 +167,7 @@ P2 不再阻塞的增强项：
 | P2.x | 跨页/后台纯度复检和按模型预算归集 | 当前支持当前页模型/能力圈选和受控复检队列，避免默认自动消耗 token |
 | P3 | 多 Sub2API 实例、外部事件、迁移冲突增强 | 当前决策明确不实施 P3；远程写回第一阶段只保留为单实例远程端口能力 |
 
-### 4.3 验收记录模板
+### 4.4 验收记录模板
 
 每次发布前验收应创建一份记录。可以复制下面模板到发布 issue、飞书文档或本地验收记录；不要把生产密钥、完整用户 API Key、完整第三方 Key、请求体或 headers 放入记录。
 
@@ -139,7 +203,7 @@ P2 不再阻塞的增强项：
 | A11 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
 | A12 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
 
-### 4.4 放行与阻断规则
+### 4.5 放行与阻断规则
 
 | 结论 | 条件 | 处理 |
 |------|------|------|
@@ -179,13 +243,31 @@ P2 不再阻塞的增强项：
 
 本记录只证明当前代码基线通过自动化校验，不替代第 4 节的真实运营场景验收。
 
+### 7.1 发布前必须重跑命令
+
+发布前必须在最终待发布代码基线重新执行以下命令。任一命令失败时，不得沿用历史通过记录放行。
+
+| 顺序 | 命令 | 通过标准 |
+|------|------|----------|
+| 1 | `cd backend && go test -count=1 ./internal/adminplus/...` | Admin Plus 后端应用、适配器、候选评估、补池、动作、通知、供应商 Key、导入导出、纯度和调度相关包全部通过 |
+| 2 | `cd backend && go test -count=1 ./internal/handler/adminplus ./internal/server/routes ./cmd/server` | Admin Plus HTTP handler、路由注册和 server 入口全部通过 |
+| 3 | `cd frontend && pnpm typecheck` | 前端 Vue/TypeScript 类型检查通过 |
+| 4 | `cd frontend && pnpm test:run` | 前端 Vitest 回归通过；若出现测试内预期 stderr 或 browserslist 提示，应确认最终结果仍为通过 |
+| 5 | `git diff --check` | 最终待发布 diff 无行尾空格、冲突标记和 patch 格式问题 |
+| 6 | `git status --short --ignored docs/aipromt AGENTS.md` | 确认本地 AI 资料和 `AGENTS.md` 仍按规则保持 ignored，不进入待提交范围 |
+
+如果发布流程同时修改 GitHub Actions、Docker、GoReleaser、Railway 或部署脚本，还需要按发布 runbook 单独验证对应 workflow 配置；不得通过本节命令推断发布链路已经可用。
+
+### 7.2 已执行自动校验记录
+
 | 日期 | 命令 | 结果 | 覆盖范围 |
 |------|------|------|----------|
 | 2026-07-09 | `go test -count=1 ./internal/adminplus/...` | 通过 | Admin Plus 后端应用、适配器、候选评估、补池、动作、通知、供应商 Key、导入导出、纯度、调度等包 |
 | 2026-07-09 | `go test -count=1 ./internal/handler/adminplus ./internal/server/routes ./cmd/server` | 通过 | Admin Plus HTTP handler、服务端路由注册和 server 入口 |
 | 2026-07-09 | `pnpm typecheck` | 通过 | 前端 Vue/TypeScript 类型检查，覆盖动作建议、本地账号运营、供应商和调度相关类型引用 |
 | 2026-07-09 | `pnpm test:run` | 通过 | 前端 Vitest 回归，32 个测试文件、193 个测试通过 |
-| 2026-07-09 | `git diff --check -- docs/roadmap/supplier-architecture/... docs/roadmap/routing/README.md RELEASE_NOTES.md` | 通过 | 本次收口文档、routing 专题文档和 release notes 更新无行尾空格等 diff 格式问题 |
+| 2026-07-09 | `git diff --check` | 通过 | 当前工作树 diff 无行尾空格、冲突标记和 patch 格式问题 |
+| 2026-07-09 | `git status --short --ignored docs/aipromt AGENTS.md` | 通过 | `AGENTS.md` 和 `docs/aipromt/` 保持 ignored，不进入待提交范围 |
 
 ## 8. 文档一致性记录
 
