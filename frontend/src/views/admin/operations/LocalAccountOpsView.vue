@@ -133,13 +133,22 @@
               当前页已选择 {{ selectedAccountIds.length }} 个本地账号，执行前会先预览分组调度池影响。
             </p>
           </div>
-          <div class="grid gap-3 lg:min-w-[720px] lg:grid-cols-[minmax(220px,1fr)_auto] lg:items-end">
+          <div class="grid gap-3 lg:min-w-[900px] lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_auto] lg:items-end">
             <label class="block">
               <span class="input-label">目标本地分组</span>
               <select v-model.number="selectedGroupId" class="input">
                 <option :value="0">选择分组后可加入或移出</option>
                 <option v-for="group in localGroupOptions" :key="group.id" :value="group.id">
                   {{ group.name }}
+                </option>
+              </select>
+            </label>
+            <label class="block">
+              <span class="input-label">复检模型/能力</span>
+              <select v-model="selectedPurityModelTag" class="input">
+                <option value="">全部模型/能力</option>
+                <option v-for="option in purityModelTagOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
                 </option>
               </select>
             </label>
@@ -163,6 +172,14 @@
               <button type="button" class="btn btn-secondary btn-sm" :disabled="syncDisabled" @click="syncLocalState">
                 <Icon name="sync" size="sm" :class="{ 'animate-spin': syncBusy }" />
                 {{ syncButtonText }}
+              </button>
+              <button type="button" class="btn btn-secondary btn-sm" :disabled="stalePurityRows.length === 0 || rowActionDisabled" @click="selectStalePurityRows">
+                <Icon name="filter" size="sm" />
+                {{ selectStalePurityLabel }}
+              </button>
+              <button type="button" class="btn btn-secondary btn-sm" :disabled="bulkPurityDisabled" @click="startBulkPurityRecheck">
+                <Icon name="shield" size="sm" />
+                批量复检纯度
               </button>
               <button type="button" class="btn btn-secondary btn-sm" :disabled="refillDisabled" @click="previewRoutingRefill">
                 <Icon name="search" size="sm" :class="{ 'animate-spin': refillBusy }" />
@@ -195,6 +212,14 @@
             · 用户 Key {{ refillResult.availability_before?.active_api_key_count ?? '-' }}
           </p>
           <RoutingRefillImpactPanel :availability="refillResult.availability_before" />
+        </div>
+        <div v-if="purityQueueActive" class="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800 dark:border-sky-900/50 dark:bg-sky-900/20 dark:text-sky-200">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <p class="font-medium">{{ purityQueueStatusText }}</p>
+            <button type="button" class="btn btn-secondary btn-sm" @click="stopPurityQueue">
+              结束队列
+            </button>
+          </div>
         </div>
       </section>
 
@@ -646,7 +671,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -691,6 +716,12 @@ interface SupplierGroupOption {
   label: string
 }
 
+interface PurityModelTagOption {
+  value: string
+  label: string
+  count: number
+}
+
 const appStore = useAppStore()
 const route = useRoute()
 const router = useRouter()
@@ -715,6 +746,9 @@ const refillResult = ref<RoutingRefillResult | null>(null)
 const driftSummary = ref<LocalAccountStateDriftSummary | null>(null)
 const driftAccountId = ref(0)
 const purityAccount = ref<LocalSub2APIAccount | null>(null)
+const purityQueue = ref<LocalSub2APIAccount[]>([])
+const purityQueueIndex = ref(0)
+const selectedPurityModelTag = ref('')
 const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0, pages: 0 })
 const filters = reactive({
   q: '',
@@ -755,6 +789,11 @@ const pageStats = computed(() => ({
 const pageAccountIds = computed(() => uniqueNumbers(rows.value.map((row) => row.local_sub2api_account_id)))
 const selectedAccountIds = computed(() => Array.from(selectedAccountSet.value).sort((a, b) => a - b))
 const allPageSelected = computed(() => pageAccountIds.value.length > 0 && pageAccountIds.value.every((id) => selectedAccountSet.value.has(id)))
+const selectedPurityRows = computed(() => selectedAccountIds.value
+  .map((id) => rows.value.find((row) => row.local_sub2api_account_id === id))
+  .filter((row): row is LocalAccountOpsRow => Boolean(row && supportsPurity(row)))
+)
+const stalePurityRows = computed(() => rows.value.filter((row) => supportsPurity(row) && purityIsStale(row)))
 const bulkActionDisabled = computed(() => actionBusy.value || syncBusy.value || selectedAccountIds.value.length === 0)
 const groupActionDisabled = computed(() => bulkActionDisabled.value || selectedGroupId.value <= 0)
 const pendingActionTitle = computed(() => pendingPayload.value ? actionTitle(pendingPayload.value) : '账号调度操作')
@@ -763,6 +802,15 @@ const syncTargetAccountIds = computed(() => selectedAccountIds.value.length > 0 
 const rowActionDisabled = computed(() => actionBusy.value || syncBusy.value || driftBusy.value || driftActionBusy.value)
 const refillDisabled = computed(() => loading.value || rowActionDisabled.value || refillBusy.value || selectedGroupId.value <= 0)
 const syncDisabled = computed(() => loading.value || rowActionDisabled.value || syncTargetAccountIds.value.length === 0)
+const bulkPurityDisabled = computed(() => loading.value || rowActionDisabled.value || purityQueueActive.value || selectedPurityRows.value.length === 0)
+const purityQueueActive = computed(() => purityQueue.value.length > 0)
+const purityQueueStatusText = computed(() => {
+  const total = purityQueue.value.length
+  if (total === 0) return ''
+  const current = purityQueue.value[Math.min(purityQueueIndex.value, total - 1)]
+  const name = current?.name || (current ? `#${current.id}` : '-')
+  return `纯度复检队列 ${Math.min(purityQueueIndex.value + 1, total)}/${total} · ${name}`
+})
 const refillResultTitle = computed(() => {
   if (!refillResult.value) return ''
   if (refillResult.value.skipped_reason) return `补池跳过：${routingRefillSkippedReasonLabel(refillResult.value.skipped_reason)}`
@@ -928,6 +976,15 @@ function togglePageSelectionFromEvent(event: Event) {
 
 function clearSelection() {
   selectedAccountSet.value = new Set()
+}
+
+function selectStalePurityRows() {
+  const ids = stalePurityRows.value.map((row) => row.local_sub2api_account_id)
+  if (ids.length === 0) {
+    appStore.showWarning('当前页没有纯度过期账号')
+    return
+  }
+  selectedAccountSet.value = new Set(ids)
 }
 
 function pruneSelection() {
@@ -1158,11 +1215,26 @@ function openPurityDialog(row: LocalAccountOpsRow) {
     appStore.showError('仅支持 OpenAI、Claude 或 Gemini API Key 账号执行纯度检测')
     return
   }
+  resetPurityQueue()
   purityAccount.value = localAccountFromOpsRow(row)
 }
 
-function closePurityDialog() {
+async function closePurityDialog() {
   purityAccount.value = null
+  if (purityQueueActive.value) {
+    const nextIndex = purityQueueIndex.value + 1
+    if (nextIndex < purityQueue.value.length) {
+      purityQueueIndex.value = nextIndex
+      await nextTick()
+      purityAccount.value = purityQueue.value[nextIndex]
+      return
+    }
+    const total = purityQueue.value.length
+    resetPurityQueue()
+    appStore.showSuccess(`纯度复检队列已结束 ${total} 个账号`)
+    void loadRows()
+    return
+  }
   if (numberQueryValue(route.query.purity_account_id) > 0) {
     void router.replace({
       path: route.path,
@@ -1174,6 +1246,32 @@ function closePurityDialog() {
     return
   }
   void loadRows()
+}
+
+function startBulkPurityRecheck() {
+  const accounts = selectedPurityRows.value.map(localAccountFromOpsRow)
+  if (accounts.length === 0) {
+    appStore.showWarning('请选择支持纯度检测的 API Key 本地账号')
+    return
+  }
+  const skipped = selectedAccountIds.value.length - accounts.length
+  purityQueue.value = accounts
+  purityQueueIndex.value = 0
+  purityAccount.value = accounts[0]
+  if (skipped > 0) {
+    appStore.showWarning(`已跳过 ${skipped} 个不支持纯度检测的账号`)
+  }
+}
+
+function stopPurityQueue() {
+  resetPurityQueue()
+  purityAccount.value = null
+  void loadRows()
+}
+
+function resetPurityQueue() {
+  purityQueue.value = []
+  purityQueueIndex.value = 0
 }
 
 function supportsPurity(row?: LocalAccountOpsRow): boolean {
