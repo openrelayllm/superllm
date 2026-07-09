@@ -86,7 +86,7 @@ P2 不再阻塞的增强项：
 | A8 | Key 配额开通计划 | 供应商分组弹窗、`POST /api/v1/admin-plus/suppliers/:id/keys/ensure-all-plan` | 配置供应商或分组级有限/未知/不支持自动开通策略，生成开通计划 | 计划明确展示可创建、已覆盖、被阻塞分组和阻塞原因；没有运营显式 `allow_partial` 时不静默创建部分 Key |
 | A9 | 余额不足低倍率保护 | `/admin/actions` 和本地账号运营镜像 | 准备低倍率但余额不足的供应商或账号，刷新余额和候选状态 | 候选显示 `balance_blocked/recharge_required`；进入低倍率余额机会或充值/复检建议；不生成渠道坏或关调度建议 |
 | A10 | 纯度过期受控复检 | `/admin/local-account-ops`、`/admin/actions` | 选择纯度快照超过 7 天或缺失的账号，按当前页模型/能力标签圈选并启动复检队列 | 只打开复检弹窗或队列，不自动批量消耗 token；复检成功后调度 step 快照可被候选评估读取 |
-| A11 | 调度来源追溯 | `/admin/scheduler/runs/:id`、`/admin/actions` | 从调度 run/step 详情进入补池或关调度建议并执行 | action execution 记录 `scheduler_run_id/scheduler_step_id`；执行历史可反跳回调度运行详情 |
+| A11 | 调度来源追溯 | `/admin/scheduler` 运行详情弹窗、`GET /api/v1/admin-plus/scheduler/runs/:id`、`/admin/actions` | 从调度 run/step 详情进入补池或关调度建议并执行 | action execution 记录 `scheduler_run_id/scheduler_step_id`；执行历史可反跳回调度运行详情 |
 | A12 | 幂等 replay | 本地账号运营 apply 或补池 apply API | 使用相同 `Idempotency-Key` 重放同一写动作 | 不新增重复 execution，不重复写回；原执行记录或最新同指纹记录标记 `idempotency_replayed=true` |
 
 ### 4.2 不纳入当前发布阻塞
@@ -102,6 +102,59 @@ P2 不再阻塞的增强项：
 | P2.x | 容量矩阵行内今日请求、限流账号、错误账号和最低可补倍率 | 这些指标已在补池影响面板和动作建议信号中用于执行确认，矩阵行内展示是扫盘效率增强 |
 | P2.x | 跨页/后台纯度复检和按模型预算归集 | 当前支持当前页模型/能力圈选和受控复检队列，避免默认自动消耗 token |
 | P3 | 多 Sub2API 实例、外部事件、迁移冲突增强 | 当前决策明确不实施 P3；远程写回第一阶段只保留为单实例远程端口能力 |
+
+### 4.3 验收记录模板
+
+每次发布前验收应创建一份记录。可以复制下面模板到发布 issue、飞书文档或本地验收记录；不要把生产密钥、完整用户 API Key、完整第三方 Key、请求体或 headers 放入记录。
+
+验收批次：
+
+| 字段 | 填写 |
+|------|------|
+| 验收日期 |  |
+| 验收环境 | 测试 / 预发 / 生产灰度 |
+| 代码版本 | commit SHA、tag 或镜像版本 |
+| 数据库迁移版本 |  |
+| 执行人 |  |
+| 回滚负责人 |  |
+| 关联发布单 |  |
+| 备份状态 | 已备份 / 不涉及 / 未完成 |
+| 验收开始时间 |  |
+| 验收结束时间 |  |
+
+单项记录：
+
+| 编号 | 结果 | 证据 | 问题链接 | 处理结论 |
+|------|------|------|----------|----------|
+| A1 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
+| A2 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
+| A3 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
+| A4 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
+| A5 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
+| A6 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
+| A7 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
+| A8 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
+| A9 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
+| A10 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
+| A11 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
+| A12 | pass / fail / skipped | 截图、execution id、run id 或响应摘要 |  |  |
+
+### 4.4 放行与阻断规则
+
+| 结论 | 条件 | 处理 |
+|------|------|------|
+| 放行 | A1-A12 全部 pass，且自动校验记录中的命令在最终代码基线通过 | 可以进入发布或灰度 |
+| 条件放行 | 仅 P1.x/P2.x/P3 非阻塞项失败，且已在验收记录写明跳过原因、影响范围和后续负责人 | 可以灰度；不得把 skipped 项宣传为已完成 |
+| 阻断 | A1-A9 任一 fail，或出现余额不足被误判为渠道坏、Key 配额静默部分创建、drift 被覆盖、无审计写回、重复写回等核心闭环问题 | 停止发布，修复后重跑相关验收 |
+| 阻断 | A10-A12 任一 fail 且影响纯度受控复检、调度来源追溯或幂等 replay 的可信性 | 停止发布，除非发布范围明确不包含相关功能且有回滚方案 |
+| 阻断 | 验收证据包含生产敏感明文、完整 Key、请求体或 headers | 清理证据并重新留存脱敏材料 |
+
+最小放行口径：
+
+- A1-A9 是 P1 主线和运营闭环硬门禁。
+- A10-A12 是 P2 第一阶段可信性门禁；如果跳过，必须说明当前发布不触发对应能力，并在灰度计划中保留补验时间。
+- 自动校验命令必须基于最终待发布代码重新执行；不能复用改动前的旧结果。
+- 发布后若运营仍需要回 Sub2API 原后台完成主路径操作，应视为当前版本未达到“Admin Plus 日常主操作入口”的目标，需要回到 P1/P2 问题池处理。
 
 ## 5. 后续 Backlog 边界
 
