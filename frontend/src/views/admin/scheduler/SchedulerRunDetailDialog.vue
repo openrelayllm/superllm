@@ -41,7 +41,7 @@
             <tr v-if="detail.steps.length === 0">
               <td colspan="10" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">暂无 step 明细</td>
             </tr>
-            <tr v-for="step in detail.steps" :key="step.id">
+            <tr v-for="step in detail.steps" :key="step.id" :class="stepRowClass(step)">
               <td class="px-4 py-3 font-mono text-xs text-gray-500 dark:text-dark-400">{{ step.id }}</td>
               <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{{ step.supplier_name || step.supplier_id }}</td>
               <td class="px-4 py-3 text-sm text-gray-500 dark:text-dark-400">{{ taskLabel(step.task_type) }}</td>
@@ -77,6 +77,14 @@
                     {{ link.label }}
                   </RouterLink>
                   <button
+                    v-if="stepHasSnapshot(step)"
+                    type="button"
+                    class="btn btn-secondary btn-sm"
+                    @click="selectedStep = step"
+                  >
+                    快照
+                  </button>
+                  <button
                     type="button"
                     class="btn btn-secondary btn-sm"
                     :disabled="retryingStepId === step.id || !stepRetryable(step.status)"
@@ -104,7 +112,7 @@
 
   <BaseDialog
     :show="Boolean(selectedStep)"
-    :title="selectedStep ? `错误详情 - Step ${selectedStep.id}` : '错误详情'"
+    :title="selectedStep ? `Step 详情 - ${selectedStep.id}` : 'Step 详情'"
     width="wide"
     :z-index="70"
     @close="selectedStep = null"
@@ -157,7 +165,17 @@
         </div>
       </div>
 
-      <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
+      <div v-if="selectedStep.result_snapshot" class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
+        <p class="text-xs text-gray-500 dark:text-dark-400">结果快照</p>
+        <pre class="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-700 dark:bg-dark-800 dark:text-dark-200">{{ formatSnapshot(selectedStep.result_snapshot) }}</pre>
+      </div>
+
+      <div v-if="selectedStep.request_snapshot" class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
+        <p class="text-xs text-gray-500 dark:text-dark-400">请求快照</p>
+        <pre class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-700 dark:bg-dark-800 dark:text-dark-200">{{ formatSnapshot(selectedStep.request_snapshot) }}</pre>
+      </div>
+
+      <div v-if="selectedRawReason" class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
         <p class="text-xs text-gray-500 dark:text-dark-400">完整错误</p>
         <pre class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-700 dark:bg-dark-800 dark:text-dark-200">{{ selectedRawReason }}</pre>
       </div>
@@ -189,6 +207,7 @@ const props = defineProps<{
   loading: boolean
   retryingStepId: number | null
   cancellingStepId: number | null
+  focusedStepId?: number
 }>()
 
 const emit = defineEmits<{
@@ -276,6 +295,18 @@ function stepActionRecommendationLinks(step: SchedulerStepRecord): StepActionRec
   const links = actionLinksFromSnapshot(snapshot, step)
   if (links.length > 0) return links.slice(0, 4)
   return fallbackRoutingGroupLinks(snapshot, step).slice(0, 4)
+}
+
+function stepRowClass(step: SchedulerStepRecord): string {
+  return props.focusedStepId && step.id === props.focusedStepId ? 'bg-primary-50 dark:bg-primary-950/20' : ''
+}
+
+function stepHasSnapshot(step: SchedulerStepRecord): boolean {
+  return hasObjectContent(step.result_snapshot) || hasObjectContent(step.request_snapshot)
+}
+
+function hasObjectContent(value?: Record<string, unknown>): boolean {
+  return Boolean(value && Object.keys(value).length > 0)
 }
 
 function actionLinksFromSnapshot(snapshot: Record<string, unknown>, step: SchedulerStepRecord): StepActionRecommendationLink[] {

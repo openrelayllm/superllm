@@ -257,6 +257,8 @@ func TestSQLRepositoryListLocalAccountOpsReadsBindingsAndHealth(t *testing.T) {
 			"pass",
 			"official_openai",
 			"purity-report-1",
+			"manual-purity-account-42",
+			int64(501),
 			"gpt-4o",
 			91,
 			checkAt,
@@ -297,6 +299,8 @@ func TestSQLRepositoryListLocalAccountOpsReadsBindingsAndHealth(t *testing.T) {
 	require.Equal(t, "pass", items[0].PurityStatus)
 	require.Equal(t, "official_openai", items[0].PurityVerdict)
 	require.Equal(t, "purity-report-1", items[0].PurityReportID)
+	require.Equal(t, "manual-purity-account-42", items[0].PuritySchedulerRunID)
+	require.Equal(t, int64(501), items[0].PuritySchedulerStepID)
 	require.Equal(t, "gpt-4o", items[0].PurityModel)
 	require.Equal(t, 91, items[0].PurityScore)
 	require.NotNil(t, items[0].PurityCheckedAt)
@@ -1221,6 +1225,8 @@ func newLocalAccountOpsRows() *sqlmock.Rows {
 		"purity_status",
 		"purity_verdict",
 		"purity_report_id",
+		"purity_scheduler_run_id",
+		"purity_scheduler_step_id",
 		"purity_model",
 		"purity_score",
 		"purity_checked_at",

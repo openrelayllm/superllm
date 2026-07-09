@@ -317,6 +317,14 @@ type PublicReportRecord struct {
 	PublicSummaryJSON map[string]any
 }
 
+type AccountCheckRecord struct {
+	AccountID  int64
+	Provider   string
+	Report     *PublicReport
+	CapturedAt time.Time
+}
+
 type Repository interface {
 	SavePublicReport(ctx context.Context, record PublicReportRecord) error
+	SaveAccountCheckResult(ctx context.Context, record AccountCheckRecord) error
 }

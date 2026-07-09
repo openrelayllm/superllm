@@ -210,6 +210,15 @@
                   {{ localAccountSchedulePreviewingID === item.id ? '预览中' : '关闭预览' }}
                 </button>
                 <button
+                  v-if="canOpenPurityRecheck(item)"
+                  type="button"
+                  class="btn btn-secondary px-3 py-1.5 text-xs"
+                  @click="openPurityRecheck(item)"
+                >
+                  <Icon name="shield" size="xs" />
+                  复检纯度
+                </button>
+                <button
                   v-for="option in costReconcileDetailRepairOptions(item)"
                   :key="option.type"
                   type="button"
@@ -793,6 +802,25 @@ function canRunRoutingRefill(item: ActionRecommendation): boolean {
 
 function canRunLocalAccountScheduleDisable(item: ActionRecommendation): boolean {
   return item.type === 'local_account_schedule_disable' && signalNumber(item, 'local_sub2api_account_id') > 0
+}
+
+function canOpenPurityRecheck(item: ActionRecommendation): boolean {
+  return item.type === 'review_credential' &&
+    item.reason_code === 'candidate_purity_stale' &&
+    signalNumber(item, 'local_sub2api_account_id') > 0
+}
+
+function openPurityRecheck(item: ActionRecommendation) {
+  if (!canOpenPurityRecheck(item)) return
+  const accountID = signalNumber(item, 'local_sub2api_account_id')
+  void router.push({
+    path: '/admin/local-account-ops',
+    query: {
+      q: String(accountID),
+      purity_account_id: String(accountID),
+      recommendation_id: String(item.id)
+    }
+  })
 }
 
 function canApplyCostReconcileAdjustment(item: ActionRecommendation): boolean {

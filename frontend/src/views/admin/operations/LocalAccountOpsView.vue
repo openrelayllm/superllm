@@ -384,6 +384,17 @@
                       {{ purityIsStale(row) ? '复检' : '纯度' }}
                     </button>
                     <button
+                      v-if="canOpenPurityReport(row)"
+                      type="button"
+                      class="btn btn-secondary btn-sm"
+                      :disabled="rowActionDisabled"
+                      :title="`查看最近纯度报告：${row.purity_report_id || row.purity_scheduler_run_id}`"
+                      @click="openPurityReport(row)"
+                    >
+                      <Icon name="clipboard" size="sm" />
+                      报告
+                    </button>
+                    <button
                       type="button"
                       class="btn btn-ghost btn-sm"
                       :disabled="rowActionDisabled"
@@ -817,6 +828,7 @@ async function loadRows() {
     pagination.pages = opsResult.pages || 0
     pagination.page = opsResult.page || pagination.page
     pagination.page_size = opsResult.page_size || pagination.page_size
+    openPendingPurityFromRoute()
   } catch (error) {
     appStore.showError((error as { message?: string }).message || '加载本地账号运营视图失败')
   } finally {
@@ -1143,7 +1155,7 @@ function closeDriftDialog(force = false) {
 
 function openPurityDialog(row: LocalAccountOpsRow) {
   if (!supportsPurity(row)) {
-    appStore.showError('仅支持 OpenAI API Key 账号执行纯度检测')
+    appStore.showError('仅支持 OpenAI、Claude 或 Gemini API Key 账号执行纯度检测')
     return
   }
   purityAccount.value = localAccountFromOpsRow(row)
@@ -1151,12 +1163,23 @@ function openPurityDialog(row: LocalAccountOpsRow) {
 
 function closePurityDialog() {
   purityAccount.value = null
+  if (numberQueryValue(route.query.purity_account_id) > 0) {
+    void router.replace({
+      path: route.path,
+      query: {
+        ...route.query,
+        purity_account_id: undefined
+      }
+    })
+    return
+  }
+  void loadRows()
 }
 
 function supportsPurity(row?: LocalAccountOpsRow): boolean {
   const platform = String(row?.local_account_platform || '').toLowerCase()
   const type = String(row?.local_account_type || '').toLowerCase()
-  return platform === 'openai' && type === 'apikey'
+  return ['openai', 'anthropic', 'claude', 'gemini'].includes(platform) && type === 'apikey'
 }
 
 function localAccountFromOpsRow(row: LocalAccountOpsRow): LocalSub2APIAccount {
@@ -1182,6 +1205,26 @@ function localAccountFromOpsRow(row: LocalAccountOpsRow): LocalSub2APIAccount {
     group_ids: row.local_account_group_ids || [],
     group_names: row.local_account_group_names || []
   }
+}
+
+function openPendingPurityFromRoute() {
+  const accountID = numberQueryValue(route.query.purity_account_id)
+  if (accountID <= 0) return
+  if (purityAccount.value?.id === accountID) return
+  const row = rows.value.find((item) => item.local_sub2api_account_id === accountID)
+  if (!row) return
+  if (!supportsPurity(row)) {
+    appStore.showError('仅支持 OpenAI、Claude 或 Gemini API Key 账号执行纯度检测')
+    void router.replace({
+      path: route.path,
+      query: {
+        ...route.query,
+        purity_account_id: undefined
+      }
+    })
+    return
+  }
+  purityAccount.value = localAccountFromOpsRow(row)
 }
 
 function closeActionDialog() {
@@ -1570,6 +1613,21 @@ function puritySummary(row: LocalAccountOpsRow): string {
 function purityTitle(row: LocalAccountOpsRow): string {
   const report = row.purity_report_id ? `报告 ${row.purity_report_id}` : '最近一次纯度检测'
   return `${report}：${puritySummary(row)}`
+}
+
+function canOpenPurityReport(row: LocalAccountOpsRow): boolean {
+  return Boolean(row.purity_scheduler_run_id && Number(row.purity_scheduler_step_id || 0) > 0)
+}
+
+function openPurityReport(row: LocalAccountOpsRow) {
+  if (!canOpenPurityReport(row)) return
+  void router.push({
+    path: '/admin/scheduler',
+    query: {
+      run_id: row.purity_scheduler_run_id,
+      step_id: String(row.purity_scheduler_step_id)
+    }
+  })
 }
 
 function showProxyBadge(row: LocalAccountOpsRow): boolean {

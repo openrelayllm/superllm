@@ -983,6 +983,8 @@ export interface LocalAccountOpsRow {
   purity_freshness_status?: string
   purity_verdict?: string
   purity_report_id?: string
+  purity_scheduler_run_id?: string
+  purity_scheduler_step_id?: number
   purity_model?: string
   purity_score?: number
   purity_checked_at?: string | null

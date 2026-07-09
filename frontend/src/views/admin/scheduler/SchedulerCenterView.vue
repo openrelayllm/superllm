@@ -552,6 +552,7 @@
       :loading="runDetailLoading"
       :retrying-step-id="retryingStepId"
       :cancelling-step-id="cancellingStepId"
+      :focused-step-id="focusedStepID"
       @close="closeRunDetail"
       @retry-step="retryStep"
       @cancel-step="cancelStep"
@@ -758,6 +759,7 @@ const routingRefillPolicyRateLabel = computed(() => {
 const routingLowCapacityThreshold = computed(() => {
   return clampInteger(settingsForm.routing_refill_low_capacity_threshold, 1, 1, 100)
 })
+const focusedStepID = computed(() => positiveQueryNumber(route.query.step_id))
 
 const localGroupCapacityRows = computed(() => {
   return [...localGroups.value].sort((a, b) => {
@@ -1263,6 +1265,12 @@ async function openRunDetailFromQuery() {
 function stringQuery(value: unknown): string {
   const raw = Array.isArray(value) ? value[0] : value
   return String(raw || '').trim()
+}
+
+function positiveQueryNumber(value: unknown): number {
+  const raw = Array.isArray(value) ? value[0] : value
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
 }
 
 watch(() => route.query.run_id, () => {

@@ -65,17 +65,19 @@ type LocalAccountOpsRow struct {
 	DriftStatus         string     `json:"drift_status"`
 	LastLocalSyncAt     *time.Time `json:"last_local_sync_at,omitempty"`
 
-	CandidateStatus   string     `json:"candidate_status,omitempty"`
-	BlockedReason     string     `json:"blocked_reason,omitempty"`
-	CheckSource       string     `json:"check_source,omitempty"`
-	KeyCapacityStatus string     `json:"key_capacity_status,omitempty"`
-	ModelScope        string     `json:"model_scope,omitempty"`
-	ModelMatchStatus  string     `json:"model_match_status,omitempty"`
-	PurityStatus      string     `json:"purity_status,omitempty"`
-	PurityFreshness   string     `json:"purity_freshness_status,omitempty"`
-	PurityVerdict     string     `json:"purity_verdict,omitempty"`
-	PurityReportID    string     `json:"purity_report_id,omitempty"`
-	PurityModel       string     `json:"purity_model,omitempty"`
-	PurityScore       int        `json:"purity_score,omitempty"`
-	PurityCheckedAt   *time.Time `json:"purity_checked_at,omitempty"`
+	CandidateStatus       string     `json:"candidate_status,omitempty"`
+	BlockedReason         string     `json:"blocked_reason,omitempty"`
+	CheckSource           string     `json:"check_source,omitempty"`
+	KeyCapacityStatus     string     `json:"key_capacity_status,omitempty"`
+	ModelScope            string     `json:"model_scope,omitempty"`
+	ModelMatchStatus      string     `json:"model_match_status,omitempty"`
+	PurityStatus          string     `json:"purity_status,omitempty"`
+	PurityFreshness       string     `json:"purity_freshness_status,omitempty"`
+	PurityVerdict         string     `json:"purity_verdict,omitempty"`
+	PurityReportID        string     `json:"purity_report_id,omitempty"`
+	PuritySchedulerRunID  string     `json:"purity_scheduler_run_id,omitempty"`
+	PuritySchedulerStepID int64      `json:"purity_scheduler_step_id,omitempty"`
+	PurityModel           string     `json:"purity_model,omitempty"`
+	PurityScore           int        `json:"purity_score,omitempty"`
+	PurityCheckedAt       *time.Time `json:"purity_checked_at,omitempty"`
 }

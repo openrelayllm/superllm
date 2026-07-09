@@ -137,7 +137,7 @@ flowchart TD
 | P2 | 第三方 Key 事实 | `admin_plus_supplier_keys` | `status`、`external_key_id`、`local_sub2api_account_id` | 不消耗模型 token | 判断该分组是否已落地本地账号 |
 | P2 | 本地调度状态 | 本地 Sub2API `accounts` / `OpsService` | `schedulable`、429、error、temp unsched | 不消耗供应商 token | 判断本地网关能否调度 |
 | P2 | 本地账号代理绑定 | 本地 Sub2API `accounts.proxy_id`、`proxies` | `local_account_proxy_status`、`proxy_deleted/proxy_disabled/proxy_expired/proxy_unavailable` | 不消耗供应商 token | 区分代理故障和供应商/账号故障；无代理或未知不误阻断 |
-| P2 | 纯度检测快照 | `admin_plus_scheduler_steps.result_snapshot` | `run_purity_check`、`local_sub2api_account_id`、`verdict`、`score`、`model_identity_status`、`purity_freshness_status` | 不新增本次 token 消耗，复用最近检测结果 | 明确能力不匹配时阻断，风险态降级，7 天外快照输出 `purity_stale` 复检建议，未知不阻断 |
+| P2 | 纯度检测快照 | `admin_plus_scheduler_steps.result_snapshot` | `run_purity_check`、`local_sub2api_account_id`、`verdict`、`score`、`model_identity_status`、`purity_freshness_status` | 候选评估不新增本次 token 消耗，复用最近检测结果；运营显式复检会消耗 token | 明确能力不匹配时阻断，风险态降级，7 天外快照输出 `purity_stale` 复检建议；动作建议可定位本地账号复检，复检成功写回最新 step 快照，未知不阻断 |
 | P2 | 主动健康探测 | `health.Service`、`channelchecks.Check` | `probe_status`、`status_code`、`first_token_ms`、`active_probe_daily_budget_tokens`、`channel_check_probe_cooldown_seconds` | 消耗模型 token 和供应商余额 | 只在监控缺失/过期/冲突、人工触发或自动写回前验证真实链路；第一阶段已有每日预算和同分组冷却 |
 
 实测规则：
@@ -215,7 +215,7 @@ flowchart TD
 | `balance_status` | 余额同步 | `balance_ok/balance_low/balance_blocked/recharge_required/balance_unknown` |
 | `key_capacity_status` | Key 配额同步 | `unknown/available/limited/exhausted/manual_only` |
 | `model_scope/model_match_status` | 第三方分组能力范围 | 模型范围匹配结果，明确不匹配输出 `model_scope_unsupported` |
-| `purity_status/purity_verdict/purity_freshness_status` | 最近纯度检测 step | `pass/warn/fail/unknown`；明确失败阻断，风险态降级；检测快照 7 天外派生 `stale`，通道可用时输出 `purity_stale`，提示复检而不触发主动实测 |
+| `purity_status/purity_verdict/purity_freshness_status` | 最近纯度检测 step | `pass/warn/fail/unknown`；明确失败阻断，风险态降级；检测快照 7 天外派生 `stale`，通道可用时输出 `purity_stale`，提示运营显式复检而不触发主动实测；复检成功后写入新的 `run_purity_check` step |
 | `local_account_proxy_id/proxy_status` | 本地 Sub2API `accounts` + `proxies` | 账号绑定代理状态；`active/unbound/unknown` 不阻断，`deleted/disabled/expired/error` 阻断候选 |
 | `blocked_reason` | 候选生成 | `recharge_required/key_capacity_exhausted/health_failed/local_unschedulable/channel_monitor_failed/model_scope_unsupported/purity_failed/purity_risk/proxy_deleted/proxy_disabled/proxy_expired/proxy_unavailable` |
 | `probe_cost_class` | 健康探测 | `free/low_token/standard_token`，用于控制实测成本 |

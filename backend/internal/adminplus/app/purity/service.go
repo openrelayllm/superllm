@@ -103,13 +103,27 @@ func (s *Service) RunAccountCheckStream(ctx context.Context, in AccountCheckInpu
 	if err != nil {
 		return nil, err
 	}
-	return s.runCheck(ctx, publicInput, emit, checkRunOptions{
+	report, err := s.runCheck(ctx, publicInput, emit, checkRunOptions{
 		EnforceRateLimit:  false,
 		AllowPrivateHosts: true,
 		AccessMode:        AccessModeAccount,
 		BillingMode:       BillingModeAccountInternal,
 		BillingMultiplier: accountBillingMultiplier(account),
 	})
+	if err != nil {
+		return report, err
+	}
+	if s.repo != nil {
+		if saveErr := s.repo.SaveAccountCheckResult(ctx, AccountCheckRecord{
+			AccountID:  account.ID,
+			Provider:   publicInput.Provider,
+			Report:     report,
+			CapturedAt: s.now().UTC(),
+		}); saveErr != nil {
+			return report, saveErr
+		}
+	}
+	return report, nil
 }
 
 type checkRunOptions struct {

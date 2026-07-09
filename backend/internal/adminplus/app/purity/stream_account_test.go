@@ -232,7 +232,8 @@ func TestServiceRunAccountCheckStream_LoadsAccountCredentialAndEmitsProgress(t *
 	}))
 	defer server.Close()
 
-	service := NewServiceWithAccountResolver(nil, accountResolverStub{
+	repo := &capturingPurityRepository{}
+	service := NewServiceWithAccountResolver(repo, accountResolverStub{
 		account: &coreservice.Account{
 			ID:       42,
 			Platform: coreservice.PlatformOpenAI,
@@ -265,6 +266,11 @@ func TestServiceRunAccountCheckStream_LoadsAccountCredentialAndEmitsProgress(t *
 	require.Equal(t, PublicCheckEventReport, events[len(events)-1].Type)
 	require.Equal(t, CheckStatusPass, findValidation(t, report, "behavior").Status)
 	require.Equal(t, tokenAuditSamples, report.TokenAudit.SampleCount)
+	require.Len(t, repo.publicReports, 1)
+	require.Len(t, repo.accountChecks, 1)
+	require.Equal(t, int64(42), repo.accountChecks[0].AccountID)
+	require.Equal(t, ProviderOpenAI, repo.accountChecks[0].Provider)
+	require.Equal(t, report.ReportID, repo.accountChecks[0].Report.ReportID)
 }
 func eventTypes(events []PublicCheckEvent) []string {
 	out := make([]string, 0, len(events))
@@ -308,4 +314,19 @@ type accountResolverStub struct {
 
 func (s accountResolverStub) GetByID(context.Context, int64) (*coreservice.Account, error) {
 	return s.account, s.err
+}
+
+type capturingPurityRepository struct {
+	publicReports []PublicReportRecord
+	accountChecks []AccountCheckRecord
+}
+
+func (r *capturingPurityRepository) SavePublicReport(_ context.Context, record PublicReportRecord) error {
+	r.publicReports = append(r.publicReports, record)
+	return nil
+}
+
+func (r *capturingPurityRepository) SaveAccountCheckResult(_ context.Context, record AccountCheckRecord) error {
+	r.accountChecks = append(r.accountChecks, record)
+	return nil
 }

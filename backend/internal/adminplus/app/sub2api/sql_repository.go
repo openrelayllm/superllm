@@ -408,6 +408,8 @@ func (r *SQLRepository) ListLocalAccountOps(ctx context.Context, filter LocalAcc
 			END AS purity_status,
 			COALESCE(purity.result_snapshot->>'verdict', '') AS purity_verdict,
 			COALESCE(purity.result_snapshot->>'report_id', '') AS purity_report_id,
+			COALESCE(purity.run_id, '') AS purity_scheduler_run_id,
+			COALESCE(purity.id, 0) AS purity_scheduler_step_id,
 			COALESCE(purity.result_snapshot->>'model', '') AS purity_model,
 			CASE
 				WHEN COALESCE(purity.result_snapshot->>'score', '') ~ '^[0-9]+$'
@@ -2389,6 +2391,8 @@ func scanLocalAccountOpsRow(scanner interface{ Scan(dest ...any) error }) (*admi
 		&item.PurityStatus,
 		&item.PurityVerdict,
 		&item.PurityReportID,
+		&item.PuritySchedulerRunID,
+		&item.PuritySchedulerStepID,
 		&item.PurityModel,
 		&item.PurityScore,
 		&purityCheckedAt,
