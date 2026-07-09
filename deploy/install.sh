@@ -1405,7 +1405,7 @@ main() {
             echo ""
             print_success "$COMMAND_NAME ready: $COMMAND_PATH"
             echo "  $COMMAND_NAME upgrade"
-            echo "  $COMMAND_NAME upgrade -v v0.11.3"
+            echo "  $COMMAND_NAME upgrade -v vX.Y.Z"
             echo "  $COMMAND_NAME status"
             exit 0
             ;;
@@ -1432,10 +1432,10 @@ main() {
             echo ""
             echo "Examples:"
             echo "  $0                        # Install latest version"
-            echo "  $0 install -v v0.11.1     # Install specific version"
+            echo "  $0 install -v vX.Y.Z      # Install specific version"
             echo "  $0 upgrade                # Upgrade to latest"
-            echo "  $0 upgrade -v v0.11.1     # Upgrade to specific version"
-            echo "  $0 rollback v0.11.1       # Rollback to v0.11.1"
+            echo "  $0 upgrade -v vX.Y.Z      # Upgrade to specific version"
+            echo "  $0 rollback vX.Y.Z        # Rollback to vX.Y.Z"
             echo "  $0 list-versions          # List available versions"
             echo "  $0 install-command        # Install/refresh local sub2apiplus command only"
             echo ""

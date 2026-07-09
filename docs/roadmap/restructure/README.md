@@ -2,8 +2,10 @@
 
 版本：v0.1.0
 日期：2026-06-21
-状态：P0 已进入落地，P1/P2 继续执行
+状态：历史重构计划；当前 P1/P2 收口以 `docs/roadmap/supplier-architecture/09-phase-closure.md` 为准
 范围：重新梳理供应商、后端直登、Chrome 插件兜底、账号/Key、Provider Adapter、前后端页面和真实验收口径。
+
+> 当前口径更新：本文保留 2026-06 的重构梳理上下文，不再作为 P1/P2 当前收口状态事实源。供应商、账号、本地 Sub2API、路由补池、运营可视化和数据库关系以 [`../supplier-architecture/README.md`](../supplier-architecture/README.md) 为准；P1/P2 阶段关闭证据以 [`../supplier-architecture/09-phase-closure.md`](../supplier-architecture/09-phase-closure.md) 为准。
 
 ## 1. 目标
 
@@ -31,9 +33,11 @@
 
 | 文档 | 负责问题 | 处理方式 |
 |------|----------|----------|
+| `docs/roadmap/supplier-architecture/README.md` | 供应商、第三方分组、第三方 Key、本地账号、本地分组、调度补池、运营可视化和数据库关系 | 当前全局架构事实源 |
+| `docs/roadmap/supplier-architecture/09-phase-closure.md` | P1/P2 收口证据、发布前验收清单、P1.x/P2.x/P3 边界 | 当前阶段关闭事实源 |
 | `docs/sub2api-admin-plus-prd.md` | 产品目标、范围、用户故事、验收口径 | 保持高层，不继续塞过细实现 |
-| `docs/roadmap/accounts/README.md` | 供应商、分组、第三方 Key、本地账号绑定主流程 | 作为账号链路事实源 |
-| `docs/roadmap/accounts/ASYNC_PROVISIONING.md` | 账号开通、分组同步、真实 Sub2API 落地的异步任务、事件、队列和 UI/UX 治理 | 作为账号开通异步治理事实源 |
+| `docs/roadmap/accounts/README.md` | 供应商、分组、第三方 Key、本地账号绑定主流程 | 保留账号链路历史和专项上下文；与 supplier architecture 冲突时以后者为准 |
+| `docs/roadmap/accounts/ASYNC_PROVISIONING.md` | 账号开通、分组同步、真实 Sub2API 落地的异步任务、事件、队列和 UI/UX 治理 | 保留账号开通异步治理专项事实；真实 E2E 待收口不等于 P1/P2 全局阻塞 |
 | `docs/roadmap/scheduler/README.md` | 供应商采集、对账、会话、渠道检测、本地调度联动和异常处理的自动化 | 作为调度中心和供应商运营自动化事实源 |
 | `docs/roadmap/Chrome/README.md` | 插件兜底职责、会话包、插件状态机、安全边界 | 作为插件契约事实源 |
 | `docs/code-structure.md` | 代码目录、模块边界、开发顺序 | 后续按本计划更新 |

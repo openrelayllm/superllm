@@ -5,6 +5,8 @@
 状态：部分实施，持续迭代
 范围：供应商运营自动化调度中心、采集计划、运行审计、供应商自动化矩阵、智能动作、全局设置、异步 Worker 与 Provider Adapter 编排。
 
+> 当前口径更新：本文仍是调度中心专项 PRD。P1/P2 全局收口状态以 [`../supplier-architecture/09-phase-closure.md`](../supplier-architecture/09-phase-closure.md) 为准；本文中的 Redis Stream 唤醒、计划编辑向导等待办属于调度底座增强，不阻塞 P1 主线和 P2 第一阶段收口。本地容量巡检 `local.sub2api.routing.capacity_watch` 已接入 scheduler worker：默认只生成/同步 `routing_refill/local_account_schedule_disable` 动作建议，运营开启自动补池后才对空池分组执行真实补池。
+
 ## 目录
 
 1. 背景
@@ -80,7 +82,9 @@
 - 已新增 DB claim Worker、step lease、attempt 记录、run 取消、step 取消和失败 step 重新入队能力；Redis Stream 唤醒仍作为后续增强，当前 Worker 依赖 DB polling 推进。
 - 已新增供应商 Checklist 弹窗，按现有供应商事实展示基础信息、URL、会话、余额、充值倍率、充值入口、分组、倍率、账务、渠道检测和本地调度状态。
 - 已新增通知中心入口 `/admin/scheduler/notifications`，支持飞书配置、显式清除通道配置、测试诊断、业务规则、防打扰、投递记录、失败投递重试和抑制记录审计；余额、健康、费率、公告、对账异常和系统测试事件均已接入。
-- 未完成项：计划编辑向导持久保存、Redis Stream 唤醒。
+- 已新增本地容量巡检默认暂停计划 `local.sub2api.routing.capacity_watch`，可扫描有用户 Key 但可调度账号不足的本地分组，生成或复用 `routing_refill/local_account_schedule_disable` 持久动作建议；自动补池开关默认关闭，开启后只对空池分组执行真实补池。
+- 已支持调度 run/step 详情深链到对应动作建议；从调度详情执行的本地路由类动作会把 `scheduler_run_id/scheduler_step_id` 写入 `admin_plus_action_executions`，执行历史可反跳回调度运行详情。
+- 未完成项：计划编辑向导持久保存、调度底座 Redis Stream 唤醒。这些属于 scheduler P1.x/P2.x 增强，不阻塞当前 P1/P2 收口。
 
 ## 3. 目标与收益
 
@@ -1350,7 +1354,7 @@ pnpm --dir frontend build
 - P1.1 已新增 run/step/action/settings 表，并将手动 run 摘要迁移到 Postgres run/step 事实源。
 - P1.2 已新增 plan/attempt 表。
 - P1.3 已新增 DB claim Worker、lease 和 attempt 记录；Redis Stream 唤醒进入 P1.4。
-- P1.4 待新增 Redis Stream 唤醒，保持 DB 事实源和 polling 兜底。
+- P1.4 待新增调度底座 Redis Stream 唤醒，保持 DB 事实源和 polling 兜底；该增强不改变 P1/P2 全局收口结论。
 
 ### P2：普通只读任务接入
 

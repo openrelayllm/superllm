@@ -19,7 +19,7 @@
         </div>
       </section>
 
-      <section class="grid gap-4 md:grid-cols-5">
+      <section class="grid gap-4 md:grid-cols-6">
         <div class="card p-4">
           <p class="text-xs font-medium text-gray-500 dark:text-dark-400">开放建议</p>
           <p class="mt-2 text-2xl font-semibold text-amber-600 dark:text-amber-400">{{ openCount }}</p>
@@ -27,6 +27,10 @@
         <div class="card p-4">
           <p class="text-xs font-medium text-gray-500 dark:text-dark-400">严重</p>
           <p class="mt-2 text-2xl font-semibold text-rose-600 dark:text-rose-400">{{ criticalCount }}</p>
+        </div>
+        <div class="card p-4">
+          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">超时未处理</p>
+          <p class="mt-2 text-2xl font-semibold" :class="overdueCount > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'">{{ overdueCount }}</p>
         </div>
         <div class="card p-4">
           <p class="text-xs font-medium text-gray-500 dark:text-dark-400">可切换供应商</p>
@@ -151,6 +155,8 @@
                   <span class="badge badge-gray">{{ item.type }}</span>
                   <span class="badge" :class="statusClass(item.status)">{{ item.status }}</span>
                   <span v-if="item.requires_approval" class="badge badge-warning">需审批</span>
+                  <span v-if="actionIsOverdue(item)" class="badge badge-danger">{{ actionAgeLabel(item) }}未处理</span>
+                  <span v-else-if="actionIsPending(item)" class="badge badge-gray">已等待 {{ actionAgeLabel(item) }}</span>
                 </div>
                 <h3 class="mt-3 font-medium text-gray-900 dark:text-white">{{ item.title }}</h3>
                 <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ item.description }}</p>
@@ -404,7 +410,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -491,6 +497,14 @@ const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total:
 const expandedExecutionID = ref<number | null>(null)
 const retryingExecutionIDs = ref<Set<number>>(new Set())
 const rollingBackExecutionIDs = ref<Set<number>>(new Set())
+const nowMs = ref(Date.now())
+let overdueTimer: ReturnType<typeof window.setInterval> | undefined
+
+const overdueThresholds: Record<ActionRecommendation['severity'], number> = {
+  critical: 2 * 60 * 60 * 1000,
+  warning: 12 * 60 * 60 * 1000,
+  info: 24 * 60 * 60 * 1000
+}
 
 interface ExecutionListState {
   items: ActionExecution[]
@@ -554,6 +568,7 @@ const supplierKeyPlanReasonCodes = new Set([
 
 const openCount = computed(() => recommendations.value.filter((item) => item.status === 'open').length)
 const criticalCount = computed(() => recommendations.value.filter((item) => item.severity === 'critical' && item.status === 'open').length)
+const overdueCount = computed(() => recommendations.value.filter(actionIsOverdue).length)
 const switchableCount = computed(() => suppliers.value.filter((supplier) =>
   ['active', 'candidate'].includes(supplier.runtime_status) && supplier.health_status === 'normal' && supplier.balance_cents > 0
 ).length)
@@ -594,6 +609,33 @@ function statusClass(status: ActionRecommendation['status']): string {
   if (['approved', 'executed', 'acknowledged'].includes(status)) return 'badge-success'
   if (status === 'rejected') return 'badge-danger'
   return 'badge-gray'
+}
+
+function actionIsPending(item: ActionRecommendation): boolean {
+  return ['open', 'acknowledged', 'approved'].includes(item.status)
+}
+
+function actionAgeMs(item: ActionRecommendation): number {
+  const created = new Date(item.created_at).getTime()
+  if (!Number.isFinite(created)) return 0
+  return Math.max(0, nowMs.value - created)
+}
+
+function actionIsOverdue(item: ActionRecommendation): boolean {
+  if (!actionIsPending(item)) return false
+  return actionAgeMs(item) >= overdueThresholds[item.severity]
+}
+
+function actionAgeLabel(item: ActionRecommendation): string {
+  const minutes = Math.floor(actionAgeMs(item) / 60000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟`
+  const hours = Math.floor(minutes / 60)
+  const restMinutes = minutes % 60
+  if (hours < 24) return restMinutes > 0 ? `${hours} 小时 ${restMinutes} 分钟` : `${hours} 小时`
+  const days = Math.floor(hours / 24)
+  const restHours = hours % 24
+  return restHours > 0 ? `${days} 天 ${restHours} 小时` : `${days} 天`
 }
 
 function executionLabel(status: ActionExecution['status']): string {
@@ -1730,5 +1772,17 @@ function formatDateTime(value?: string | null): string {
   return date.toLocaleString('zh-CN', { hour12: false })
 }
 
-onMounted(loadPage)
+onMounted(() => {
+  void loadPage()
+  overdueTimer = window.setInterval(() => {
+    nowMs.value = Date.now()
+  }, 60_000)
+})
+
+onUnmounted(() => {
+  if (overdueTimer !== undefined) {
+    window.clearInterval(overdueTimer)
+    overdueTimer = undefined
+  }
+})
 </script>

@@ -226,7 +226,7 @@
                 </button>
               </div>
 
-              <!-- Priority 3: Update available for source build - show git pull hint -->
+              <!-- Priority 3: Update available without binary self-update -->
               <div v-else-if="hasUpdate && !isReleaseBuild" class="space-y-2">
                 <a
                   v-if="releaseInfo?.html_url && releaseInfo.html_url !== '#'"
@@ -263,7 +263,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
                   </svg>
                 </a>
-                <!-- Source build hint -->
+                <!-- Manual update hint -->
                 <div
                   class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
                 >
@@ -281,7 +281,7 @@
                     />
                   </svg>
                   <p class="text-xs text-blue-600 dark:text-blue-400">
-                    {{ t('version.sourceModeHint') }}
+                    {{ isContainerBuild ? t('version.containerModeHint') : t('version.sourceModeHint') }}
                   </p>
                 </div>
               </div>
@@ -417,8 +417,9 @@ const updateError = ref('')
 const updateSuccess = ref(false)
 const restartCountdown = ref(0)
 
-// Only show update check for release builds (binary/docker deployment)
+// Only binary release builds support in-place self-update. Containers use image pulls.
 const isReleaseBuild = computed(() => buildType.value === 'release')
+const isContainerBuild = computed(() => buildType.value === 'container')
 
 function toggleDropdown() {
   dropdownOpen.value = !dropdownOpen.value

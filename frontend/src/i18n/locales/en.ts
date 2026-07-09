@@ -5903,6 +5903,7 @@ export default {
     refresh: 'Refresh',
     sourceMode: 'Source Build',
     sourceModeHint: 'Source build, use git pull to update',
+    containerModeHint: 'Container deployment, pull the new image and restart Compose or the platform service',
     updateNow: 'Update Now',
     updating: 'Updating...',
     updateComplete: 'Update Complete',

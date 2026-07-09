@@ -67,8 +67,8 @@ Service operations:
 
 Examples:
   sub2apiplus upgrade
-  sub2apiplus upgrade -v v0.11.3
-  sub2apiplus rollback v0.11.3
+  sub2apiplus upgrade -v vX.Y.Z
+  sub2apiplus rollback vX.Y.Z
   sub2apiplus logs -n 200
 EOF
 }

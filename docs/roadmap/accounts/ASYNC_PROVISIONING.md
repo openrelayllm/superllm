@@ -5,6 +5,8 @@
 状态：第一阶段已落地；Postgres 任务事实源 + Redis Stream consumer group 唤醒 + DB claim Worker + 可配置 Sub2API Gateway HTTP Adapter + UI 轮询 + `provision_all_group_keys` 每分组 step 已接入，真实 E2E 仍待收口
 范围：供应商分组同步、第三方 Key 创建、真实 Sub2API 账号落地、Admin Plus 绑定投影、余额/费率/健康初次采集。
 
+> 当前口径更新：本文是账号开通异步治理专项文档。真实供应商/真实 Sub2API 环境 E2E 仍是专项风险，不改变 [`../supplier-architecture/09-phase-closure.md`](../supplier-architecture/09-phase-closure.md) 中 P1 主线和 P2 第一阶段的收口结论；全局供应商、账号、本地调度和导入导出关系以 [`../supplier-architecture/README.md`](../supplier-architecture/README.md) 和 [`../supplier-architecture/08-database-design.md`](../supplier-architecture/08-database-design.md) 为准。
+
 ## 1. 背景与结论
 
 供应商账号开通不能继续做成请求线程内的同步长链路。这个链路同时跨越第三方供应商、Admin Plus 数据库、真实 Sub2API Admin API、Redis 缓存和前端状态展示，任何一步失败都会造成重复 Key、半绑定账号、页面误判或真实网关不可见。

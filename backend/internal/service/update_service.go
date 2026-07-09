@@ -22,13 +22,15 @@ import (
 )
 
 var (
-	ErrNoUpdateAvailable = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
+	ErrNoUpdateAvailable          = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
+	ErrContainerUpdateUnsupported = infraerrors.Conflict("CONTAINER_UPDATE_UNSUPPORTED", "container deployments must be updated by pulling a new image")
 )
 
 const (
 	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	githubRepo     = "Wei-Shaw/sub2api"
+	githubRepo     = "openrelayllm/sub2api-admin-plus"
+	projectName    = "sub2api-admin-plus"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
@@ -77,7 +79,7 @@ type UpdateInfo struct {
 	ReleaseInfo    *ReleaseInfo `json:"release_info,omitempty"`
 	Cached         bool         `json:"cached"`
 	Warning        string       `json:"warning,omitempty"`
-	BuildType      string       `json:"build_type"` // "source" or "release"
+	BuildType      string       `json:"build_type"` // "source", "release", or "container"
 }
 
 // ReleaseInfo contains GitHub release details
@@ -134,7 +136,7 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 			LatestVersion:  s.currentVersion,
 			HasUpdate:      false,
 			Warning:        err.Error(),
-			BuildType:      s.buildType,
+			BuildType:      s.effectiveBuildType(),
 		}, nil
 	}
 
@@ -146,6 +148,10 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 // PerformUpdate downloads and applies the update
 // Uses atomic file replacement pattern for safe in-place updates
 func (s *UpdateService) PerformUpdate(ctx context.Context) error {
+	if s.isContainerDeployment() {
+		return ErrContainerUpdateUnsupported
+	}
+
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
 		return err
@@ -156,12 +162,12 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 	}
 
 	// Find matching archive and checksum for current platform
-	archiveName := s.getArchiveName()
+	archiveName := s.getArchiveName(info.LatestVersion)
 	var downloadURL string
 	var checksumURL string
 
 	for _, asset := range info.ReleaseInfo.Assets {
-		if strings.Contains(asset.Name, archiveName) && !strings.HasSuffix(asset.Name, ".txt") {
+		if asset.Name == archiveName {
 			downloadURL = asset.DownloadURL
 		}
 		if asset.Name == "checksums.txt" {
@@ -197,7 +203,7 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 
 	// Create temp directory in the SAME directory as executable
 	// This ensures os.Rename is atomic (same filesystem)
-	tempDir, err := os.MkdirTemp(exeDir, ".sub2api-update-*")
+	tempDir, err := os.MkdirTemp(exeDir, ".sub2api-admin-plus-update-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
@@ -296,7 +302,7 @@ func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, er
 		}
 	}
 
-	return &UpdateInfo{
+	info := &UpdateInfo{
 		CurrentVersion: s.currentVersion,
 		LatestVersion:  latestVersion,
 		HasUpdate:      compareVersions(s.currentVersion, latestVersion) < 0,
@@ -308,18 +314,61 @@ func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, er
 			Assets:      assets,
 		},
 		Cached:    false,
-		BuildType: s.buildType,
-	}, nil
+		BuildType: s.effectiveBuildType(),
+	}
+	if info.HasUpdate && s.isContainerDeployment() {
+		info.Warning = "Container deployment detected. Pull the new image and restart the stack instead of using binary self-update."
+	}
+	return info, nil
 }
 
 func (s *UpdateService) downloadFile(ctx context.Context, downloadURL, dest string) error {
 	return s.githubClient.DownloadFile(ctx, downloadURL, dest, maxDownloadSize)
 }
 
-func (s *UpdateService) getArchiveName() string {
+func (s *UpdateService) getArchiveName(version string) string {
+	version = strings.TrimPrefix(version, "v")
 	osName := runtime.GOOS
 	arch := runtime.GOARCH
-	return fmt.Sprintf("%s_%s", osName, arch)
+	return fmt.Sprintf("%s_%s_%s_%s.tar.gz", projectName, version, osName, arch)
+}
+
+func (s *UpdateService) effectiveBuildType() string {
+	if s.isContainerDeployment() {
+		return "container"
+	}
+	return s.buildType
+}
+
+func (s *UpdateService) isContainerDeployment() bool {
+	if os.Getenv("SUB2API_ADMIN_PLUS_BINARY_SELF_UPDATE") == "true" {
+		return false
+	}
+	for _, key := range []string{
+		"KUBERNETES_SERVICE_HOST",
+		"RAILWAY_ENVIRONMENT",
+		"RAILWAY_PROJECT_ID",
+		"RAILWAY_SERVICE_ID",
+	} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return true
+		}
+	}
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/run/.containerenv"); err == nil {
+		return true
+	}
+	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+		cgroup := string(data)
+		for _, marker := range []string{"docker", "kubepods", "containerd", "libpod", "podman"} {
+			if strings.Contains(cgroup, marker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // validateDownloadURL checks if the URL is from an allowed domain
@@ -431,7 +480,7 @@ func (s *UpdateService) extractBinary(archivePath, destPath string) error {
 			}
 
 			// Only extract the specific binary we need
-			if baseName == "sub2api" || baseName == "sub2api.exe" {
+			if baseName == "sub2api" || baseName == "sub2api-admin-plus" || baseName == "sub2api.exe" {
 				// Additional security: limit file size (max 500MB)
 				const maxBinarySize = 500 * 1024 * 1024
 				if hdr.Size > maxBinarySize {
@@ -492,14 +541,18 @@ func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {
 		return nil, fmt.Errorf("cache expired")
 	}
 
-	return &UpdateInfo{
+	info := &UpdateInfo{
 		CurrentVersion: s.currentVersion,
 		LatestVersion:  cached.Latest,
 		HasUpdate:      compareVersions(s.currentVersion, cached.Latest) < 0,
 		ReleaseInfo:    cached.ReleaseInfo,
 		Cached:         true,
-		BuildType:      s.buildType,
-	}, nil
+		BuildType:      s.effectiveBuildType(),
+	}
+	if info.HasUpdate && s.isContainerDeployment() {
+		info.Warning = "Container deployment detected. Pull the new image and restart the stack instead of using binary self-update."
+	}
+	return info, nil
 }
 
 func (s *UpdateService) saveToCache(ctx context.Context, info *UpdateInfo) {

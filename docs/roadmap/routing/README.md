@@ -1,8 +1,8 @@
 # Sub2API 网关调度耗尽与最低倍率补池方案
 
 版本：v0.3.0
-日期：2026-07-08
-状态：路由补池专题详设；MVP 本地端口、手动补池、运行记录、同组锁和 3 分钟冷却已落地，自动执行器待实施
+日期：2026-07-09
+状态：路由补池专题说明；P1 本地端口、手动补池、运行记录、同组锁、冷却、调度 worker、动作建议执行历史、失败重试和成功回滚已落地；P3 外部事件和多实例不实施
 范围：只保留本地 Sub2API 分组耗尽后的补池触发、端口、算法、写回、坏账号关闭、测试和验收。供应商、账号、分组、数据库、运营页面的全局事实源统一放在 `supplier-architecture`。
 
 相关架构文档：
@@ -10,6 +10,7 @@
 - [../supplier-architecture/README.md](../supplier-architecture/README.md)：供应商管理、第三方令牌分组、本地账号和补池的全局关系。
 - [../supplier-architecture/04-local-binding-routing.md](../supplier-architecture/04-local-binding-routing.md)：本地绑定、账号管理与路由补池边界。
 - [../supplier-architecture/08-database-design.md](../supplier-architecture/08-database-design.md)：补池、drift、本地账号运营镜像和导入导出的数据库事实源。
+- [../supplier-architecture/09-phase-closure.md](../supplier-architecture/09-phase-closure.md)：P1/P2 收口基线、发布前验收清单和 P3 不实施边界。
 
 ## 1. 文件定位
 
@@ -247,9 +248,9 @@ flowchart TD
     I --> J[记录原因和恢复入口]
 ```
 
-## 6. MVP：Admin Plus 零侵入巡检方案
+## 6. 已落地方案：Admin Plus 零侵入巡检
 
-MVP 不修改 Sub2API 网关代码，也不新增 Sub2API API。新增代码只落在 Admin Plus 侧，通过端口适配复用现有能力完成闭环。
+当前实现不修改 Sub2API 网关代码，也不新增 Sub2API API。新增代码只落在 Admin Plus 侧，通过端口适配复用现有能力完成闭环。
 
 ### 6.1 数据来源
 
@@ -289,19 +290,20 @@ GET /api/v1/admin/ops/account-availability?group_id={group_id}&platform={platfor
 
 ### 6.2 巡检策略
 
-建议新增调度任务：
+当前调度任务：
 
 ```text
 local.sub2api.routing.capacity_watch
 ```
 
-默认策略：
+当前策略口径：
 
-- 间隔：30 秒到 60 秒。
-- 作用域：只监控已开启“自动补池”的目标分组。
-- 超时：每个 Sub2API 实例 5 秒。
-- 并发：按 Sub2API 实例限流。
-- 去抖：同一 `{instance, group_id, platform, model_scope}` 3 分钟内只触发一次补池。
+- 自动补池开关默认关闭；关闭时只生成动作建议，不真实写回本地分组。
+- 开启后只对有启用用户 API Key 且 `schedulable_accounts=0` 的空池分组执行真实补池。
+- 低容量阈值用于容量矩阵和 `local_group.routing.low_capacity` 动作建议。
+- 同一 `local_group_id` 的真实补池写入使用 PostgreSQL advisory lock 做跨进程互斥。
+- 真实补池 apply 读取同一 `local_group_id` 最近成功运行记录，默认 3 分钟内返回 `refill_cooldown`；dry-run 不受冷却影响。
+- 确认窗口大于 0 时，真实补池 apply 必须在同分组最近 preview 后执行。
 
 触发条件：
 
@@ -318,7 +320,7 @@ available_count <= min_available_threshold
 
 例如低于 1 个可用账号时提前补池。
 
-### 6.3 MVP 优点
+### 6.3 方案优点
 
 - 不需要改 Sub2API。
 - 不需要维护私有 Sub2API patch，Sub2API 升级风险低。
@@ -327,7 +329,7 @@ available_count <= min_available_threshold
 - 失败不会影响网关请求热路径。
 - 可以先在 Admin Plus 调度中心实现审计、重试和手动确认。
 
-### 6.4 MVP 缺点
+### 6.4 方案缺点
 
 - 不是请求级实时触发。
 - 不知道触发请求的具体模型，只能按分组/平台补池。
@@ -340,7 +342,7 @@ available_count <= min_available_threshold
 
 ### 7.1 信号来源
 
-| 来源 | 说明 | 是否修改 Sub2API | MVP 使用 |
+| 来源 | 说明 | 是否修改 Sub2API | 当前使用 |
 |------|------|------------------|----------|
 | `capacity_watch` | Admin Plus 定时读取分组可用性，发现 `available_count == 0` | 否 | 是 |
 | `manual` | 运营在页面手动评估或执行补池 | 否 | 是 |
@@ -576,18 +578,17 @@ MVP 本地写回流程：
 
 ### 9.3 当前实现状态
 
-当前阶段只生成动作建议，不自动关闭调度：
+当前阶段默认只生成动作建议，不自动静默关闭调度；运营审批后可在动作建议页执行关闭调度：
 
-- 动作类型：`local_account.schedule.disable`。
+- 动作类型：`local_account_schedule_disable`。
 - 触发来源：调度中心读取本地账号运营镜像后的 `CandidateEvaluator` 结果。
 - 触发条件：本地账号仍 `schedulable=true`、已绑定至少一个本地分组、候选评估为 `blocked`，且 `blocked_reason` 为 `channel_monitor_failed` 或 `channel_active_probe_failed`。
 - 排除条件：余额不足、Key 配额不足、未开通 Key、drift、已关调度、未绑定本地分组。
-- 操作方式：今日工作台或智能动作跳转本地账号运营页，并带账号 ID 查询；真正关闭调度仍需运营在本地账号运营页 preview/apply。
-- 上游 5xx 瞬时错误。
-- 供应商余额不足但仍是低倍率优质渠道。
-- Admin Plus 无法确认已有替代账号。
+- 操作方式：今日工作台或调度运行详情进入动作建议页；审批后的执行复用本地账号运营 `preview/apply`，写入 `admin_plus_action_executions`。
+- 安全边界：上游 5xx 瞬时错误、供应商余额不足但仍是低倍率优质渠道、无法确认已有替代账号时，不应自动关闭。
+- 审计能力：失败执行可安全重试，成功执行可安全回滚；执行历史保留幂等指纹、前后快照和调度 run/step 来源。
 
-### 9.3 关闭动作
+### 9.4 关闭动作
 
 本地同进程调用：
 
@@ -672,6 +673,8 @@ Admin Plus 内部 API：
 
 ### 阶段 1：MVP 本地端口巡检补池
 
+状态：已落地，作为 P1 收口内容。
+
 目标：不改 Sub2API，先让业务跑起来。
 
 任务：
@@ -696,6 +699,8 @@ Admin Plus 内部 API：
 
 ### 阶段 2：坏账号关闭调度
 
+状态：第一阶段已落地。当前默认生成动作建议；运营审批后执行 `local_account_schedule_disable`，并进入统一 action execution。静默自动关闭仍不作为默认行为。
+
 目标：在补池成功后，按策略关闭坏倍率账号调度。
 
 任务：
@@ -713,6 +718,8 @@ Admin Plus 内部 API：
 - 人工可以恢复调度。
 
 ### 阶段 3：外部事件适配与远程端口
+
+状态：远程写回第一阶段已落地；外部事件和多实例属于 P3，本轮不实施。
 
 目标：不修改 Sub2API 的前提下，支持远程 Sub2API 和未来 upstream 原生事件。
 
@@ -732,6 +739,8 @@ Admin Plus 内部 API：
 - 任何外部事件都不会要求维护私有 Sub2API patch。
 
 ### 阶段 4：模型级与成本优化
+
+状态：P2 第一阶段已落地。模型级候选、纯度检测联动、代理联动、实测预算/冷却和利润缺口已进入当前闭环；完整财务汇总和细粒度成本归集进入 P2.x。
 
 目标：按模型/协议精确补池，降低误补。
 
@@ -813,9 +822,13 @@ MVP 完成标准：
 5. Admin Plus 有补池运行记录和失败原因。
 6. 默认不自动关闭坏账号调度，只生成动作建议。
 
+当前状态：MVP 已完成，P1 可关闭；自动校验和发布前验收清单见 [../supplier-architecture/09-phase-closure.md](../supplier-architecture/09-phase-closure.md)。
+
 v1 完成标准：
 
 1. Admin Plus 支持远程 Sub2API 的现有 Admin/Ops API 端口。
 2. Admin Plus 能消费可选外部事件并幂等触发补池评估。
 3. 巡检作为外部事件兜底保留。
 4. 可按策略自动关闭坏账号调度。
+
+当前状态：远程写回第一阶段已完成；外部事件、多实例和静默自动关调度不进入本轮 P1/P2 收口。
