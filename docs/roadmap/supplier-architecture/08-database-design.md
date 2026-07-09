@@ -12,7 +12,7 @@
 3. Admin Plus 核心链路必须能从 `admin_plus_suppliers` 追到 `admin_plus_supplier_groups`、`admin_plus_supplier_keys`、`admin_plus_supplier_accounts`、本地 `accounts`、本地 `groups` 和用户 `api_keys`。
 4. 运行历史、检测快照、通知投递、插件任务、调度 run/step/attempt 不属于核心迁移数据；换服务器时默认不导出或只归档。
 5. 第三方 Key 明文、浏览器会话密文、邮箱凭据、代理订阅等敏感数据必须单独标记，不进入普通导出。
-6. 本地账号状态基线、drift 事件、供应商级 Key 配额字段、分组级 Key 配额字段、批量开通计划、计划优先级覆盖、Provider `ListKeys/ReadKeyCapacity` 第一阶段、第三方未绑定 Key 脱敏投影导入、`manual_secret_required` 手动补密钥修复绑定、余额机会队列、余额恢复通知/复检建议、充值/兑换账单对账异常动作建议、对账差额人工调整闭环、账单明细级修复第一阶段、路由补池运行、模型级候选第一阶段、纯度检测联动、7 天过期策略、动作建议复检深链、复检事实源刷新、历史报告深链、按当前页模型/能力标签圈选和受控批量复检队列、代理联动第一阶段、通知矩阵第一阶段、渠道检测实测预算/冷却第一阶段、动作建议路径下的补池/关调度执行历史、普通本地账号手工写执行历史、动作执行到调度 run/step 的反向来源、动作执行幂等指纹、replay 回填和前后快照，以及本地路由类失败执行安全重试和成功执行回滚已经落地；真实最大 Key 上限自动读取、成本利润看板细化、通知升级策略、代理中心深度质量联动、纯度检测跨页/后台批量复检策略、按模型预算归集、账单明细自动定位和批量导入、非本地路由类动作回滚仍是后续增强能力。
+6. 本地账号状态基线、drift 事件、供应商级 Key 配额字段、分组级 Key 配额字段、批量开通计划、计划优先级覆盖、Provider `ListKeys/ReadKeyCapacity` 第一阶段、第三方未绑定 Key 脱敏投影导入、`manual_secret_required` 手动补密钥修复绑定、余额机会队列、余额恢复通知/复检建议、充值/兑换账单对账异常动作建议、对账差额人工调整闭环、账单明细级修复第一阶段、路由补池运行、模型级候选第一阶段、纯度检测联动、7 天过期策略、动作建议复检深链、复检事实源刷新、历史报告深链、按当前页模型/能力标签圈选和受控批量复检队列、代理联动第一阶段、通知矩阵第一阶段、渠道检测实测预算/冷却第一阶段、接入验收步骤矩阵、模型利润目标毛利缺口和建议价偏离、动作建议路径下的补池/关调度执行历史、普通本地账号手工写执行历史、动作执行到调度 run/step 的反向来源、动作执行幂等指纹、replay 回填和前后快照，以及本地路由类失败执行安全重试和成功执行回滚已经落地；真实最大 Key 上限自动读取、通知升级策略、代理中心深度质量联动、纯度检测跨页/后台批量复检策略、按模型预算归集、完整财务汇总、账单明细自动定位和批量导入、非本地路由类动作回滚仍是后续增强能力。
 7. 当前同库部署下，本地账号运营动作层已在 Admin Plus 内事务写 `accounts/account_groups` 并补写 `scheduler_outbox`；P1 第一阶段已从 service 层收口为 `Sub2APIRoutingPort`，并提供分组可用性、账号快照、加入分组和开关调度语义化方法。远程写回第一阶段已通过 `RemoteAdminAPIRoutingPort` 调用现有 Sub2API Admin API，不新增 Admin Plus 表；多实例仍沿同一写回边界扩展。
 
 ## 2. 表域划分
@@ -1075,7 +1075,9 @@ flowchart TD
 | P2 | 已接入代理联动第一阶段 | 复用 Sub2API `accounts.proxy_id -> proxies`，不新增表；明确代理 deleted/disabled/expired/error 输出 `check_source=proxy` 和代理类阻断原因，无代理或 unknown 不阻断 |
 | P2 | 已接入通知矩阵第一阶段 | 复用 `admin_plus_action_recommendations`、`admin_plus_notification_settings` 和 `admin_plus_notification_deliveries`，不新增表；动作建议按余额、Key 配额、分组容量、drift/本地状态、通道失败、代理、纯度、成本和利润风险映射为 `action.*` 通知事件 |
 | P2 | 已接入渠道检测实测预算/冷却第一阶段 | 复用 `admin_plus_supplier_channel_check_snapshots` 估算当天主动实测消耗和同分组冷却，不新增表；调度设置新增 `channel_check_probe_cooldown_seconds` JSON 字段 |
-| P2.x | 成本利润细化、通知升级策略、代理中心深度质量联动、纯度检测跨页/后台批量复检策略、按模型预算归集、细粒度实测预算字段 | 后续增强，用于支撑模型级运营质量和利润判断；不阻断当前 P1/P2 收口 |
+| P2 | 已接入接入验收步骤矩阵第一阶段 | 复用 `admin_plus_kanban_acceptance_reports`，由 `KanbanOverview.acceptance_step_summaries` 按连通性、模型列表、纯度、轻量调用、Usage 计量、缓存审计、余额账单和并发限速派生通过/警告/失败/未知计数，不新增表 |
+| P2 | 已接入模型利润目标毛利缺口和建议价偏离第一阶段 | 复用 `admin_plus_kanban_market_price_snapshots`、`admin_plus_usage_cost_lines` 派生成本、缓存成本和市场中位价，不新增表；`KanbanModelMarginRow` 返回 `required_margin_percent/margin_gap_percent/suggested_vs_market_percent` |
+| P2.x | 通知升级策略、代理中心深度质量联动、纯度检测跨页/后台批量复检策略、按模型预算归集、完整财务汇总、细粒度实测预算字段 | 后续增强，用于支撑模型级运营质量和利润判断；不阻断当前 P1/P2 收口 |
 | P3 | `sub2api_instance_id` 维度 | 本轮不实施多 Sub2API 实例 |
 
 ## 13. 相关文档

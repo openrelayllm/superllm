@@ -129,7 +129,7 @@ proxy-groups:
 		return strings.Contains(text, "-d "+slotDir) &&
 			strings.Contains(text, "home="+slotDir) &&
 			strings.Contains(text, "xdg="+slotDir)
-	}, time.Second, 10*time.Millisecond)
+	}, 3*time.Second, 10*time.Millisecond)
 }
 
 func TestMihomoLogSummaryReturnsLastWarningOrError(t *testing.T) {

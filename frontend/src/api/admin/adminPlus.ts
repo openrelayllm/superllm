@@ -2029,6 +2029,9 @@ export interface KanbanModelMarginRow {
   acceptance_status?: SupplyQualityDecision | string
   suggested_price_micros?: number | null
   gross_margin_percent?: number | null
+  required_margin_percent: number
+  margin_gap_percent?: number | null
+  suggested_vs_market_percent?: number | null
   risk_level: KanbanRiskLevel | string
   recommendation: string
   latest_market_observed_at?: string | null
@@ -2054,6 +2057,16 @@ export interface KanbanEvent {
   created_at: string
 }
 
+export interface AcceptanceStepSummary {
+  step: string
+  total_count: number
+  pass_count: number
+  warn_count: number
+  fail_count: number
+  unknown_count: number
+  risk_level: KanbanRiskLevel | string
+}
+
 export interface KanbanOverview {
   generated_at: string
   market_snapshot_count: number
@@ -2073,6 +2086,7 @@ export interface KanbanOverview {
   recent_cache_snapshots: CacheEfficiencySnapshot[]
   recent_quality_snapshots: SupplyQualitySnapshot[]
   recent_acceptance_reports: AcceptanceReport[]
+  acceptance_step_summaries: AcceptanceStepSummary[]
 }
 
 export type CreateMarketPricePayload = Omit<MarketPriceSnapshot, 'id' | 'created_at' | 'observed_at' | 'confidence'> & {

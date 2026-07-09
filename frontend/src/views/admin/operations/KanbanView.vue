@@ -126,8 +126,18 @@
                 </td>
                 <td class="px-4 py-4 text-right text-sm text-gray-900 dark:text-gray-100">{{ formatMicros(row.best_supplier_cost_micros, row.currency) }}</td>
                 <td class="px-4 py-4 text-right text-sm font-medium text-gray-900 dark:text-gray-100">{{ formatMicros(row.cache_adjusted_cost_micros, row.currency) }}</td>
-                <td class="px-4 py-4 text-right text-sm font-semibold text-primary-700 dark:text-primary-300">{{ formatMicros(row.suggested_price_micros, row.currency) }}</td>
-                <td class="px-4 py-4 text-right text-sm font-medium" :class="marginClass(row.gross_margin_percent)">{{ formatPercent(row.gross_margin_percent) }}</td>
+                <td class="px-4 py-4 text-right text-sm">
+                  <div class="font-semibold text-primary-700 dark:text-primary-300">{{ formatMicros(row.suggested_price_micros, row.currency) }}</div>
+                  <div v-if="row.suggested_vs_market_percent !== undefined && row.suggested_vs_market_percent !== null" class="mt-1 text-xs" :class="suggestedVsMarketClass(row.suggested_vs_market_percent)">
+                    较市场 {{ formatSignedPercent(row.suggested_vs_market_percent) }}
+                  </div>
+                </td>
+                <td class="px-4 py-4 text-right text-sm">
+                  <div class="font-medium" :class="marginClass(row.gross_margin_percent)">{{ formatPercent(row.gross_margin_percent) }}</div>
+                  <div v-if="row.margin_gap_percent !== undefined && row.margin_gap_percent !== null" class="mt-1 text-xs" :class="marginGapClass(row.margin_gap_percent)">
+                    目标 {{ formatPercent(row.required_margin_percent) }} · 差额 {{ formatSignedPercent(row.margin_gap_percent) }}
+                  </div>
+                </td>
                 <td class="px-4 py-4">
                   <span class="badge" :class="cacheStatusClass(row.cache_status)">{{ cacheStatusLabel(row.cache_status) }}</span>
                   <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">命中 {{ formatPercentFraction(row.cache_hit_ratio) }}</div>
@@ -684,6 +694,40 @@
         <RecentSnapshotTable v-if="currentSection === 'market-prices'" title="最近市场价" :items="overview?.recent_market_snapshots || []" type="market" />
         <RecentSnapshotTable v-if="currentSection === 'supply-quality'" title="最近缓存审计" :items="overview?.recent_cache_snapshots || []" type="cache" />
         <RecentSnapshotTable v-if="currentSection === 'supply-quality'" title="最近供应质量" :items="overview?.recent_quality_snapshots || []" type="quality" />
+        <div v-if="currentSection === 'acceptance'" class="card overflow-hidden">
+          <div class="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-dark-700">
+            <h2 class="text-base font-semibold text-gray-900 dark:text-white">验收步骤矩阵</h2>
+            <span class="text-sm text-gray-500 dark:text-dark-400">样本 {{ overview?.acceptance_report_count || 0 }}</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full min-w-[760px] divide-y divide-gray-200 dark:divide-dark-700">
+              <thead class="bg-gray-50 dark:bg-dark-800">
+                <tr>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">检查项</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">风险</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">通过</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">警告</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">失败</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">未知</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">覆盖</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
+                <tr v-for="item in acceptanceStepSummaryRows" :key="item.step" class="hover:bg-gray-50 dark:hover:bg-dark-800/60">
+                  <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ acceptanceStepName(item.step) }}</td>
+                  <td class="px-4 py-3 text-sm">
+                    <span class="badge" :class="acceptanceSummaryRiskClass(item.risk_level)">{{ acceptanceSummaryRiskLabel(item.risk_level) }}</span>
+                  </td>
+                  <td class="px-4 py-3 text-right text-sm text-emerald-700 dark:text-emerald-300">{{ item.pass_count }}</td>
+                  <td class="px-4 py-3 text-right text-sm text-amber-700 dark:text-amber-300">{{ item.warn_count }}</td>
+                  <td class="px-4 py-3 text-right text-sm text-red-700 dark:text-red-300">{{ item.fail_count }}</td>
+                  <td class="px-4 py-3 text-right text-sm text-gray-500 dark:text-dark-300">{{ item.unknown_count }}</td>
+                  <td class="px-4 py-3 text-right text-sm text-gray-600 dark:text-dark-300">{{ acceptanceCoverageLabel(item) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
         <RecentSnapshotTable v-if="currentSection === 'acceptance'" title="最近接入验收" :items="overview?.recent_acceptance_reports || []" type="acceptance" />
       </section>
     </div>
@@ -708,6 +752,7 @@ import {
   updateKanbanEventStatus
 } from '@/api/admin/adminPlus'
 import type {
+  AcceptanceStepSummary,
   AcceptanceReport,
   AcceptanceStepStatus,
   CacheEfficiencySnapshot,
@@ -886,6 +931,12 @@ const acceptanceForm = reactive<AcceptanceForm>(defaultAcceptanceForm())
 
 const modelMargins = computed(() => overview.value?.model_margins || [])
 const recentEvents = computed(() => overview.value?.recent_events || [])
+const acceptanceStepSummaryRows = computed<AcceptanceStepSummary[]>(() => {
+  const summaries = new Map<string, AcceptanceStepSummary>()
+  const items = overview.value?.acceptance_step_summaries || []
+  items.forEach((item) => summaries.set(item.step, item))
+  return acceptanceSteps.map((step) => summaries.get(step.key) || emptyAcceptanceStepSummary(step.key))
+})
 const currentSection = computed<KanbanSection>(() => props.section || 'profit')
 const showModelFilter = computed(() => currentSection.value !== 'settings')
 const showProfitControls = computed(() => currentSection.value === 'profit')
@@ -1463,6 +1514,12 @@ function formatPercent(value?: number | null): string {
   return `${value.toFixed(2).replace(/\.?0+$/, '')}%`
 }
 
+function formatSignedPercent(value?: number | null): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '-'
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${formatPercent(value)}`
+}
+
 function formatPercentFraction(value?: number | null): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '-'
   return formatPercent(value * 100)
@@ -1472,6 +1529,18 @@ function marginClass(value?: number | null): string {
   if (value === null || value === undefined) return 'text-gray-500 dark:text-dark-400'
   if (value < 0) return 'text-red-600 dark:text-red-300'
   if (value < filters.target_margin_percent) return 'text-amber-600 dark:text-amber-300'
+  return 'text-emerald-600 dark:text-emerald-300'
+}
+
+function marginGapClass(value?: number | null): string {
+  if (value === null || value === undefined) return 'text-gray-500 dark:text-dark-400'
+  if (value < 0) return 'text-amber-600 dark:text-amber-300'
+  return 'text-emerald-600 dark:text-emerald-300'
+}
+
+function suggestedVsMarketClass(value?: number | null): string {
+  if (value === null || value === undefined) return 'text-gray-500 dark:text-dark-400'
+  if (value > 0) return 'text-amber-600 dark:text-amber-300'
   return 'text-emerald-600 dark:text-emerald-300'
 }
 
@@ -1598,6 +1667,41 @@ function acceptanceStepClass(value?: string): string {
   if (value === 'warn') return 'badge-warning'
   if (value === 'fail') return 'badge-danger'
   return 'badge-gray'
+}
+
+function emptyAcceptanceStepSummary(step: string): AcceptanceStepSummary {
+  return {
+    step,
+    total_count: 0,
+    pass_count: 0,
+    warn_count: 0,
+    fail_count: 0,
+    unknown_count: 0,
+    risk_level: 'unknown'
+  }
+}
+
+function acceptanceStepName(step: string): string {
+  return acceptanceSteps.find((item) => item.key === step)?.label || step
+}
+
+function acceptanceSummaryRiskLabel(value?: string): string {
+  if (value === 'high') return '高'
+  if (value === 'medium') return '中'
+  if (value === 'low') return '低'
+  return '未知'
+}
+
+function acceptanceSummaryRiskClass(value?: string): string {
+  if (value === 'high') return 'badge-danger'
+  if (value === 'medium') return 'badge-warning'
+  if (value === 'low') return 'badge-success'
+  return 'badge-gray'
+}
+
+function acceptanceCoverageLabel(item: AcceptanceStepSummary): string {
+  const known = item.pass_count + item.warn_count + item.fail_count
+  return `${known}/${item.total_count}`
 }
 
 function sourceTypeLabel(value?: string): string {

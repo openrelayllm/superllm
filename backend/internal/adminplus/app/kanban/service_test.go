@@ -65,6 +65,68 @@ func TestServiceOverviewClassifiesRoundRobinCacheRisk(t *testing.T) {
 	}
 }
 
+func TestServiceOverviewSummarizesAcceptanceSteps(t *testing.T) {
+	now := time.Date(2026, 7, 4, 1, 15, 0, 0, time.UTC)
+	repo := &fakeRepository{
+		acceptance: []*adminplusdomain.AcceptanceReport{
+			{
+				ID:                  1,
+				Model:               "gpt-acceptance",
+				Status:              "production",
+				ConnectivityStatus:  "pass",
+				ModelListStatus:     "pass",
+				PurityStatus:        "pass",
+				TrialCallStatus:     "pass",
+				UsageMeteringStatus: "pass",
+				CacheAuditStatus:    "pass",
+				BalanceStatus:       "pass",
+				ConcurrencyStatus:   "pass",
+				ObservedAt:          now,
+			},
+			{
+				ID:                  2,
+				Model:               "gpt-acceptance",
+				Status:              "blocked",
+				ConnectivityStatus:  "pass",
+				ModelListStatus:     "warn",
+				PurityStatus:        "fail",
+				TrialCallStatus:     "unknown",
+				UsageMeteringStatus: "pass",
+				CacheAuditStatus:    "fail",
+				BalanceStatus:       "warn",
+				ConcurrencyStatus:   "unknown",
+				ObservedAt:          now,
+			},
+		},
+	}
+	svc := NewService(repo)
+	svc.now = func() time.Time { return now }
+
+	overview, err := svc.Overview(context.Background(), OverviewFilter{})
+	if err != nil {
+		t.Fatalf("Overview() error = %v", err)
+	}
+	if len(overview.AcceptanceStepSummaries) != 8 {
+		t.Fatalf("AcceptanceStepSummaries len = %d, want 8", len(overview.AcceptanceStepSummaries))
+	}
+	purity := findAcceptanceStepSummary(overview.AcceptanceStepSummaries, "purity_status")
+	if purity == nil || purity.FailCount != 1 || purity.PassCount != 1 || purity.RiskLevel != "high" {
+		t.Fatalf("purity summary = %#v, want 1 fail, 1 pass, high", purity)
+	}
+	modelList := findAcceptanceStepSummary(overview.AcceptanceStepSummaries, "model_list_status")
+	if modelList == nil || modelList.WarnCount != 1 || modelList.RiskLevel != "medium" {
+		t.Fatalf("model list summary = %#v, want warning medium", modelList)
+	}
+	trial := findAcceptanceStepSummary(overview.AcceptanceStepSummaries, "trial_call_status")
+	if trial == nil || trial.UnknownCount != 1 || trial.RiskLevel != "medium" {
+		t.Fatalf("trial call summary = %#v, want unknown medium", trial)
+	}
+	connectivity := findAcceptanceStepSummary(overview.AcceptanceStepSummaries, "connectivity_status")
+	if connectivity == nil || connectivity.PassCount != 2 || connectivity.RiskLevel != "low" {
+		t.Fatalf("connectivity summary = %#v, want all pass low", connectivity)
+	}
+}
+
 func TestServiceOverviewUsesUsageDerivedCacheRisk(t *testing.T) {
 	now := time.Date(2026, 7, 4, 1, 30, 0, 0, time.UTC)
 	repo := &fakeRepository{
@@ -817,6 +879,41 @@ func TestServiceOverviewClassifiesUnprofitableMarketPrice(t *testing.T) {
 	}
 }
 
+func TestServiceOverviewShowsMarginGapAndMarketPricePressure(t *testing.T) {
+	now := time.Date(2026, 7, 4, 2, 30, 0, 0, time.UTC)
+	repo := &fakeRepository{
+		market: []*adminplusdomain.MarketPriceSnapshot{
+			{ID: 1, Model: "thin-margin-model", Currency: "USD", PriceMicros: 2000000, ObservedAt: now},
+		},
+		cache: []*adminplusdomain.CacheEfficiencySnapshot{
+			{ID: 2, Model: "thin-margin-model", SupplyType: "supplier", CacheHitRatio: 0.8, Status: "healthy", ObservedAt: now},
+		},
+		costs: []*SupplierRateCost{
+			{SupplierID: 11, Model: "thin-margin-model", Currency: "USD", PriceMicros: 1800000, CapturedAt: now},
+		},
+	}
+	svc := NewService(repo)
+	svc.now = func() time.Time { return now }
+
+	overview, err := svc.Overview(context.Background(), OverviewFilter{TargetMarginPercent: 25, RiskBufferPercent: 8})
+	if err != nil {
+		t.Fatalf("Overview() error = %v", err)
+	}
+	row := overview.ModelMargins[0]
+	if row.RiskLevel != "medium" {
+		t.Fatalf("RiskLevel = %q, want medium", row.RiskLevel)
+	}
+	if row.GrossMarginPercent == nil || *row.GrossMarginPercent != 10 {
+		t.Fatalf("GrossMarginPercent = %v, want 10", row.GrossMarginPercent)
+	}
+	if row.MarginGapPercent == nil || *row.MarginGapPercent > -14 || *row.MarginGapPercent < -16 {
+		t.Fatalf("MarginGapPercent = %v, want about -14.8", row.MarginGapPercent)
+	}
+	if row.SuggestedVsMarketPercent == nil || *row.SuggestedVsMarketPercent < 19 || *row.SuggestedVsMarketPercent > 20 {
+		t.Fatalf("SuggestedVsMarketPercent = %v, want about 19.7", row.SuggestedVsMarketPercent)
+	}
+}
+
 type fakeRepository struct {
 	market     []*adminplusdomain.MarketPriceSnapshot
 	cache      []*adminplusdomain.CacheEfficiencySnapshot
@@ -1098,4 +1195,13 @@ func filterAcceptanceReports(items []*adminplusdomain.AcceptanceReport, model st
 		}
 	}
 	return out
+}
+
+func findAcceptanceStepSummary(items []adminplusdomain.AcceptanceStepSummary, step string) *adminplusdomain.AcceptanceStepSummary {
+	for i := range items {
+		if items[i].Step == step {
+			return &items[i]
+		}
+	}
+	return nil
 }

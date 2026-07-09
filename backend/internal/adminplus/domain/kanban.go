@@ -113,6 +113,9 @@ type KanbanModelMarginRow struct {
 	AcceptanceStatus         string     `json:"acceptance_status,omitempty"`
 	SuggestedPriceMicros     *int64     `json:"suggested_price_micros,omitempty"`
 	GrossMarginPercent       *float64   `json:"gross_margin_percent,omitempty"`
+	RequiredMarginPercent    float64    `json:"required_margin_percent"`
+	MarginGapPercent         *float64   `json:"margin_gap_percent,omitempty"`
+	SuggestedVsMarketPercent *float64   `json:"suggested_vs_market_percent,omitempty"`
 	RiskLevel                string     `json:"risk_level"`
 	Recommendation           string     `json:"recommendation"`
 	LatestMarketObservedAt   *time.Time `json:"latest_market_observed_at,omitempty"`
@@ -157,4 +160,15 @@ type KanbanOverview struct {
 	RecentCacheSnapshots    []*CacheEfficiencySnapshot `json:"recent_cache_snapshots"`
 	RecentQualitySnapshots  []*SupplyQualitySnapshot   `json:"recent_quality_snapshots"`
 	RecentAcceptanceReports []*AcceptanceReport        `json:"recent_acceptance_reports"`
+	AcceptanceStepSummaries []AcceptanceStepSummary    `json:"acceptance_step_summaries"`
+}
+
+type AcceptanceStepSummary struct {
+	Step         string `json:"step"`
+	TotalCount   int    `json:"total_count"`
+	PassCount    int    `json:"pass_count"`
+	WarnCount    int    `json:"warn_count"`
+	FailCount    int    `json:"fail_count"`
+	UnknownCount int    `json:"unknown_count"`
+	RiskLevel    string `json:"risk_level"`
 }

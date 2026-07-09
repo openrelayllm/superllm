@@ -459,6 +459,7 @@ func (s *Service) Overview(ctx context.Context, filter OverviewFilter) (*adminpl
 		RecentCacheSnapshots:    firstCacheSnapshots(cache, 10),
 		RecentQualitySnapshots:  firstQualitySnapshots(quality, 10),
 		RecentAcceptanceReports: firstAcceptanceReports(acceptance, 10),
+		AcceptanceStepSummaries: buildAcceptanceStepSummaries(acceptance),
 	}, nil
 }
 
@@ -927,11 +928,14 @@ func buildModelMargins(market []*adminplusdomain.MarketPriceSnapshot, cache []*a
 }
 
 func buildModelMarginRow(model string, market []*adminplusdomain.MarketPriceSnapshot, cache *adminplusdomain.CacheEfficiencySnapshot, quality *adminplusdomain.SupplyQualitySnapshot, acceptance *adminplusdomain.AcceptanceReport, cost *SupplierRateCost, marginPercent float64, riskBufferPercent float64) adminplusdomain.KanbanModelMarginRow {
+	requiredMarkupPercent := marginPercent + riskBufferPercent
+	requiredGrossMarginPercent := grossMarginFromMarkupPercent(requiredMarkupPercent)
 	row := adminplusdomain.KanbanModelMarginRow{
-		Model:          model,
-		Currency:       "USD",
-		RiskLevel:      "unknown",
-		Recommendation: "数据不足，继续补充市场价、成本和缓存审计。",
+		Model:                 model,
+		Currency:              "USD",
+		RequiredMarginPercent: requiredGrossMarginPercent,
+		RiskLevel:             "unknown",
+		Recommendation:        "数据不足，继续补充市场价、成本和缓存审计。",
 	}
 	if len(market) > 0 {
 		prices := make([]int64, 0, len(market))
@@ -982,7 +986,7 @@ func buildModelMarginRow(model string, market []*adminplusdomain.MarketPriceSnap
 		row.AcceptanceStatus = acceptance.Status
 	}
 	if adjustedCost != nil {
-		suggested := int64(float64(*adjustedCost) * (1 + (marginPercent+riskBufferPercent)/100))
+		suggested := int64(float64(*adjustedCost) * (1 + requiredMarkupPercent/100))
 		if suggested < defaultSuggestedPriceMicros {
 			suggested = defaultSuggestedPriceMicros
 		}
@@ -990,6 +994,10 @@ func buildModelMarginRow(model string, market []*adminplusdomain.MarketPriceSnap
 		if row.MarketMedianPriceMicros != nil && *row.MarketMedianPriceMicros > 0 {
 			margin := (float64(*row.MarketMedianPriceMicros-*adjustedCost) / float64(*row.MarketMedianPriceMicros)) * 100
 			row.GrossMarginPercent = &margin
+			marginGap := margin - requiredGrossMarginPercent
+			row.MarginGapPercent = &marginGap
+			suggestedVsMarket := (float64(suggested-*row.MarketMedianPriceMicros) / float64(*row.MarketMedianPriceMicros)) * 100
+			row.SuggestedVsMarketPercent = &suggestedVsMarket
 		}
 	}
 	row.RiskLevel, row.Recommendation = classifyModelMargin(row)
@@ -1009,6 +1017,12 @@ func classifyModelMargin(row adminplusdomain.KanbanModelMarginRow) (string, stri
 	if row.GrossMarginPercent != nil && *row.GrossMarginPercent < 0 {
 		return "high", "市场中位价低于缓存调整后成本，不建议跟价。"
 	}
+	if row.MarginGapPercent != nil && *row.MarginGapPercent < 0 {
+		return "medium", "市场中位价仍有正毛利，但低于目标毛利和风险缓冲；建议仅低权重观察或继续找更低成本供应。"
+	}
+	if row.SuggestedVsMarketPercent != nil && *row.SuggestedVsMarketPercent > 0 {
+		return "medium", "达到目标毛利所需售价高于市场中位价；建议先复核质量和成本，不要直接跟价。"
+	}
 	if row.CacheStatus == "risky" || (row.CacheHitRatio != nil && *row.CacheHitRatio < defaultWatchingHitRatio) {
 		return "medium", "缓存效率偏低，建议降低权重或仅观察。"
 	}
@@ -1019,6 +1033,14 @@ func classifyModelMargin(row adminplusdomain.KanbanModelMarginRow) (string, stri
 		return "unknown", "数据不足，继续补充市场价、成本和缓存审计。"
 	}
 	return "low", "价格和缓存效率可接受，可作为生产候选继续观察。"
+}
+
+func grossMarginFromMarkupPercent(markupPercent float64) float64 {
+	multiplier := 1 + markupPercent/100
+	if multiplier <= 0 {
+		return 0
+	}
+	return (markupPercent / 100) / multiplier * 100
 }
 
 func normalizeLimit(limit int) int {
@@ -1307,6 +1329,84 @@ func acceptanceStepStatuses(report *adminplusdomain.AcceptanceReport) []string {
 		report.CacheAuditStatus,
 		report.BalanceStatus,
 		report.ConcurrencyStatus,
+	}
+}
+
+func acceptanceStepKeys() []string {
+	return []string{
+		"connectivity_status",
+		"model_list_status",
+		"purity_status",
+		"trial_call_status",
+		"usage_metering_status",
+		"cache_audit_status",
+		"balance_status",
+		"concurrency_status",
+	}
+}
+
+func acceptanceStepStatus(report *adminplusdomain.AcceptanceReport, step string) string {
+	if report == nil {
+		return "unknown"
+	}
+	switch step {
+	case "connectivity_status":
+		return normalizeCheckStatus(report.ConnectivityStatus)
+	case "model_list_status":
+		return normalizeCheckStatus(report.ModelListStatus)
+	case "purity_status":
+		return normalizeCheckStatus(report.PurityStatus)
+	case "trial_call_status":
+		return normalizeCheckStatus(report.TrialCallStatus)
+	case "usage_metering_status":
+		return normalizeCheckStatus(report.UsageMeteringStatus)
+	case "cache_audit_status":
+		return normalizeCheckStatus(report.CacheAuditStatus)
+	case "balance_status":
+		return normalizeCheckStatus(report.BalanceStatus)
+	case "concurrency_status":
+		return normalizeCheckStatus(report.ConcurrencyStatus)
+	default:
+		return "unknown"
+	}
+}
+
+func buildAcceptanceStepSummaries(reports []*adminplusdomain.AcceptanceReport) []adminplusdomain.AcceptanceStepSummary {
+	summaries := make([]adminplusdomain.AcceptanceStepSummary, 0, len(acceptanceStepKeys()))
+	for _, step := range acceptanceStepKeys() {
+		summary := adminplusdomain.AcceptanceStepSummary{Step: step}
+		for _, report := range reports {
+			if report == nil {
+				continue
+			}
+			summary.TotalCount++
+			switch acceptanceStepStatus(report, step) {
+			case "pass":
+				summary.PassCount++
+			case "warn":
+				summary.WarnCount++
+			case "fail":
+				summary.FailCount++
+			default:
+				summary.UnknownCount++
+			}
+		}
+		summary.RiskLevel = acceptanceStepRiskLevel(summary)
+		summaries = append(summaries, summary)
+	}
+	return summaries
+}
+
+func acceptanceStepRiskLevel(summary adminplusdomain.AcceptanceStepSummary) string {
+	switch {
+	case summary.TotalCount == 0:
+		return "unknown"
+	case summary.FailCount > 0:
+		return "high"
+	case summary.WarnCount > 0 || summary.UnknownCount > 0:
+		return "medium"
+	default:
+		return "low"
 	}
 }
 
