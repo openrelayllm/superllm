@@ -187,20 +187,20 @@ export default {
 
   // Setup Wizard
   setup: {
-    title: 'Sub2API Admin Plus 安装向导',
-    description: '配置您的 Admin Plus 自动化运营实例',
+    title: 'SuperLLM 安装向导',
+    description: '配置您的 SuperLLM 自动化运营实例',
     database: {
       title: '数据库配置',
-      description: '连接到 Admin Plus 独立 PostgreSQL 数据库',
+      description: '连接到 SuperLLM 独立 PostgreSQL 数据库',
       host: '主机',
       port: '端口',
       username: '用户名',
       password: '密码',
       databaseName: '数据库名称',
       sslMode: 'SSL 模式',
-      dedicatedWarningTitle: '请使用独立的 Admin Plus 数据库',
+      dedicatedWarningTitle: '请使用独立的 SuperLLM 数据库',
       dedicatedWarningBody:
-        '不要指向现有 Sub2API 生产主库。推荐数据库名和用户为 sub2api_admin_plus，并确保该用户拥有 public schema 的建表权限。',
+        '不要指向现有 Sub2API 生产主库。推荐数据库名和用户为 superllm，并确保该用户拥有 public schema 的建表权限。',
       passwordPlaceholder: '密码',
       ssl: {
         disable: '禁用',
@@ -223,11 +223,11 @@ export default {
     sub2api: {
       title: 'Sub2API 集成',
       description: '连接已有 Sub2API 实例，用于读取账号池和执行账号开通',
-      integrationTitle: 'Admin Plus 是 Sub2API 的补充管理面',
+      integrationTitle: 'SuperLLM 是 Sub2API 的补充管理面',
       integrationBody:
-        '这些配置不会替代 Admin Plus 主库。只读数据库和只读 Redis 用于读取真实 Sub2API 运行数据；Admin API 用于把供应商 Key 开通到真实 Sub2API。',
-      readonlyDatabaseUrl: 'Sub2API 只读数据库 URL（可选）',
-      readonlyDatabaseHint: '建议使用只读账号，并授予 accounts、groups、account_groups、usage_logs 等表的 SELECT 权限。',
+        'SuperLLM 使用现有 Sub2API 用户身份登录，并以只读方式关联账号、分组和用量数据；Admin API 用于把供应商 Key 开通到真实 Sub2API。',
+      readonlyDatabaseUrl: 'Sub2API 只读数据库 URL（必填）',
+      readonlyDatabaseHint: '请使用只读账号，并至少授予 users、accounts、groups、account_groups、usage_logs 等表的 SELECT 权限。',
       readonlyRedisUrl: 'Sub2API 只读 Redis URL（可选）',
       readonlyRedisDb: 'Sub2API Redis DB（可选）',
       adminBaseUrl: 'Sub2API Admin API 地址（可选）',
@@ -248,7 +248,7 @@ export default {
     },
     ready: {
       title: '准备安装',
-      description: '检查 Admin Plus 配置并完成安装',
+      description: '检查 SuperLLM 配置并完成安装',
       database: '数据库',
       redis: 'Redis',
       adminEmail: '管理员邮箱',
@@ -4842,7 +4842,7 @@ export default {
     // Settings
     settings: {
       title: '系统设置',
-      description: '管理 Admin Plus 基础站点信息与自动化集成密钥',
+      description: '管理 SuperLLM 基础站点信息与自动化集成密钥',
       tabs: {
         general: '通用设置',
         agreement: '登录条款',
@@ -5228,7 +5228,7 @@ export default {
           '禁用用户注册、公开页面和自助服务功能。仅管理员可以登录和管理平台。',
         siteName: '站点名称',
         siteNameHint: '显示在邮件和页面标题中',
-        siteNamePlaceholder: 'Sub2API Admin Plus',
+        siteNamePlaceholder: 'SuperLLM',
         siteSubtitle: '站点副标题',
         siteSubtitleHint: '显示在登录和注册页面',
         siteSubtitlePlaceholder: '自动化运营控制台',
@@ -5519,7 +5519,7 @@ export default {
         fromEmail: '发件人邮箱',
         fromEmailPlaceholder: "noreply{'@'}example.com",
         fromName: '发件人名称',
-        fromNamePlaceholder: 'Sub2API Admin Plus',
+        fromNamePlaceholder: 'SuperLLM',
         useTls: '使用 TLS',
         useTlsHint: '为 SMTP 连接启用 TLS 加密'
       },
@@ -5561,28 +5561,6 @@ export default {
         empty: '暂无可用的邮件模板事件或语言。',
         noPreview: '刷新预览后查看渲染后的邮件主题。',
         customized: '已自定义'
-      },
-      adminApiKey: {
-        title: '管理员 API Key',
-        description: '用于外部系统集成的全局 API Key，拥有完整的管理员权限',
-        notConfigured: '尚未配置管理员 API Key',
-        configured: '管理员 API Key 已启用',
-        currentKey: '当前密钥',
-        regenerate: '重新生成',
-        regenerating: '生成中...',
-        delete: '删除',
-        deleting: '删除中...',
-        create: '创建密钥',
-        creating: '创建中...',
-        regenerateConfirm: '确定要重新生成吗？当前密钥将立即失效。',
-        deleteConfirm: '确定要删除管理员 API Key 吗？外部集成将停止工作。',
-        keyGenerated: '新的管理员 API Key 已生成',
-        keyDeleted: '管理员 API Key 已删除',
-        copyKey: '复制密钥',
-        keyCopied: '密钥已复制到剪贴板',
-        keyWarning: '此密钥仅显示一次，请立即复制保存。',
-        securityWarning: '警告：此密钥拥有完整的管理员权限，请妥善保管。',
-        usage: '使用方法：在请求头中添加 x-api-key: <your-admin-api-key>'
       },
       soraS3: {
         title: 'Sora 存储配置',

@@ -187,20 +187,20 @@ export default {
 
   // Setup Wizard
   setup: {
-    title: 'Sub2API Admin Plus Setup',
-    description: 'Configure your Admin Plus operations instance',
+    title: 'SuperLLM Setup',
+    description: 'Configure your SuperLLM operations instance',
     database: {
       title: 'Database Configuration',
-      description: 'Connect to the dedicated Admin Plus PostgreSQL database',
+      description: 'Connect to the dedicated SuperLLM PostgreSQL database',
       host: 'Host',
       port: 'Port',
       username: 'Username',
       password: 'Password',
       databaseName: 'Database Name',
       sslMode: 'SSL Mode',
-      dedicatedWarningTitle: 'Use a dedicated Admin Plus database',
+      dedicatedWarningTitle: 'Use a dedicated SuperLLM database',
       dedicatedWarningBody:
-        'Do not point this instance at an existing Sub2API production database. Use sub2api_admin_plus for the database and user, and grant CREATE on the public schema.',
+        'Do not point this instance at an existing Sub2API production database. Use superllm for the database and user, and grant CREATE on the public schema.',
       passwordPlaceholder: 'Password',
       ssl: {
         disable: 'Disable',
@@ -223,11 +223,11 @@ export default {
     sub2api: {
       title: 'Sub2API Integration',
       description: 'Connect an existing Sub2API instance for account-pool reads and provisioning',
-      integrationTitle: 'Admin Plus extends Sub2API',
+      integrationTitle: 'SuperLLM extends Sub2API',
       integrationBody:
-        'These settings do not replace the Admin Plus primary database. The readonly database and Redis connections read live Sub2API data; the Admin API provisions supplier keys into the real Sub2API instance.',
-      readonlyDatabaseUrl: 'Sub2API readonly database URL (optional)',
-      readonlyDatabaseHint: 'Use a readonly user with SELECT grants for accounts, groups, account_groups, usage_logs, and related tables.',
+        'SuperLLM authenticates existing Sub2API users and links live account, group, and usage data through readonly access; the Admin API provisions supplier keys into Sub2API.',
+      readonlyDatabaseUrl: 'Sub2API readonly database URL (required)',
+      readonlyDatabaseHint: 'Use a readonly user with SELECT grants for users, accounts, groups, account_groups, usage_logs, and related tables.',
       readonlyRedisUrl: 'Sub2API readonly Redis URL (optional)',
       readonlyRedisDb: 'Sub2API Redis DB (optional)',
       adminBaseUrl: 'Sub2API Admin API URL (optional)',
@@ -248,7 +248,7 @@ export default {
     },
     ready: {
       title: 'Ready to Install',
-      description: 'Review the Admin Plus configuration and complete setup',
+      description: 'Review the SuperLLM configuration and complete setup',
       database: 'Database',
       redis: 'Redis',
       adminEmail: 'Admin Email',
@@ -4689,7 +4689,7 @@ export default {
     // Settings
     settings: {
       title: 'System Settings',
-      description: 'Manage Admin Plus site basics and automation integration keys',
+      description: 'Manage SuperLLM site basics and automation integration keys',
       tabs: {
         general: 'General',
         agreement: 'Agreement',
@@ -5080,7 +5080,7 @@ export default {
         backendModeDescription:
           'Disables user registration, public site, and self-service features. Only admin can log in and manage the platform.',
         siteName: 'Site Name',
-        siteNamePlaceholder: 'Sub2API Admin Plus',
+        siteNamePlaceholder: 'SuperLLM',
         siteNameHint: 'Displayed in emails and page titles',
         siteSubtitle: 'Site Subtitle',
         siteSubtitlePlaceholder: 'Operations Automation Console',
@@ -5370,7 +5370,7 @@ export default {
         fromEmail: 'From Email',
         fromEmailPlaceholder: "noreply{'@'}example.com",
         fromName: 'From Name',
-        fromNamePlaceholder: 'Sub2API Admin Plus',
+        fromNamePlaceholder: 'SuperLLM',
         useTls: 'Use TLS',
         useTlsHint: 'Enable TLS encryption for SMTP connection'
       },
@@ -5412,29 +5412,6 @@ export default {
         empty: 'No email template events or locales are available yet.',
         noPreview: 'Refresh the preview to see the rendered email subject.',
         customized: 'Customized'
-      },
-      adminApiKey: {
-        title: 'Admin API Key',
-        description: 'Global API key for external system integration with full admin access',
-        notConfigured: 'Admin API key not configured',
-        configured: 'Admin API key is active',
-        currentKey: 'Current Key',
-        regenerate: 'Regenerate',
-        regenerating: 'Regenerating...',
-        delete: 'Delete',
-        deleting: 'Deleting...',
-        create: 'Create Key',
-        creating: 'Creating...',
-        regenerateConfirm: 'Are you sure? The current key will be immediately invalidated.',
-        deleteConfirm:
-          'Are you sure you want to delete the admin API key? External integrations will stop working.',
-        keyGenerated: 'New admin API key generated',
-        keyDeleted: 'Admin API key deleted',
-        copyKey: 'Copy Key',
-        keyCopied: 'Key copied to clipboard',
-        keyWarning: 'This key will only be shown once. Please copy it now.',
-        securityWarning: 'Warning: This key provides full admin access. Keep it secure.',
-        usage: 'Usage: Add to request header - x-api-key: <your-admin-api-key>'
       },
       soraS3: {
         title: 'Sora Storage',

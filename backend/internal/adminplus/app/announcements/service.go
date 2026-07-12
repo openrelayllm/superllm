@@ -110,7 +110,7 @@ func (s *Service) RecordAnnouncement(ctx context.Context, in RecordAnnouncementI
 }
 
 func (s *Service) notifyAnnouncement(_ context.Context, _ *adminplusdomain.AnnouncementEvent) {
-	// Announcement events stay in Admin Plus history; Feishu push is intentionally balance-only.
+	// Announcement events stay in SuperLLM history; Feishu push is intentionally balance-only.
 }
 
 func (s *Service) SyncFromSession(ctx context.Context, in SyncFromSessionInput) (*SyncFromSessionResult, error) {
@@ -215,7 +215,7 @@ func buildFeishuAnnouncementText(event *adminplusdomain.AnnouncementEvent) strin
 		discount = fmt.Sprintf("%.2f%%", *event.DiscountPercent)
 	}
 	return fmt.Sprintf(
-		"【Sub2API Admin Plus 公告监控】\n供应商ID：%d\n标题：%s\n分类：%s\n建议：%s\n最低充值：%s\n赠送比例：%s\n折扣比例：%s\n当前余额：%s\n可切换：%t\n来源：%s\n时间：%s",
+		"【SuperLLM 公告监控】\n供应商ID：%d\n标题：%s\n分类：%s\n建议：%s\n最低充值：%s\n赠送比例：%s\n折扣比例：%s\n当前余额：%s\n可切换：%t\n来源：%s\n时间：%s",
 		event.SupplierID,
 		event.Title,
 		event.Type,

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
+	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -33,16 +34,17 @@ func main() {
 	}()
 
 	userRepo := repository.NewUserRepository(client, sqlDB)
-	authService := service.NewAuthService(client, userRepo, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, nil)
+	identityRepo := sub2apiapp.NewIdentityRepository(sub2apiapp.ProvideReadSQLDB(sqlDB, cfg))
+	authService := service.NewAuthService(client, userRepo, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, nil).WithIdentityReader(identityRepo)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	var user *service.User
 	if *email != "" {
-		user, err = userRepo.GetByEmail(ctx, *email)
+		user, err = identityRepo.GetByEmail(ctx, *email)
 	} else {
-		user, err = userRepo.GetFirstAdmin(ctx)
+		user, err = identityRepo.GetFirstAdmin(ctx)
 	}
 	if err != nil {
 		log.Fatalf("failed to resolve admin user: %v", err)
@@ -53,5 +55,5 @@ func main() {
 		log.Fatalf("failed to generate token: %v", err)
 	}
 
-	fmt.Printf("ADMIN_EMAIL=%s\nADMIN_USER_ID=%d\nJWT=%s\n", user.Email, user.ID, token)
+	fmt.Printf("SUB2API_ADMIN_EMAIL=%s\nSUB2API_ADMIN_USER_ID=%d\nJWT=%s\n", user.Email, user.ID, token)
 }

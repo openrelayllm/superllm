@@ -233,7 +233,7 @@ func (s *Service) ListDeliveries(ctx context.Context, filter DeliveryFilter) ([]
 func (s *Service) Test(ctx context.Context, in TestInput) (*adminplusdomain.NotificationDelivery, error) {
 	text := strings.TrimSpace(in.Text)
 	if text == "" {
-		text = "Sub2API Admin Plus 飞书通知测试"
+		text = "SuperLLM 飞书通知测试"
 	}
 	now := s.currentTime()
 	err := s.Dispatch(ctx, DispatchInput{
@@ -402,9 +402,8 @@ func defaultSettings() adminplusdomain.NotificationSettings {
 			{EventType: "action.purity_review", Label: "动作：纯度复核", Description: "动作建议要求复核模型纯度或能力匹配", Enabled: true, Severity: "warning", QuietWindowMinutes: 60, DedupeScope: "action_local_account"},
 			{EventType: "action.credential_review", Label: "动作：凭据复核", Description: "动作建议要求修复供应商或 Key 凭据", Enabled: true, Severity: "warning", QuietWindowMinutes: 60, DedupeScope: "action_supplier"},
 			{EventType: "action.cost_reconcile", Label: "动作：成本对账", Description: "动作建议要求处理成本或余额对账差异", Enabled: true, Severity: "critical", QuietWindowMinutes: 60, DedupeScope: "action_supplier"},
-			{EventType: "action.profit_review", Label: "动作：利润复核", Description: "动作建议要求处理市场价、利润或质量看板风险", Enabled: true, Severity: "warning", QuietWindowMinutes: 60, DedupeScope: "action_model"},
+			{EventType: "action.profit_review", Label: "动作：利润复核", Description: "动作建议要求处理利润或供应质量风险", Enabled: true, Severity: "warning", QuietWindowMinutes: 60, DedupeScope: "action_model"},
 			{EventType: "action.operational_review", Label: "动作：运营复核", Description: "其他关键动作建议", Enabled: true, Severity: "warning", QuietWindowMinutes: 60, DedupeScope: "action_generic"},
-			{EventType: "system.server_renewal_due", Label: "服务器续费", Description: "服务器即将到期或已到期", Enabled: true, Severity: "critical", QuietWindowMinutes: 720, DedupeScope: "none"},
 			{EventType: "system.backup_succeeded", Label: "备份成功", Description: "数据库备份已成功上传", Enabled: true, Severity: "info", QuietWindowMinutes: 60, DedupeScope: "none"},
 			{EventType: "system.backup_failed", Label: "备份失败", Description: "数据库备份失败，需要排查存储或数据库连接", Enabled: true, Severity: "critical", QuietWindowMinutes: 60, DedupeScope: "none"},
 			{EventType: "system.restore_completed", Label: "恢复完成", Description: "数据库恢复任务已完成", Enabled: true, Severity: "warning", QuietWindowMinutes: 60, DedupeScope: "none"},

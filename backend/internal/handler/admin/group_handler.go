@@ -17,7 +17,7 @@ type groupReader interface {
 	GetAllGroupsIncludingInactive(ctx context.Context) ([]service.Group, error)
 }
 
-// GroupHandler exposes the read-only group surface kept by Admin Plus MVP0.
+// GroupHandler exposes the read-only group surface kept by SuperLLM MVP0.
 type GroupHandler struct {
 	groups groupReader
 }
@@ -26,7 +26,7 @@ func NewGroupHandler(groups groupReader, _ ...any) *GroupHandler {
 	return &GroupHandler{groups: groups}
 }
 
-// GetAll handles getting all groups needed by Ops/Admin Plus filters.
+// GetAll handles getting all groups needed by Ops/SuperLLM filters.
 // GET /api/v1/admin/groups/all
 func (h *GroupHandler) GetAll(c *gin.Context) {
 	if h == nil || h.groups == nil {

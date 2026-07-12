@@ -4,7 +4,7 @@ package setup
 import (
 	"bufio"
 	"fmt"
-	"net/mail"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -29,9 +29,9 @@ func cliValidateUsername(name string) bool {
 	return validName.MatchString(name) && len(name) <= 63
 }
 
-func cliValidateEmail(email string) bool {
-	_, err := mail.ParseAddress(email)
-	return err == nil && len(email) <= 254
+func cliValidatePostgresURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql") && u.Host != ""
 }
 
 func cliValidatePort(port int) bool {
@@ -51,7 +51,7 @@ func RunCLI() error {
 
 	fmt.Println()
 	fmt.Println("╔═══════════════════════════════════════════╗")
-	fmt.Println("║       Sub2API Installation Wizard         ║")
+	fmt.Println("║        SuperLLM Installation Wizard       ║")
 	fmt.Println("╚═══════════════════════════════════════════╝")
 	fmt.Println()
 
@@ -96,7 +96,7 @@ func RunCLI() error {
 	cfg.Database.Password = promptPassword("PostgreSQL Password")
 
 	for {
-		cfg.Database.DBName = promptString(reader, "Database Name", "sub2api")
+		cfg.Database.DBName = promptString(reader, "Database Name", "superllm")
 		if cliValidateDBName(cfg.Database.DBName) {
 			break
 		}
@@ -159,35 +159,19 @@ func RunCLI() error {
 	}
 	fmt.Println("OK")
 
-	// Admin configuration with validation
+	// Required Sub2API identity source
 	fmt.Println()
-	fmt.Println("── Admin Account ──")
+	fmt.Println("── Sub2API Identity Source ──")
 
 	for {
-		cfg.Admin.Email = promptString(reader, "Admin Email", "admin@example.com")
-		if cliValidateEmail(cfg.Admin.Email) {
+		cfg.Sub2API.ReadonlyDatabaseURL = promptString(reader, "Readonly PostgreSQL URL", "")
+		if cliValidatePostgresURL(cfg.Sub2API.ReadonlyDatabaseURL) {
 			break
 		}
-		fmt.Println("  Invalid email format.")
+		fmt.Println("  A valid postgres:// or postgresql:// URL is required.")
 	}
-
-	for {
-		cfg.Admin.Password = promptPassword("Admin Password")
-		// SECURITY: Match Web API requirement of 8 characters minimum
-		if len(cfg.Admin.Password) < 8 {
-			fmt.Println("  Password must be at least 8 characters")
-			continue
-		}
-		if len(cfg.Admin.Password) > 128 {
-			fmt.Println("  Password must be at most 128 characters")
-			continue
-		}
-		confirm := promptPassword("Confirm Password")
-		if cfg.Admin.Password != confirm {
-			fmt.Println("  Passwords do not match")
-			continue
-		}
-		break
+	if err := TestSub2APIIdentityConnection(cfg.Sub2API.ReadonlyDatabaseURL); err != nil {
+		return fmt.Errorf("Sub2API identity connection failed: %w", err)
 	}
 
 	// Server configuration with validation
@@ -208,7 +192,7 @@ func RunCLI() error {
 	fmt.Printf("Database: %s@%s:%d/%s\n", cfg.Database.User, cfg.Database.Host, cfg.Database.Port, cfg.Database.DBName)
 	fmt.Printf("Redis: %s:%d\n", cfg.Redis.Host, cfg.Redis.Port)
 	fmt.Printf("Redis TLS: %s\n", map[bool]string{true: "enabled", false: "disabled"}[cfg.Redis.EnableTLS])
-	fmt.Printf("Admin: %s\n", cfg.Admin.Email)
+	fmt.Println("Identity: existing Sub2API administrators")
 	fmt.Printf("Server: :%d\n", cfg.Server.Port)
 	fmt.Println()
 
@@ -231,7 +215,7 @@ func RunCLI() error {
 	fmt.Println("╚═══════════════════════════════════════════╝")
 	fmt.Println()
 	fmt.Println("Start the server with:")
-	fmt.Println("  ./sub2api")
+	fmt.Println("  ./superllm")
 	fmt.Println()
 	fmt.Printf("Admin panel: http://localhost:%d\n", cfg.Server.Port)
 	fmt.Println()

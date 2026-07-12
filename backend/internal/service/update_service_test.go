@@ -77,8 +77,8 @@ func TestUpdateServiceCheckUpdateUsesAdminPlusReleaseRepoAndArchiveName(t *testi
 			Name:    "v0.41.0",
 			Assets: []GitHubAsset{
 				{
-					Name:               "sub2api-admin-plus_0.41.0_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz",
-					BrowserDownloadURL: "https://github.com/openrelayllm/sub2api-admin-plus/releases/download/v0.41.0/sub2api-admin-plus_0.41.0_linux_amd64.tar.gz",
+					Name:               "superllm_0.41.0_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz",
+					BrowserDownloadURL: "https://github.com/openrelayllm/superllm/releases/download/v0.41.0/superllm_0.41.0_linux_amd64.tar.gz",
 					Size:               1024,
 				},
 			},
@@ -92,7 +92,7 @@ func TestUpdateServiceCheckUpdateUsesAdminPlusReleaseRepoAndArchiveName(t *testi
 	require.Equal(t, githubRepo, client.repo)
 	require.Equal(t, "release", info.BuildType)
 	require.True(t, info.HasUpdate)
-	require.Equal(t, "sub2api-admin-plus_0.41.0_"+runtime.GOOS+"_"+runtime.GOARCH+".tar.gz", svc.getArchiveName(info.LatestVersion))
+	require.Equal(t, "superllm_0.41.0_"+runtime.GOOS+"_"+runtime.GOARCH+".tar.gz", svc.getArchiveName(info.LatestVersion))
 }
 
 func TestUpdateServiceContainerDeploymentDisablesBinarySelfUpdate(t *testing.T) {

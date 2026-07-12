@@ -350,6 +350,20 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 		return infraerrors.InternalServer("TOTP_VERIFY_ERROR", "failed to verify totp code")
 	}
 
+	return s.VerifyIdentityCode(ctx, user, code)
+}
+
+// VerifyIdentityCode verifies a code against a user loaded from Sub2API.
+func (s *TotpService) VerifyIdentityCode(ctx context.Context, user *User, code string) error {
+	if user == nil {
+		return infraerrors.InternalServer("TOTP_VERIFY_ERROR", "failed to verify totp code")
+	}
+	userID := user.ID
+	attempts, err := s.cache.GetVerifyAttempts(ctx, userID)
+	if err == nil && attempts >= maxTotpAttempts {
+		return ErrTotpTooManyAttempts
+	}
+
 	if !user.TotpEnabled || user.TotpSecretEncrypted == nil {
 		slog.Debug("totp_verify_not_setup",
 			"user_id", userID,

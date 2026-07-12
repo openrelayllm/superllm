@@ -6,12 +6,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER_PORT="${SERVER_PORT:-3010}"
 DATA_DIR="${DATA_DIR:-${ROOT_DIR}/.local/admin-plus-e2e-data}"
 ADMIN_PLUS_BASE_URL="${ADMIN_PLUS_BASE_URL:-http://127.0.0.1:${SERVER_PORT}}"
-ADMIN_PLUS_E2E_DB_URL="${ADMIN_PLUS_E2E_DB_URL:-postgresql://root:root@127.0.0.1:5432/sub2api_admin_plus?sslmode=disable}"
+ADMIN_PLUS_E2E_DB_URL="${ADMIN_PLUS_E2E_DB_URL:-postgresql://root:root@127.0.0.1:5432/superllm?sslmode=disable}"
 ADMIN_PLUS_E2E_REDIS_URL="${ADMIN_PLUS_E2E_REDIS_URL:-redis://127.0.0.1:6379/0}"
 
 export SERVER_PORT DATA_DIR
 export ADMIN_PLUS_BASE_URL ADMIN_PLUS_E2E_DB_URL ADMIN_PLUS_E2E_REDIS_URL
-export ADMIN_PLUS_E2E_EMAIL="${ADMIN_PLUS_E2E_EMAIL:-admin@sub2api-admin-plus.local}"
+export ADMIN_PLUS_E2E_EMAIL="${ADMIN_PLUS_E2E_EMAIL:-admin@superllm.local}"
 export ADMIN_PLUS_E2E_PASSWORD="${ADMIN_PLUS_E2E_PASSWORD:-AdminPlus@123456}"
 export ADMIN_PLUS_SCHEDULER_ENABLED="${ADMIN_PLUS_SCHEDULER_ENABLED:-false}"
 

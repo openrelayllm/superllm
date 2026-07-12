@@ -1,5 +1,5 @@
 /**
- * Admin Plus authentication API.
+ * SuperLLM authentication API.
  */
 
 import { apiClient } from './client'

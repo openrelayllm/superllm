@@ -36,23 +36,6 @@ export interface BackupScheduleConfig {
   retain_count: number
 }
 
-export interface ServerRenewalStatus {
-  enabled: boolean
-  server_name: string
-  provider: string
-  host_id?: string
-  ip_address?: string
-  operating_system?: string
-  panel_url?: string
-  expires_at: string
-  expires_at_time?: string
-  reminder_days: number[]
-  last_notified_at?: string
-  last_notified_key?: string
-  days_remaining: number
-  state: 'unconfigured' | 'active' | 'reminder_due' | 'due_today' | 'expired' | string
-  next_reminder?: string
-}
 
 export interface HistoryCleanupSettings {
   enabled: boolean
@@ -64,14 +47,12 @@ export interface HistoryCleanupSettings {
 export interface BackupSettings {
   s3: BackupS3Config
   schedule: BackupScheduleConfig
-  renewal: ServerRenewalStatus
   cleanup: HistoryCleanupSettings
 }
 
 export interface BackupSettingsUpdatePayload {
   s3?: BackupS3Config
   schedule?: BackupScheduleConfig
-  renewal?: Partial<ServerRenewalStatus>
   cleanup?: HistoryCleanupSettings
 }
 
@@ -100,7 +81,6 @@ export interface BackupStatus {
   latest_success?: BackupRecord
   latest_failure?: BackupRecord
   running?: BackupRecord
-  renewal: ServerRenewalStatus
   cleanup: HistoryCleanupSettings
 }
 
@@ -177,173 +157,6 @@ export interface ImportExportResult {
   warnings?: string[]
 }
 
-export type ProxySubscriptionType = 'clash' | 'shadowrocket' | 'v2ray_ss'
-export type ProxyRefreshStatus = 'never' | 'succeeded' | 'failed' | 'invalid'
-export type ProxyNodeHealthStatus = 'unknown' | 'healthy' | 'degraded' | 'suspect' | 'unhealthy' | 'disabled'
-export type ProxyRuntimeSlotStatus = 'idle' | 'assigned' | 'draining' | 'unhealthy' | 'stopped'
-export type ProxyAssignmentStatus = 'active' | 'released' | 'failed'
-export type ProxyTaskPurpose = 'site_discovery' | 'registration' | 'supplier_probe' | 'manual_test'
-export type ProxyAuditLevel = 'info' | 'warning' | 'error'
-
-export interface ProxyCenterStatus {
-  subscriptions_total: number
-  subscriptions_active: number
-  nodes_total: number
-  healthy_nodes: number
-  policies_total: number
-  targets_total: number
-  slots_total: number
-  slots_assigned: number
-  assignments_active: number
-  recent_errors: number
-  node_switches_24h?: number
-  node_failures_24h?: number
-  policy_denials_24h?: number
-  egress_verify_failures_24h?: number
-  completed_assignments_24h?: number
-  avg_assignment_seconds_24h?: number
-  proxy_enabled?: boolean
-  mihomo_configured?: boolean
-  max_slots?: number
-}
-
-export interface ProxySubscription {
-  id: number
-  name: string
-  subscription_type: ProxySubscriptionType
-  url_configured: boolean
-  url_hash?: string
-  enabled: boolean
-  refresh_interval_seconds: number
-  last_refresh_status: ProxyRefreshStatus
-  last_refresh_error?: string
-  active_config_version?: string
-  node_count: number
-  created_at: string
-  updated_at: string
-  last_refreshed_at?: string | null
-}
-
-export interface ProxyNode {
-  id: number
-  subscription_id: number
-  config_version: string
-  node_key: string
-  display_name: string
-  protocol: string
-  region?: string
-  server_hash?: string
-  health_status: ProxyNodeHealthStatus
-  last_latency_ms?: number | null
-  last_egress_ip?: string
-  last_error_code?: string
-  last_error_message?: string
-  last_checked_at?: string | null
-  disabled_reason?: string
-  raw_metadata?: Record<string, unknown>
-  created_at: string
-  updated_at: string
-}
-
-export interface ProxyNodeCheckResult {
-  node_id: number
-  node_name?: string
-  succeeded: boolean
-  node?: ProxyNode
-  error_code?: string
-  error_message?: string
-}
-
-export interface ProxyNodeBatchCheckResult {
-  total: number
-  succeeded: number
-  failed: number
-  results: ProxyNodeCheckResult[]
-}
-
-export interface ProxyPolicy {
-  id: number
-  name: string
-  enabled: boolean
-  subscription_ids: number[]
-  preferred_regions: string[]
-  max_concurrency: number
-  max_switches_per_task: number
-  connect_timeout_ms: number
-  request_timeout_ms: number
-  config?: Record<string, unknown>
-  enabled_targets?: number
-  healthy_nodes_available?: number
-  created_at: string
-  updated_at: string
-}
-
-export interface ProxyTargetPolicy {
-  id: number
-  policy_id: number
-  target_host: string
-  purpose: ProxyTaskPurpose
-  allowed_methods: string[]
-  rate_limit_per_minute: number
-  enabled: boolean
-  authorization_note?: string
-  created_at: string
-  updated_at: string
-}
-
-export interface ProxyRuntimeSlot {
-  id: number
-  slot_key: string
-  status: ProxyRuntimeSlotStatus
-  mixed_port: number
-  controller_port: number
-  controller_secret_configured: boolean
-  process_id?: number | null
-  config_path?: string
-  assigned_task_type?: string
-  assigned_task_id?: string
-  selected_node_id?: number
-  last_started_at?: string | null
-  last_heartbeat_at?: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface ProxyAssignment {
-  id: number
-  task_type: string
-  task_id: string
-  policy_id: number
-  slot_id: number
-  node_id?: number
-  mixed_port?: number
-  target_host: string
-  egress_ip?: string
-  status: ProxyAssignmentStatus
-  switch_count: number
-  error_code?: string
-  error_message?: string
-  started_at: string
-  released_at?: string | null
-  created_at: string
-}
-
-export interface ProxyAuditEvent {
-  id: number
-  event_type: string
-  actor_id?: number
-  task_type?: string
-  task_id?: string
-  policy_id?: number
-  slot_id?: number
-  node_id?: number
-  subscription_id?: number
-  target_host?: string
-  level: ProxyAuditLevel
-  message: string
-  payload?: Record<string, unknown>
-  created_at: string
-}
 
 export type SupplierKind = 'source_account' | 'relay' | 'browser_only' | 'custom'
 export type SupplierType = 'openai' | 'anthropic' | 'gemini' | 'sub2api' | 'new_api' | 'browser_only' | 'custom'
@@ -1906,267 +1719,6 @@ export interface RateSnapshot {
   created_at: string
 }
 
-export type MarketPriceSourceType = 'manual' | 'site_catalog' | 'site_discovery' | 'provider_page' | 'api'
-export type CacheEfficiencySupplyType = 'supplier' | 'own_pool' | 'competitor' | 'custom'
-export type CacheRoutingStrategy = 'unknown' | 'fixed_account' | 'round_robin' | 'weighted_round_robin' | 'sticky' | 'least_loaded' | 'custom'
-export type CacheStickyScope = 'none' | 'user' | 'api_key' | 'project' | 'session' | 'organization' | 'custom'
-export type CacheEfficiencyStatus = 'unknown' | 'healthy' | 'watching' | 'risky' | 'bad'
-export type KanbanRiskLevel = 'unknown' | 'low' | 'medium' | 'high'
-export type KanbanEventType = 'market_price_drop' | 'market_price_rise' | 'market_price_anomaly' | 'market_model_added' | 'market_model_removed' | 'market_promotion' | 'cache_efficiency_risk' | 'supply_quality_risk' | 'acceptance_risk' | 'unprofitable_model' | 'pricing_recommendation'
-export type KanbanEventSeverity = 'info' | 'warning' | 'critical'
-export type KanbanEventStatus = 'open' | 'acknowledged' | 'ignored'
-export type SupplyQualityDecision = 'production' | 'watching' | 'low_priority' | 'paused' | 'blocked'
-export type AcceptanceStepStatus = 'unknown' | 'pass' | 'warn' | 'fail'
-
-export interface MarketPriceSnapshot {
-  id: number
-  source_type: MarketPriceSourceType | string
-  source_name: string
-  source_url?: string
-  site_id?: number
-  supplier_id?: number
-  model: string
-  billing_mode: string
-  price_item: string
-  unit: string
-  currency: string
-  price_micros: number
-  package_label?: string
-  package_price_cents?: number | null
-  package_quota?: string
-  rate_multiplier?: number | null
-  min_recharge_cents?: number | null
-  bonus_percent?: number | null
-  confidence: number
-  observed_at: string
-  raw_payload?: Record<string, unknown>
-  created_at: string
-}
-
-export interface CacheEfficiencySnapshot {
-  id: number
-  supply_type: CacheEfficiencySupplyType | string
-  supplier_id?: number
-  local_sub2api_account_id?: number
-  model: string
-  routing_strategy: CacheRoutingStrategy | string
-  sticky_scope: CacheStickyScope | string
-  sample_requests: number
-  cache_read_tokens: number
-  cache_write_tokens: number
-  input_tokens: number
-  output_tokens: number
-  cache_hit_ratio: number
-  duplicate_input_tokens: number
-  estimated_waste_cents: number
-  avg_ttft_ms?: number | null
-  avg_total_latency_ms?: number | null
-  status: CacheEfficiencyStatus | string
-  notes?: string
-  observed_at: string
-  raw_payload?: Record<string, unknown>
-  created_at: string
-}
-
-export interface SupplyQualitySnapshot {
-  id: number
-  supply_type: CacheEfficiencySupplyType | string
-  supplier_id?: number
-  local_sub2api_account_id?: number
-  model?: string
-  availability_ratio: number
-  error_ratio: number
-  avg_ttft_ms?: number | null
-  avg_total_latency_ms?: number | null
-  cache_hit_ratio: number
-  purity_score: number
-  usage_trust_score: number
-  balance_risk_score: number
-  concurrency_score: number
-  quality_score: number
-  decision: SupplyQualityDecision | string
-  notes?: string
-  observed_at: string
-  raw_payload?: Record<string, unknown>
-  created_at: string
-}
-
-export interface AcceptanceReport {
-  id: number
-  supply_type: CacheEfficiencySupplyType | string
-  supplier_id?: number
-  local_sub2api_account_id?: number
-  model?: string
-  status: SupplyQualityDecision | string
-  connectivity_status: AcceptanceStepStatus | string
-  model_list_status: AcceptanceStepStatus | string
-  purity_status: AcceptanceStepStatus | string
-  trial_call_status: AcceptanceStepStatus | string
-  usage_metering_status: AcceptanceStepStatus | string
-  cache_audit_status: AcceptanceStepStatus | string
-  balance_status: AcceptanceStepStatus | string
-  concurrency_status: AcceptanceStepStatus | string
-  failure_reason?: string
-  recommendation?: string
-  report_payload?: Record<string, unknown>
-  observed_at: string
-  created_at: string
-}
-
-export interface KanbanModelMarginRow {
-  model: string
-  currency: string
-  market_low_price_micros?: number | null
-  market_median_price_micros?: number | null
-  market_high_price_micros?: number | null
-  market_sample_count: number
-  best_supplier_cost_micros?: number | null
-  cache_adjusted_cost_micros?: number | null
-  cache_hit_ratio?: number | null
-  cache_status?: CacheEfficiencyStatus | string
-  quality_score?: number | null
-  quality_decision?: SupplyQualityDecision | string
-  acceptance_status?: SupplyQualityDecision | string
-  suggested_price_micros?: number | null
-  gross_margin_percent?: number | null
-  required_margin_percent: number
-  margin_gap_percent?: number | null
-  suggested_vs_market_percent?: number | null
-  risk_level: KanbanRiskLevel | string
-  recommendation: string
-  latest_market_observed_at?: string | null
-  latest_cache_observed_at?: string | null
-  latest_supplier_captured_at?: string | null
-}
-
-export interface KanbanEvent {
-  id: number
-  event_type: KanbanEventType | string
-  severity: KanbanEventSeverity | string
-  status: KanbanEventStatus | string
-  model: string
-  source_type?: string
-  source_id?: number
-  related_snapshot_type?: string
-  related_snapshot_id?: number
-  title: string
-  description?: string
-  recommendation?: string
-  payload?: Record<string, unknown>
-  occurred_at: string
-  created_at: string
-}
-
-export interface AcceptanceStepSummary {
-  step: string
-  total_count: number
-  pass_count: number
-  warn_count: number
-  fail_count: number
-  unknown_count: number
-  risk_level: KanbanRiskLevel | string
-}
-
-export interface KanbanOverview {
-  generated_at: string
-  market_snapshot_count: number
-  cache_snapshot_count: number
-  quality_snapshot_count: number
-  acceptance_report_count: number
-  open_event_count: number
-  critical_event_count: number
-  model_count: number
-  risky_cache_model_count: number
-  risky_quality_model_count: number
-  blocked_acceptance_count: number
-  unprofitable_model_count: number
-  model_margins: KanbanModelMarginRow[]
-  recent_events: KanbanEvent[]
-  recent_market_snapshots: MarketPriceSnapshot[]
-  recent_cache_snapshots: CacheEfficiencySnapshot[]
-  recent_quality_snapshots: SupplyQualitySnapshot[]
-  recent_acceptance_reports: AcceptanceReport[]
-  acceptance_step_summaries: AcceptanceStepSummary[]
-}
-
-export type CreateMarketPricePayload = Omit<MarketPriceSnapshot, 'id' | 'created_at' | 'observed_at' | 'confidence'> & {
-  confidence?: number
-  observed_at?: string
-}
-
-export interface ParseMarketPricesPayload {
-  source_type?: MarketPriceSourceType | string
-  source_name?: string
-  source_url?: string
-  site_id?: number
-  supplier_id?: number
-  default_currency?: string
-  confidence?: number
-  text: string
-  observed_at?: string
-}
-
-export interface ParseMarketPricesResult {
-  items: MarketPriceSnapshot[]
-  total: number
-}
-
-export type ImportMarketPricesFromURLPayload = Omit<ParseMarketPricesPayload, 'text'> & {
-  source_url: string
-}
-
-export interface ImportMarketPricesFromURLResult extends ParseMarketPricesResult {
-  source_url: string
-  content_type?: string
-  text_length: number
-}
-
-export interface MarketPriceSourceCandidate {
-  site_id?: number
-  supplier_id?: number
-  source_type: MarketPriceSourceType | string
-  source_name: string
-  source_url: string
-  link_type?: string
-  confidence: number
-  reason: string
-  raw_payload?: Record<string, unknown>
-}
-
-export interface MarketPriceSourceDiscoveryResult {
-  items: MarketPriceSourceCandidate[]
-  total: number
-}
-
-export type CreateCacheEfficiencyPayload = Omit<CacheEfficiencySnapshot, 'id' | 'created_at' | 'observed_at' | 'cache_hit_ratio' | 'status'> & {
-  cache_hit_ratio?: number | null
-  observed_at?: string
-  status?: CacheEfficiencyStatus | ''
-}
-
-export type CreateSupplyQualityPayload = Omit<SupplyQualitySnapshot, 'id' | 'created_at' | 'observed_at' | 'quality_score' | 'decision'> & {
-  quality_score?: number
-  decision?: SupplyQualityDecision | ''
-  observed_at?: string
-}
-
-export type CreateAcceptanceReportPayload = Omit<AcceptanceReport, 'id' | 'created_at' | 'observed_at' | 'status'> & {
-  status?: SupplyQualityDecision | ''
-  observed_at?: string
-}
-
-export interface GenerateAcceptanceReportPayload {
-  supply_type?: CacheEfficiencySupplyType | string
-  supplier_id?: number
-  local_sub2api_account_id?: number
-  model?: string
-  enqueue_evidence_tasks?: boolean
-  observed_at?: string
-}
-
-export interface RefreshAcceptanceReportFromEvidenceRunPayload {
-  run_id: string
-}
 
 export interface BalanceSnapshot {
   id: number
@@ -2613,155 +2165,6 @@ export interface SiteDiscoveryRunProgressEvent {
   classify_result?: SiteDiscoveryClassifyResult
 }
 
-export type SiteCatalogStatus = 'draft' | 'reviewing' | 'published' | 'archived'
-export type SiteCatalogVisibility = 'public' | 'private'
-export type SiteCatalogQualityStatus = 'complete' | 'needs_review' | 'link_broken' | 'duplicate'
-export type SiteCatalogKind = 'api_relay' | 'official' | 'tool' | 'client' | 'benchmark' | 'other'
-export type SiteCatalogRecommendationLevel = 'none' | 'normal' | 'featured' | 'avoid'
-export type SiteCatalogRiskLevel = 'unknown' | 'low' | 'medium' | 'high'
-export type SiteCatalogLinkType = 'homepage' | 'register' | 'dashboard' | 'api_base' | 'recharge' | 'docs' | 'contact'
-export type SiteCatalogLinkStatus = 'unknown' | 'ok' | 'broken'
-
-export interface SiteCatalogLink {
-  id: number
-  site_id: number
-  link_type: SiteCatalogLinkType
-  url: string
-  label?: string
-  is_primary: boolean
-  status: SiteCatalogLinkStatus
-  last_checked_at?: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface SiteCatalogCategory {
-  id: number
-  parent_id?: number
-  slug: string
-  name: string
-  description?: string
-  display_order: number
-  enabled: boolean
-  created_at: string
-  updated_at: string
-}
-
-export interface SiteCatalogTag {
-  id: number
-  slug: string
-  name: string
-  tag_type: string
-  color?: string
-  enabled: boolean
-  created_at: string
-  updated_at: string
-}
-
-export interface SiteCatalogSite {
-  id: number
-  slug: string
-  canonical_host: string
-  name: string
-  short_name?: string
-  summary?: string
-  description?: string
-  provider_type?: SupplierType | ''
-  site_kind: SiteCatalogKind
-  status: SiteCatalogStatus
-  visibility: SiteCatalogVisibility
-  quality_status: SiteCatalogQualityStatus
-  recommendation_level: SiteCatalogRecommendationLevel
-  recommendation_reason?: string
-  risk_level: SiteCatalogRiskLevel
-  logo_url?: string
-  screenshot_url?: string
-  primary_language?: string
-  country_or_region?: string
-  supplier_id?: number
-  metadata?: Record<string, unknown>
-  links?: SiteCatalogLink[]
-  categories?: SiteCatalogCategory[]
-  tags?: SiteCatalogTag[]
-  published_at?: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface SiteCatalogLinkPayload {
-  link_type: SiteCatalogLinkType
-  url: string
-  label?: string
-  is_primary?: boolean
-}
-
-export interface AddDiscoveryCandidateToCatalogPayload {
-  site_id?: number
-  slug?: string
-  name?: string
-  summary?: string
-  description?: string
-  site_kind?: SiteCatalogKind
-  status?: SiteCatalogStatus
-  visibility?: SiteCatalogVisibility
-  recommendation_level?: SiteCatalogRecommendationLevel
-  recommendation_reason?: string
-  risk_level?: SiteCatalogRiskLevel
-  category_ids?: number[]
-  tag_ids?: number[]
-  links?: SiteCatalogLinkPayload[]
-}
-
-export interface BulkAddDiscoveryCandidatesPayload {
-  q?: string
-  provider_type?: 'new_api' | 'sub2api' | ''
-  import_status?: SiteDiscoveryImportStatus | ''
-  registration_status?: SupplierRegistrationStatus | ''
-  processed_status?: 'processed' | 'unprocessed' | ''
-  only_supported?: boolean
-  limit?: number
-  site_kind?: SiteCatalogKind
-  status?: SiteCatalogStatus
-  visibility?: SiteCatalogVisibility
-  recommendation_level?: SiteCatalogRecommendationLevel
-  recommendation_reason?: string
-  risk_level?: SiteCatalogRiskLevel
-  category_ids?: number[]
-  tag_ids?: number[]
-}
-
-export interface BulkAddDiscoveryCandidatesResult {
-  total: number
-  created: number
-  skipped: number
-  failed: number
-  sites?: SiteCatalogSite[]
-  errors?: Array<{ discovery_id: number; name: string; error: string }>
-}
-
-export interface BulkPublishSiteCatalogSitesResult {
-  total: number
-  updated: number
-  skipped: number
-}
-
-export interface BulkPublishSiteCatalogSitesPayload {
-  ids?: number[]
-  q?: string
-  status?: SiteCatalogStatus | ''
-  site_kind?: SiteCatalogKind | ''
-  provider_type?: 'new_api' | 'sub2api' | ''
-}
-
-export interface BulkAddDiscoveryCandidatesProgressEvent {
-  type: 'started' | 'item_success' | 'item_skipped' | 'item_failed' | 'failed' | 'completed' | string
-  level?: SiteDiscoveryRunProgressLevel
-  message: string
-  current?: number
-  total?: number
-  item?: SiteCatalogSite
-  result?: BulkAddDiscoveryCandidatesResult
-}
 
 export interface SupplierRegistrationCredential {
   id: number
@@ -3215,112 +2618,8 @@ export interface LocalAccountScheduleSignal {
   effective_rate_multiplier?: number
 }
 
-export type MailVerificationProvider = 'gmail'
-export type MailVerificationPurpose = 'email_verification' | 'notification_email_verification' | ''
-
-export interface MailVerificationCredential {
-  id: number
-  provider: MailVerificationProvider
-  name?: string
-  email?: string
-  email_masked?: string
-  scopes?: string[]
-  token_type?: string
-  expires_at?: string | null
-  metadata?: Record<string, string>
-  last_checked_at?: string | null
-  last_error_code?: string
-  created_at: string
-  updated_at: string
-}
-
-export interface MailOAuthAuthorizePayload {
-  provider: MailVerificationProvider
-  redirect_uri: string
-  state?: string
-  login_hint?: string
-}
-
-export interface MailOAuthAuthorizeResult {
-  provider: MailVerificationProvider
-  authorize_url: string
-  scope: string
-}
-
-export interface MailOAuthExchangePayload {
-  provider: MailVerificationProvider
-  code: string
-  redirect_uri: string
-  name?: string
-}
-
-export interface MailOAuthSettings {
-  provider: MailVerificationProvider
-  enabled: boolean
-  client_id?: string
-  client_secret_configured: boolean
-  redirect_uri?: string
-  frontend_redirect_uri?: string
-}
-
-export interface UpdateMailOAuthSettingsPayload {
-  provider: MailVerificationProvider
-  client_id: string
-  client_secret?: string
-  redirect_uri?: string
-  frontend_redirect_uri?: string
-}
-
-export interface SaveMailCredentialPayload {
-  provider: MailVerificationProvider
-  name?: string
-  email: string
-  access_token: string
-  refresh_token?: string
-  scopes?: string[]
-  scope?: string
-  token_type?: string
-  expires_at?: string | null
-  expires_in?: number
-  metadata?: Record<string, string>
-}
-
-export interface ReadMailVerificationCodePayload {
-  provider?: MailVerificationProvider
-  credential_id: number
-  from?: string
-  keywords?: string[]
-  supplier_type?: Extract<SupplierType, 'new_api' | 'sub2api'> | ''
-  expected_purpose?: MailVerificationPurpose
-  site_name?: string
-  triggered_at?: string
-  timeout_seconds?: number
-  poll_interval_seconds?: number
-  max_results?: number
-}
-
-export interface MailVerificationCodeResult {
-  provider: MailVerificationProvider
-  code: string
-  message_id: string
-  received_at: string
-  template_family?: string
-  confidence?: number
-  supplier_type?: SupplierType
-  purpose?: string
-}
-
-export interface SendTestMailVerificationCodePayload {
-  credential_id: number
-  supplier_type?: Extract<SupplierType, 'new_api' | 'sub2api'> | ''
-  expected_purpose?: MailVerificationPurpose
-  site_name?: string
-  timeout_seconds?: number
-  poll_interval_seconds?: number
-}
-
 export type AdminPlusSystemLogLevel = '' | 'info' | 'warn' | 'error'
-export type AdminPlusSystemLogComponent = '' | 'admin_plus.login' | 'admin_plus.balance' | 'admin_plus.mail' | 'admin_plus.registration' | 'admin_plus.extension' | 'admin_plus.sub2api'
+export type AdminPlusSystemLogComponent = '' | 'admin_plus.login' | 'admin_plus.balance' | 'admin_plus.registration' | 'admin_plus.extension' | 'admin_plus.sub2api'
 
 export interface AdminPlusSystemLog {
   id: number
@@ -3350,56 +2649,6 @@ export async function listSuppliers(params?: Partial<Record<'kind' | 'type' | 'r
   return data
 }
 
-export async function createMailOAuthAuthorizeURL(payload: MailOAuthAuthorizePayload): Promise<MailOAuthAuthorizeResult> {
-  const { data } = await apiClient.post<MailOAuthAuthorizeResult>('/admin-plus/mails/oauth/authorize', payload)
-  return data
-}
-
-export async function exchangeMailOAuthCode(payload: MailOAuthExchangePayload): Promise<MailVerificationCredential> {
-  const { data } = await apiClient.post<MailVerificationCredential>('/admin-plus/mails/oauth/exchange', payload)
-  return data
-}
-
-export async function getMailOAuthSettings(provider: MailVerificationProvider = 'gmail'): Promise<MailOAuthSettings> {
-  const { data } = await apiClient.get<MailOAuthSettings>('/admin-plus/mails/oauth/config', { params: { provider } })
-  return data
-}
-
-export async function updateMailOAuthSettings(payload: UpdateMailOAuthSettingsPayload): Promise<MailOAuthSettings> {
-  const { data } = await apiClient.put<MailOAuthSettings>('/admin-plus/mails/oauth/config', payload)
-  return data
-}
-
-export async function listMailCredentials(params?: { provider?: MailVerificationProvider }): Promise<MailVerificationCredential[]> {
-  const { data } = await apiClient.get<MailVerificationCredential[]>('/admin-plus/mails/credentials', { params })
-  return data
-}
-
-export async function saveMailCredential(payload: SaveMailCredentialPayload): Promise<MailVerificationCredential> {
-  const { data } = await apiClient.post<MailVerificationCredential>('/admin-plus/mails/credentials', payload)
-  return data
-}
-
-export async function checkMailCredential(id: number): Promise<MailVerificationCredential> {
-  const { data } = await apiClient.post<MailVerificationCredential>(`/admin-plus/mails/credentials/${id}/check`)
-  return data
-}
-
-export async function readMailVerificationCode(payload: ReadMailVerificationCodePayload): Promise<MailVerificationCodeResult> {
-  const timeoutSeconds = payload.timeout_seconds && payload.timeout_seconds > 0 ? payload.timeout_seconds : 90
-  const { data } = await apiClient.post<MailVerificationCodeResult>('/admin-plus/mails/verification-code/read', payload, {
-    timeout: Math.min(Math.max(timeoutSeconds + 10, 30), 140) * 1000
-  })
-  return data
-}
-
-export async function sendTestMailVerificationCode(payload: SendTestMailVerificationCodePayload): Promise<MailVerificationCodeResult> {
-  const timeoutSeconds = payload.timeout_seconds && payload.timeout_seconds > 0 ? payload.timeout_seconds : 90
-  const { data } = await apiClient.post<MailVerificationCodeResult>('/admin-plus/mails/verification-code/send-test', payload, {
-    timeout: Math.min(Math.max(timeoutSeconds + 30, 60), 160) * 1000
-  })
-  return data
-}
 
 export async function listAdminPlusSystemLogs(params?: ListAdminPlusSystemLogsParams): Promise<AdminPlusListResponse<AdminPlusSystemLog>> {
   const { data } = await apiClient.get<AdminPlusListResponse<AdminPlusSystemLog>>('/admin/ops/system-logs', { params })
@@ -3805,122 +3054,6 @@ export async function listRateSnapshots(params?: { supplier_id?: number; model?:
   return data
 }
 
-export async function getKanbanOverview(params?: {
-  model?: string
-  target_margin_percent?: number
-  risk_buffer_percent?: number
-  limit?: number
-}): Promise<KanbanOverview> {
-  const { data } = await apiClient.get<KanbanOverview>('/admin-plus/kanban/overview', { params })
-  return data
-}
-
-export async function listMarketPriceSnapshots(params?: {
-  model?: string
-  source_type?: MarketPriceSourceType | string
-  site_id?: number
-  supplier_id?: number
-} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<MarketPriceSnapshot>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<MarketPriceSnapshot>>('/admin-plus/kanban/market-prices', { params })
-  return data
-}
-
-export async function recordMarketPrice(payload: CreateMarketPricePayload): Promise<MarketPriceSnapshot> {
-  const { data } = await apiClient.post<MarketPriceSnapshot>('/admin-plus/kanban/market-prices', payload)
-  return data
-}
-
-export async function parseMarketPrices(payload: ParseMarketPricesPayload): Promise<ParseMarketPricesResult> {
-  const { data } = await apiClient.post<ParseMarketPricesResult>('/admin-plus/kanban/market-prices/parse', payload)
-  return data
-}
-
-export async function importMarketPricesFromURL(payload: ImportMarketPricesFromURLPayload): Promise<ImportMarketPricesFromURLResult> {
-  const { data } = await apiClient.post<ImportMarketPricesFromURLResult>('/admin-plus/kanban/market-prices/import-url', payload)
-  return data
-}
-
-export async function discoverMarketPriceSources(params?: {
-  q?: string
-  include_low_confidence?: boolean
-  limit?: number
-}): Promise<MarketPriceSourceDiscoveryResult> {
-  const { data } = await apiClient.get<MarketPriceSourceDiscoveryResult>('/admin-plus/kanban/market-price-sources/discover', { params })
-  return data
-}
-
-export async function listCacheEfficiencySnapshots(params?: {
-  model?: string
-  supply_type?: CacheEfficiencySupplyType | string
-  supplier_id?: number
-  local_sub2api_account_id?: number
-  status?: CacheEfficiencyStatus | string
-} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<CacheEfficiencySnapshot>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<CacheEfficiencySnapshot>>('/admin-plus/kanban/cache-efficiency', { params })
-  return data
-}
-
-export async function recordCacheEfficiency(payload: CreateCacheEfficiencyPayload): Promise<CacheEfficiencySnapshot> {
-  const { data } = await apiClient.post<CacheEfficiencySnapshot>('/admin-plus/kanban/cache-efficiency', payload)
-  return data
-}
-
-export async function listSupplyQualitySnapshots(params?: {
-  model?: string
-  supply_type?: CacheEfficiencySupplyType | string
-  supplier_id?: number
-  local_sub2api_account_id?: number
-  decision?: SupplyQualityDecision | string
-} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<SupplyQualitySnapshot>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<SupplyQualitySnapshot>>('/admin-plus/kanban/supply-quality', { params })
-  return data
-}
-
-export async function recordSupplyQuality(payload: CreateSupplyQualityPayload): Promise<SupplyQualitySnapshot> {
-  const { data } = await apiClient.post<SupplyQualitySnapshot>('/admin-plus/kanban/supply-quality', payload)
-  return data
-}
-
-export async function listAcceptanceReports(params?: {
-  model?: string
-  supply_type?: CacheEfficiencySupplyType | string
-  supplier_id?: number
-  local_sub2api_account_id?: number
-  status?: SupplyQualityDecision | string
-} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<AcceptanceReport>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<AcceptanceReport>>('/admin-plus/kanban/acceptance-reports', { params })
-  return data
-}
-
-export async function recordAcceptanceReport(payload: CreateAcceptanceReportPayload): Promise<AcceptanceReport> {
-  const { data } = await apiClient.post<AcceptanceReport>('/admin-plus/kanban/acceptance-reports', payload)
-  return data
-}
-
-export async function generateAcceptanceReport(payload: GenerateAcceptanceReportPayload): Promise<AcceptanceReport> {
-  const { data } = await apiClient.post<AcceptanceReport>('/admin-plus/kanban/acceptance-reports/generate', payload)
-  return data
-}
-
-export async function refreshAcceptanceReportFromEvidenceRun(payload: RefreshAcceptanceReportFromEvidenceRunPayload): Promise<AcceptanceReport> {
-  const { data } = await apiClient.post<AcceptanceReport>('/admin-plus/kanban/acceptance-reports/refresh-from-run', payload)
-  return data
-}
-
-export async function listKanbanEvents(params?: {
-  model?: string
-  event_type?: KanbanEventType | string
-  severity?: KanbanEventSeverity | string
-  status?: KanbanEventStatus | string
-} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<KanbanEvent>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<KanbanEvent>>('/admin-plus/kanban/events', { params })
-  return data
-}
-
-export async function updateKanbanEventStatus(id: number, status: KanbanEventStatus): Promise<KanbanEvent> {
-  const { data } = await apiClient.patch<KanbanEvent>(`/admin-plus/kanban/events/${id}/status`, { status })
-  return data
-}
 
 export async function listBalanceEvents(params?: { supplier_id?: number; status?: string } & AdminPlusPaginationParams) {
   const { data } = await apiClient.get<AdminPlusListResponse<BalanceEvent>>('/admin-plus/balances/events', { params })
@@ -4241,7 +3374,6 @@ export async function runSiteDiscovery(payload?: {
   probe_interfaces?: boolean
   probe_sites?: boolean
   limit?: number
-  proxy_policy_id?: number
 }): Promise<SiteDiscoveryRunResult> {
   const { data } = await apiClient.post<SiteDiscoveryRunResult>('/admin-plus/site-discovery/runs', payload || {})
   return data
@@ -4253,7 +3385,6 @@ export async function runSiteDiscoveryStream(
     probe_interfaces?: boolean
     probe_sites?: boolean
     limit?: number
-    proxy_policy_id?: number
   },
   onEvent: (event: SiteDiscoveryRunProgressEvent) => void
 ): Promise<void> {
@@ -4356,8 +3487,8 @@ export async function importSiteDiscoveryItem(id: number): Promise<SiteDiscovery
   return data
 }
 
-export async function registerSiteDiscoveryItem(id: number, payload?: { proxy_policy_id?: number }): Promise<RegisterSiteDiscoveryItemResponse> {
-  const { data } = await apiClient.post<RegisterSiteDiscoveryItemResponse>(`/admin-plus/site-discovery/items/${id}/register`, payload || {})
+export async function registerSiteDiscoveryItem(id: number): Promise<RegisterSiteDiscoveryItemResponse> {
+  const { data } = await apiClient.post<RegisterSiteDiscoveryItemResponse>(`/admin-plus/site-discovery/items/${id}/register`)
   return data
 }
 
@@ -4370,8 +3501,8 @@ export async function listSiteDiscoveryRegistrationTasks(params?: {
   return data
 }
 
-export async function rerunSiteDiscoveryRegistration(id: number, payload?: { proxy_policy_id?: number }): Promise<RegisterSiteDiscoveryItemResponse> {
-  const { data } = await apiClient.post<RegisterSiteDiscoveryItemResponse>(`/admin-plus/site-discovery/registrations/${id}/rerun`, payload || {})
+export async function rerunSiteDiscoveryRegistration(id: number): Promise<RegisterSiteDiscoveryItemResponse> {
+  const { data } = await apiClient.post<RegisterSiteDiscoveryItemResponse>(`/admin-plus/site-discovery/registrations/${id}/rerun`)
   return data
 }
 
@@ -4385,92 +3516,6 @@ export async function listSiteDiscoveryRecommendations(params?: { limit?: number
   return data
 }
 
-export async function listSiteCatalogSites(params?: {
-  q?: string
-  status?: SiteCatalogStatus | ''
-  site_kind?: SiteCatalogKind | ''
-  provider_type?: 'new_api' | 'sub2api' | ''
-} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<SiteCatalogSite>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<SiteCatalogSite>>('/admin-plus/site-catalog/sites', { params })
-  return data
-}
-
-export async function getSiteCatalogSite(id: number): Promise<SiteCatalogSite> {
-  const { data } = await apiClient.get<SiteCatalogSite>(`/admin-plus/site-catalog/sites/${id}`)
-  return data
-}
-
-export async function deleteSiteCatalogSite(id: number): Promise<{ deleted: boolean }> {
-  const { data } = await apiClient.delete<{ deleted: boolean }>(`/admin-plus/site-catalog/sites/${id}`)
-  return data
-}
-
-export async function createSiteCatalogSite(payload: Partial<SiteCatalogSite> & {
-  links?: SiteCatalogLinkPayload[]
-  category_ids?: number[]
-  tag_ids?: number[]
-}): Promise<SiteCatalogSite> {
-  const { data } = await apiClient.post<SiteCatalogSite>('/admin-plus/site-catalog/sites', payload)
-  return data
-}
-
-export async function bulkPublishSiteCatalogSites(payload: BulkPublishSiteCatalogSitesPayload): Promise<BulkPublishSiteCatalogSitesResult> {
-  const { data } = await apiClient.post<BulkPublishSiteCatalogSitesResult>('/admin-plus/site-catalog/sites/bulk-publish', payload)
-  return data
-}
-
-export async function listSiteCatalogCategories(): Promise<{ items: SiteCatalogCategory[] }> {
-  const { data } = await apiClient.get<{ items: SiteCatalogCategory[] }>('/admin-plus/site-catalog/categories')
-  return data
-}
-
-export async function listSiteCatalogTags(): Promise<{ items: SiteCatalogTag[] }> {
-  const { data } = await apiClient.get<{ items: SiteCatalogTag[] }>('/admin-plus/site-catalog/tags')
-  return data
-}
-
-export async function addDiscoveryCandidateToCatalog(id: number, payload: AddDiscoveryCandidateToCatalogPayload): Promise<SiteCatalogSite> {
-  const { data } = await apiClient.post<SiteCatalogSite>(`/admin-plus/site-catalog/candidates/${id}/add`, payload)
-  return data
-}
-
-export async function bulkAddDiscoveryCandidatesToCatalogStream(
-  payload: BulkAddDiscoveryCandidatesPayload,
-  onEvent: (event: BulkAddDiscoveryCandidatesProgressEvent) => void
-): Promise<void> {
-  const baseURL = String(apiClient.defaults.baseURL || import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/+$/, '')
-  const token = localStorage.getItem('auth_token')
-  const response = await fetch(`${baseURL}/admin-plus/site-catalog/candidates/bulk-add/stream`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    },
-    body: JSON.stringify(payload || {})
-  })
-  if (!response.ok || !response.body) {
-    throw new Error(`批量加入目录启动失败：HTTP ${response.status}`)
-  }
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
-    for (const line of lines) {
-      const text = line.trim()
-      if (!text) continue
-      onEvent(JSON.parse(text) as BulkAddDiscoveryCandidatesProgressEvent)
-    }
-  }
-  if (buffer.trim()) {
-    onEvent(JSON.parse(buffer.trim()) as BulkAddDiscoveryCandidatesProgressEvent)
-  }
-}
 
 export async function generateActions(payload: {
   suppliers: SupplierSignal[]
@@ -4490,7 +3535,6 @@ export async function generateActions(payload: {
   local_account_schedule?: LocalAccountScheduleSignal[]
   balance_events?: BalanceEvent[]
   health_events?: HealthEvent[]
-  kanban_events?: KanbanEvent[]
   cost_snapshots?: SupplierCostSnapshot[]
   min_profit_margin?: number
 }) {
@@ -4571,238 +3615,6 @@ export async function listNotificationDeliveries(params?: { supplier_id?: number
   return data
 }
 
-export async function getProxyCenterStatus(): Promise<ProxyCenterStatus> {
-  const { data } = await apiClient.get<ProxyCenterStatus>('/admin-plus/proxy/center/status')
-  return data
-}
-
-export async function listProxySubscriptions(params?: { enabled?: boolean } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxySubscription>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<ProxySubscription>>('/admin-plus/proxy/subscriptions', { params })
-  return data
-}
-
-export async function createProxySubscription(payload: {
-  name: string
-  subscription_type: ProxySubscriptionType
-  subscription_url: string
-  enabled?: boolean
-  refresh_interval_seconds?: number
-  refresh_now?: boolean
-}): Promise<ProxySubscription> {
-  const { data } = await apiClient.post<ProxySubscription>('/admin-plus/proxy/subscriptions', payload)
-  return data
-}
-
-export async function updateProxySubscription(id: number, payload: Partial<{
-  name: string
-  subscription_type: ProxySubscriptionType
-  subscription_url: string
-  enabled: boolean
-  refresh_interval_seconds: number
-}>): Promise<ProxySubscription> {
-  const { data } = await apiClient.patch<ProxySubscription>(`/admin-plus/proxy/subscriptions/${id}`, payload)
-  return data
-}
-
-export async function refreshProxySubscription(id: number): Promise<ProxySubscription> {
-  const { data } = await apiClient.post<ProxySubscription>(`/admin-plus/proxy/subscriptions/${id}/refresh`)
-  return data
-}
-
-export async function deleteProxySubscription(id: number): Promise<void> {
-  await apiClient.delete(`/admin-plus/proxy/subscriptions/${id}`)
-}
-
-export async function listProxyNodes(params?: {
-  subscription_id?: number
-  health_status?: ProxyNodeHealthStatus | ''
-  include_disabled?: boolean
-  q?: string
-} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxyNode>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<ProxyNode>>('/admin-plus/proxy/nodes', { params })
-  return data
-}
-
-export async function checkProxyNode(id: number): Promise<ProxyNode> {
-  const { data } = await apiClient.post<ProxyNode>(`/admin-plus/proxy/nodes/${id}/check`)
-  return data
-}
-
-export async function checkProxyNodes(params?: {
-  subscription_id?: number
-  health_status?: ProxyNodeHealthStatus | ''
-  q?: string
-  limit?: number
-}): Promise<ProxyNodeBatchCheckResult> {
-  const { data } = await apiClient.post<ProxyNodeBatchCheckResult>('/admin-plus/proxy/nodes/check', undefined, { params })
-  return data
-}
-
-export async function disableProxyNode(id: number, reason?: string): Promise<ProxyNode> {
-  const { data } = await apiClient.post<ProxyNode>(`/admin-plus/proxy/nodes/${id}/disable`, { reason })
-  return data
-}
-
-export async function enableProxyNode(id: number): Promise<ProxyNode> {
-  const { data } = await apiClient.post<ProxyNode>(`/admin-plus/proxy/nodes/${id}/enable`)
-  return data
-}
-
-export async function listProxyPolicies(params?: { enabled?: boolean } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxyPolicy>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<ProxyPolicy>>('/admin-plus/proxy/policies', { params })
-  return data
-}
-
-export async function createProxyPolicy(payload: {
-  name: string
-  enabled?: boolean
-  subscription_ids?: number[]
-  preferred_regions?: string[]
-  max_concurrency?: number
-  max_switches_per_task?: number
-  connect_timeout_ms?: number
-  request_timeout_ms?: number
-  config?: Record<string, unknown>
-}): Promise<ProxyPolicy> {
-  const { data } = await apiClient.post<ProxyPolicy>('/admin-plus/proxy/policies', payload)
-  return data
-}
-
-export async function updateProxyPolicy(id: number, payload: Partial<{
-  name: string
-  enabled: boolean
-  subscription_ids: number[]
-  preferred_regions: string[]
-  max_concurrency: number
-  max_switches_per_task: number
-  connect_timeout_ms: number
-  request_timeout_ms: number
-  config: Record<string, unknown>
-}>): Promise<ProxyPolicy> {
-  const { data } = await apiClient.patch<ProxyPolicy>(`/admin-plus/proxy/policies/${id}`, payload)
-  return data
-}
-
-export async function deleteProxyPolicy(id: number): Promise<void> {
-  await apiClient.delete(`/admin-plus/proxy/policies/${id}`)
-}
-
-export async function listProxyTargets(policyID: number, params?: { purpose?: ProxyTaskPurpose | ''; enabled?: boolean } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxyTargetPolicy>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<ProxyTargetPolicy>>(`/admin-plus/proxy/policies/${policyID}/targets`, { params })
-  return data
-}
-
-export async function createProxyTarget(policyID: number, payload: {
-  target_host: string
-  purpose: ProxyTaskPurpose
-  allowed_methods?: string[]
-  rate_limit_per_minute?: number
-  enabled?: boolean
-  authorization_note?: string
-}): Promise<ProxyTargetPolicy> {
-  const { data } = await apiClient.post<ProxyTargetPolicy>(`/admin-plus/proxy/policies/${policyID}/targets`, payload)
-  return data
-}
-
-export async function updateProxyTarget(policyID: number, targetID: number, payload: Partial<{
-  target_host: string
-  purpose: ProxyTaskPurpose
-  allowed_methods: string[]
-  rate_limit_per_minute: number
-  enabled: boolean
-  authorization_note: string
-}>): Promise<ProxyTargetPolicy> {
-  const { data } = await apiClient.patch<ProxyTargetPolicy>(`/admin-plus/proxy/policies/${policyID}/targets/${targetID}`, payload)
-  return data
-}
-
-export async function deleteProxyTarget(policyID: number, targetID: number): Promise<void> {
-  await apiClient.delete(`/admin-plus/proxy/policies/${policyID}/targets/${targetID}`)
-}
-
-export async function listProxyRuntimeSlots(params?: { status?: ProxyRuntimeSlotStatus | '' } & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxyRuntimeSlot>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<ProxyRuntimeSlot>>('/admin-plus/proxy/runtime-slots', { params })
-  return data
-}
-
-export async function restartProxyRuntimeSlot(id: number): Promise<ProxyRuntimeSlot> {
-  const { data } = await apiClient.post<ProxyRuntimeSlot>(`/admin-plus/proxy/runtime-slots/${id}/restart`)
-  return data
-}
-
-export async function rotateProxyRuntimeSlotSecret(id: number): Promise<ProxyRuntimeSlot> {
-  const { data } = await apiClient.post<ProxyRuntimeSlot>(`/admin-plus/proxy/runtime-slots/${id}/rotate-secret`)
-  return data
-}
-
-export async function listProxyAssignments(params?: {
-  task_type?: string
-  task_id?: string
-  status?: ProxyAssignmentStatus | ''
-} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxyAssignment>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<ProxyAssignment>>('/admin-plus/proxy/assignments', { params })
-  return data
-}
-
-export async function createProxyAssignment(payload: {
-  task_type: string
-  task_id: string
-  policy_id: number
-  target_host: string
-  purpose: ProxyTaskPurpose
-  method?: string
-}): Promise<ProxyAssignment> {
-  const { data } = await apiClient.post<ProxyAssignment>('/admin-plus/proxy/assignments', payload)
-  return data
-}
-
-export async function releaseProxyAssignment(id: number, payload?: { failed?: boolean; error_code?: string; error_message?: string }): Promise<ProxyAssignment> {
-  const { data } = await apiClient.post<ProxyAssignment>(`/admin-plus/proxy/assignments/${id}/release`, payload || {})
-  return data
-}
-
-export async function switchProxyAssignment(id: number, payload: { node_id: number; error_code?: string; error_message?: string }): Promise<ProxyAssignment> {
-  const { data } = await apiClient.post<ProxyAssignment>(`/admin-plus/proxy/assignments/${id}/switch`, payload)
-  return data
-}
-
-export async function reportProxyAssignmentFailure(id: number, payload: { error_code?: string; error_message?: string; business_rejected?: boolean }): Promise<ProxyAssignment> {
-  const { data } = await apiClient.post<ProxyAssignment>(`/admin-plus/proxy/assignments/${id}/failure`, payload)
-  return data
-}
-
-export async function listProxyAuditEvents(params?: {
-  event_type?: string
-  task_type?: string
-  task_id?: string
-  policy_id?: number
-  slot_id?: number
-  node_id?: number
-  subscription_id?: number
-  level?: ProxyAuditLevel | ''
-  target_host?: string
-} & AdminPlusPaginationParams): Promise<AdminPlusListResponse<ProxyAuditEvent>> {
-  const { data } = await apiClient.get<AdminPlusListResponse<ProxyAuditEvent>>('/admin-plus/proxy/audit-events', { params })
-  return data
-}
-
-export async function downloadProxyAuditEvents(params?: {
-  event_type?: string
-  task_type?: string
-  task_id?: string
-  policy_id?: number
-  slot_id?: number
-  node_id?: number
-  subscription_id?: number
-  level?: ProxyAuditLevel | ''
-  target_host?: string
-}): Promise<Blob> {
-  const { data } = await apiClient.get<Blob>('/admin-plus/proxy/audit-events/export', {
-    params,
-    responseType: 'blob'
-  })
-  return data
-}
 
 export async function getBackupStatus(): Promise<BackupStatus> {
   const { data } = await apiClient.get<BackupStatus>('/admin-plus/backups/status')
@@ -4874,16 +3686,6 @@ export async function importMigrationArchive(archive: ImportExportArchive): Prom
   return data
 }
 
-export async function getServerRenewal(): Promise<ServerRenewalStatus> {
-  const { data } = await apiClient.get<ServerRenewalStatus>('/admin-plus/server-renewal')
-  return data
-}
-
-export async function updateServerRenewal(payload: Partial<ServerRenewalStatus>): Promise<ServerRenewalStatus> {
-  const { data } = await apiClient.put<ServerRenewalStatus>('/admin-plus/server-renewal', payload)
-  return data
-}
-
 export const adminPlusAPI = {
   listSuppliers,
   createSupplier,
@@ -4942,21 +3744,6 @@ export const adminPlusAPI = {
   updateSupplierAccount,
   deleteSupplierAccount,
   listRateSnapshots,
-  getKanbanOverview,
-  listMarketPriceSnapshots,
-  parseMarketPrices,
-  discoverMarketPriceSources,
-  recordMarketPrice,
-  listCacheEfficiencySnapshots,
-  recordCacheEfficiency,
-  listSupplyQualitySnapshots,
-  recordSupplyQuality,
-  listAcceptanceReports,
-  generateAcceptanceReport,
-  refreshAcceptanceReportFromEvidenceRun,
-  recordAcceptanceReport,
-  listKanbanEvents,
-  updateKanbanEventStatus,
   listBalanceEvents,
   listHealthEvents,
   importUsageCostLines,
@@ -5018,14 +3805,6 @@ export const adminPlusAPI = {
   rerunSiteDiscoveryRegistration,
   listSiteDiscoveryRegistrationLogs,
   listSiteDiscoveryRecommendations,
-  listSiteCatalogSites,
-  getSiteCatalogSite,
-  deleteSiteCatalogSite,
-  createSiteCatalogSite,
-  bulkPublishSiteCatalogSites,
-  listSiteCatalogCategories,
-  listSiteCatalogTags,
-  addDiscoveryCandidateToCatalog,
   generateActions,
   listActionRecommendations,
   updateActionRecommendationStatus,
@@ -5041,35 +3820,6 @@ export const adminPlusAPI = {
   testNotification,
   retryNotificationDelivery,
   listNotificationDeliveries,
-  getProxyCenterStatus,
-  listProxySubscriptions,
-  createProxySubscription,
-  updateProxySubscription,
-  refreshProxySubscription,
-  deleteProxySubscription,
-  listProxyNodes,
-  checkProxyNode,
-  checkProxyNodes,
-  disableProxyNode,
-  enableProxyNode,
-  listProxyPolicies,
-  createProxyPolicy,
-  updateProxyPolicy,
-  deleteProxyPolicy,
-  listProxyTargets,
-  createProxyTarget,
-  updateProxyTarget,
-  deleteProxyTarget,
-  listProxyRuntimeSlots,
-  restartProxyRuntimeSlot,
-  rotateProxyRuntimeSlotSecret,
-  listProxyAssignments,
-  createProxyAssignment,
-  releaseProxyAssignment,
-  switchProxyAssignment,
-  reportProxyAssignmentFailure,
-  listProxyAuditEvents,
-  downloadProxyAuditEvents,
   getBackupStatus,
   getBackupSettings,
   updateBackupSettings,
@@ -5084,8 +3834,6 @@ export const adminPlusAPI = {
   exportMigrationArchive,
   previewMigrationArchive,
   importMigrationArchive,
-  getServerRenewal,
-  updateServerRenewal,
   listAdminPlusSystemLogs
 }
 

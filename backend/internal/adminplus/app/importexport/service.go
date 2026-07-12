@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	ArchiveProduct = "sub2api-admin-plus"
-	ArchiveVersion = 1
+	ArchiveProduct       = "superllm"
+	legacyArchiveProduct = "sub2api-admin-plus"
+	ArchiveVersion       = 1
 )
 
 var errDatabaseNotConfigured = errors.New("import/export database is not configured")
@@ -273,7 +274,7 @@ func (s *Service) Preview(_ context.Context, archive Archive) (*PreviewResult, e
 	}
 
 	if containsSensitiveTable(result.IncludedTables) {
-		result.Warnings = append(result.Warnings, "导出包含账号凭据、API Key、邮件 token 或代理订阅等敏感密文，请只在可信环境保存和传输。")
+		result.Warnings = append(result.Warnings, "导出包含账号凭据或 API Key 等敏感密文，请只在可信环境保存和传输。")
 	}
 	if len(result.IgnoredTables) > 0 {
 		result.Warnings = append(result.Warnings, "导入时会忽略白名单外的日志、运行记录、审计事件或未知表。")
@@ -350,7 +351,7 @@ func (s *Service) Import(ctx context.Context, archive Archive) (*ImportResult, e
 }
 
 func (s *Service) validateArchive(archive Archive) error {
-	if archive.Product != ArchiveProduct {
+	if archive.Product != ArchiveProduct && archive.Product != legacyArchiveProduct {
 		return &ValidationError{message: fmt.Sprintf("unsupported archive product %q", archive.Product)}
 	}
 	if archive.Version != ArchiveVersion {

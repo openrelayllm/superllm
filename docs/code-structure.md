@@ -117,7 +117,7 @@ PATCH /api/v1/admin-plus/suppliers/:id/status
 admin_plus_suppliers
 ```
 
-`MemoryRepository` 仅保留给单元测试使用，不进入 Wire 运行时对象图。部署时应把 Admin Plus 指向独立 PostgreSQL 库，例如 `sub2api_admin_plus`；可以复用同一个 PostgreSQL 实例，但不得指向 Sub2API 原生产库。
+`MemoryRepository` 仅保留给单元测试使用，不进入 Wire 运行时对象图。部署时应把 SuperLLM 指向独立 PostgreSQL 库 `superllm`；可以复用同一个 PostgreSQL 实例，但不得指向 Sub2API 原生产库。
 
 供应商状态规则已在业务层固化：
 
@@ -535,7 +535,7 @@ GET  /api/admin-plus/auth/me
 Admin Plus 自有表使用独立 PostgreSQL 库，例如：
 
 ```text
-sub2api_admin_plus
+superllm
 ```
 
 建议自有表前缀：

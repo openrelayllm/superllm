@@ -283,17 +283,17 @@ func TestServiceEnrichRechargeURLsOnlyFillsEmptyFields(t *testing.T) {
 
 	enriched, err := svc.EnrichRechargeURLs(context.Background(), supplier.ID, CreateFromSiteCandidateInput{
 		SourceURL:        "https://relay.example.com/custom/first",
-		LocalRechargeURL: "https://sub2apiplus.example.com/custom/first",
+		LocalRechargeURL: "https://superllm.example.com/custom/first",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "https://relay.example.com/custom/first", enriched.ThirdPartyRechargeURL)
-	require.Equal(t, "https://sub2apiplus.example.com/custom/first", enriched.LocalRechargeURL)
+	require.Equal(t, "https://superllm.example.com/custom/first", enriched.LocalRechargeURL)
 
 	unchanged, err := svc.EnrichRechargeURLs(context.Background(), supplier.ID, CreateFromSiteCandidateInput{
 		ThirdPartyRechargeURL: "https://relay.example.com/custom/replaced",
-		LocalRechargeURL:      "https://sub2apiplus.example.com/custom/replaced",
+		LocalRechargeURL:      "https://superllm.example.com/custom/replaced",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "https://relay.example.com/custom/first", unchanged.ThirdPartyRechargeURL)
-	require.Equal(t, "https://sub2apiplus.example.com/custom/first", unchanged.LocalRechargeURL)
+	require.Equal(t, "https://superllm.example.com/custom/first", unchanged.LocalRechargeURL)
 }

@@ -233,7 +233,7 @@ func NewUserService(userRepo UserRepository, settingRepo SettingRepository, auth
 	}
 }
 
-// GetFirstAdmin 获取首个管理员用户（用于 Admin API Key 认证）
+// GetFirstAdmin 获取首个管理员用户。
 func (s *UserService) GetFirstAdmin(ctx context.Context) (*User, error) {
 	admin, err := s.userRepo.GetFirstAdmin(ctx)
 	if err != nil {

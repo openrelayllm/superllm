@@ -93,8 +93,7 @@
 	                <span class="badge" :class="platformBadgeClass(localAccount(row)?.platform || row.local_account_platform)">{{ platformLabel(localAccount(row)?.platform || row.local_account_platform) }}</span>
 	                <span class="badge badge-gray">{{ typeShortLabel(localAccount(row)?.type || row.local_account_type) }}</span>
 	              </div>
-              <span class="text-xs text-gray-500 dark:text-dark-400">{{ compactModeLabel(row) }}</span>
-            </div>
+	            </div>
           </template>
 
           <template #cell-capacity="{ row }">
@@ -111,19 +110,6 @@
 	              <span class="badge w-fit" :class="accountStatusClass(localAccount(row)?.status || '')">{{ accountStatusLabel(localAccount(row)?.status || '') }}</span>
 	              <span v-if="accountBlockReason(row)" class="badge badge-warning w-fit">{{ accountBlockReason(row) }}</span>
 	            </div>
-          </template>
-
-          <template #cell-schedulable="{ row }">
-            <div class="min-w-[88px]">
-              <span
-                class="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors"
-                :class="isSchedulable(row) ? 'bg-primary-500' : 'bg-gray-200 dark:bg-dark-600'"
-                :title="switchStateLabel(row)"
-              >
-                <span class="pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition" :class="isSchedulable(row) ? 'translate-x-4' : 'translate-x-0'" />
-              </span>
-              <div class="mt-1 text-xs" :class="switchStateClass(row)">{{ switchStateLabel(row) }}</div>
-            </div>
           </template>
 
 	          <template #cell-groups="{ row }">
@@ -340,7 +326,6 @@ const columns: Column[] = [
 	  { key: 'platform_type', label: '平台/类型' },
 	  { key: 'capacity', label: '容量' },
 	  { key: 'status', label: '状态' },
-	  { key: 'schedulable', label: '调度' },
 	  { key: 'today_stats', label: '今日统计' },
 	  { key: 'groups', label: '分组' },
 	  { key: 'usage', label: '用量窗口' },
@@ -483,12 +468,6 @@ function lastUsedAt(row: SupplierAccount): string {
   return accountRuntime(row)?.last_used_at || accountUsage(row).last30d.last_request_created_at || accountUsage(row).today.last_request_created_at || ''
 }
 
-function compactModeLabel(row: SupplierAccount): string {
-  const account = localAccount(row)
-  if (!account) return 'Compact Auto'
-  return account.schedulable ? 'Compact Auto' : '未加入调度'
-}
-
 function capacityPercent(row: SupplierAccount): number {
   const configured = accountRuntime(row)?.configured_limit || row.configured_concurrency || localAccount(row)?.concurrency || 0
   if (configured <= 0) return 0
@@ -505,23 +484,6 @@ function groupPlatform(row: SupplierAccount): GroupPlatform {
   if (provider.includes('gemini') || provider.includes('google')) return 'gemini'
   if (provider.includes('openai') || provider.includes('gpt')) return 'openai'
   return 'antigravity'
-}
-
-function isSchedulable(row: SupplierAccount): boolean {
-  return Boolean(localAccount(row)?.schedulable)
-}
-
-function switchStateLabel(row: SupplierAccount): string {
-  if (isSchedulable(row)) return '可调度'
-  if (localAccount(row)?.status === 'disabled') return '已停用'
-  if (localAccount(row)?.status === 'error') return '异常'
-  return '不切换'
-}
-
-function switchStateClass(row: SupplierAccount): string {
-  if (isSchedulable(row)) return 'text-emerald-700 dark:text-emerald-300'
-  if (row.health_status !== 'normal') return 'text-red-600 dark:text-red-300'
-  return 'text-gray-500 dark:text-dark-400'
 }
 
 function supplierLabel(id: number): string {

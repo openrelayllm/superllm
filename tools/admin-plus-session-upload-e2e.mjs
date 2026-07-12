@@ -4,7 +4,7 @@ import { createServer } from 'node:http'
 import process from 'node:process'
 
 const baseURL = trimTrailingSlash(process.env.ADMIN_PLUS_BASE_URL || 'http://localhost:3000')
-const email = process.env.ADMIN_PLUS_E2E_EMAIL || 'admin@sub2api-admin-plus.local'
+const email = process.env.ADMIN_PLUS_E2E_EMAIL || 'admin@superllm.local'
 const password = process.env.ADMIN_PLUS_E2E_PASSWORD || 'AdminPlus@123456'
 const allowNonLocal = process.env.ADMIN_PLUS_E2E_ALLOW_NON_LOCAL === '1'
 const runID = `e2e-session-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 8)}`

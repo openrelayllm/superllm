@@ -143,12 +143,12 @@
                 <li>下载 ZIP 并解压到本地目录。</li>
                 <li>打开 <span class="font-mono">chrome://extensions</span>，启用开发者模式。</li>
                 <li>选择“加载已解压的扩展程序”，指向解压后的目录。</li>
-                <li>在已登录 sub2apiplus 页面连接插件，再到供应商后台上报会话。</li>
+                <li>在已登录 SuperLLM 页面连接插件，再到供应商后台上报会话。</li>
               </ol>
             </div>
             <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
               <label class="block">
-                <span class="input-label">sub2apiplus 地址</span>
+                <span class="input-label">SuperLLM 地址</span>
                 <input :value="adminPlusOrigin" readonly class="input font-mono text-xs" />
               </label>
               <button type="button" class="btn btn-secondary" @click="copyText(adminPlusOrigin, '后台地址已复制')">复制地址</button>

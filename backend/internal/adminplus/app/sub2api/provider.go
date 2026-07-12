@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/wire"
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
@@ -17,6 +18,8 @@ import (
 
 var ProviderSet = wire.NewSet(
 	ProvideReadSQLDB,
+	NewIdentityRepository,
+	wire.Bind(new(service.AuthIdentityReader), new(*IdentityRepository)),
 	ProvideReadRedis,
 	NewSQLRepository,
 	NewRuntimeRepository,
@@ -42,7 +45,8 @@ func ProvideRoutingPort(local *SQLRepository, cfg *config.Config, client *http.C
 }
 
 type ReadDB struct {
-	DB *sql.DB
+	DB         *sql.DB
+	Configured bool
 }
 
 func ProvideReadSQLDB(defaultDB *sql.DB, cfg *config.Config) ReadDB {
@@ -57,7 +61,7 @@ func ProvideReadSQLDB(defaultDB *sql.DB, cfg *config.Config) ReadDB {
 	db.SetMaxOpenConns(16)
 	db.SetMaxIdleConns(4)
 	db.SetConnMaxLifetime(30 * time.Minute)
-	return ReadDB{DB: db}
+	return ReadDB{DB: db, Configured: true}
 }
 
 type Sub2APIRedis struct {

@@ -815,7 +815,7 @@ flowchart LR
 部署策略：
 
 - 复用 Sub2API 的 PostgreSQL 实例。
-- 使用独立数据库，例如 `sub2api_admin_plus`。
+- 使用独立数据库 `superllm`。
 - 不与 Sub2API 主库共用 schema。
 - admin-plus 的业务表、迁移记录、任务表、审计表全部写入独立数据库。
 - 读取 Sub2API 主库时必须使用独立只读连接配置，例如 `SUB2API_READONLY_DATABASE_URL`。
@@ -829,7 +829,7 @@ flowchart LR
 推荐连接划分：
 
 ```text
-ADMIN_PLUS_DATABASE_URL        -> PostgreSQL 实例 / sub2api_admin_plus，读写
+ADMIN_PLUS_DATABASE_URL        -> PostgreSQL 实例 / superllm，读写
 SUB2API_READONLY_DATABASE_URL  -> PostgreSQL 实例 / sub2api，严格只读
 ```
 
@@ -934,7 +934,7 @@ internal/
 
 - 读取 Sub2API 数据：通过 Admin API、只读 DB、只读 Redis。
 - 写入 Sub2API 数据：只通过 Admin API。
-- admin-plus 自有数据：写入独立 `sub2api_admin_plus` 数据库。
+- SuperLLM 自有数据：写入独立 `superllm` 数据库。
 - admin-plus 自有缓存、锁、队列：写入共享 Redis 的 `ADMIN_PLUS_REDIS_PREFIX` 前缀。
 
 升级流程：

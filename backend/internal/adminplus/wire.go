@@ -13,16 +13,12 @@ import (
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	importexportapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/importexport"
-	kanbanapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/kanban"
-	mailverificationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
 	notificationsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
 	provisionjobsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/provisionjobs"
-	proxyapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/proxy"
 	purityapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/purity"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	schedulerapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
 	sessionsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sessions"
-	sitecatalogapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sitecatalog"
 	sitediscoveryapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sitediscovery"
 	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	suppliergroupsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliergroups"
@@ -38,17 +34,12 @@ func ProvideBusinessLogRecorder(repo service.OpsRepository) *bizlogsapp.Recorder
 	return bizlogsapp.NewRecorder(repo)
 }
 
-func UseMailVerificationEmailSender(emailService *service.EmailService) mailverificationapp.EmailSender {
-	return emailService
-}
-
 var ProviderSet = wire.NewSet(
 	sub2apiprovider.ProvideHTTPClient,
 	sub2apiprovider.NewSessionProfileClient,
 	newapiprovider.NewClient,
 	providerrouter.New,
 	ProvideBusinessLogRecorder,
-	UseMailVerificationEmailSender,
 	wire.Bind(new(ports.SessionProbeAdapter), new(*providerrouter.Router)),
 	wire.Bind(new(ports.SessionLoginAdapter), new(*providerrouter.Router)),
 	wire.Bind(new(ports.DirectRegistrationAdapter), new(*providerrouter.Router)),
@@ -67,7 +58,6 @@ var ProviderSet = wire.NewSet(
 	costsapp.ProviderSet,
 	extensionapp.ProviderSet,
 	wire.Bind(new(extensionapp.RegistrationResultProcessor), new(*sitediscoveryapp.RegistrationProcessor)),
-	wire.Bind(new(sitediscoveryapp.ProxyManager), new(*proxyapp.Service)),
 	wire.Bind(new(extensionapp.BrowserCredentialProvider), new(*suppliersapp.Service)),
 	wire.Bind(new(balancesapp.SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(balancesapp.RecentSupplierUsageReader), new(*sub2apiapp.SQLRepository)),
@@ -99,20 +89,14 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(suppliergroupsapp.SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(supplierkeysapp.SessionReader), new(*sessionsapp.Service)),
 	wire.Bind(new(channelchecksapp.LocalBindingEnsurer), new(*supplierkeysapp.Service)),
-	wire.Bind(new(kanbanapp.SiteCatalogReader), new(*sitecatalogapp.Service)),
-	wire.Bind(new(kanbanapp.AcceptanceEvidenceScheduler), new(*schedulerapp.Service)),
 	healthapp.ProviderSet,
 	importexportapp.ProviderSet,
-	kanbanapp.ProviderSet,
-	mailverificationapp.ProviderSet,
 	notificationsapp.ProviderSet,
 	purityapp.ProviderSet,
 	ratesapp.ProviderSet,
 	provisionjobsapp.ProviderSet,
-	proxyapp.ProviderSet,
 	schedulerapp.ProviderSet,
 	sessionsapp.ProviderSet,
-	sitecatalogapp.ProviderSet,
 	sitediscoveryapp.ProviderSet,
 	sub2apiapp.ProviderSet,
 	suppliergroupsapp.ProviderSet,

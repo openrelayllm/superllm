@@ -588,7 +588,7 @@ func (h *Sub2APIHandler) applyManualLocalAccountOps(ctx context.Context, operato
 		Severity:           adminplusdomain.ActionSeverityInfo,
 		ReasonCode:         "local_account_manual_ops_apply",
 		Title:              manualLocalAccountOpsTitle(input),
-		Description:        "Manual local account operation executed from Admin Plus local account operations.",
+		Description:        "Manual local account operation executed from SuperLLM local account operations.",
 		ExpectedImpact:     "keep manual local routing changes in unified action execution history",
 		Signals:            manualLocalAccountOpsSignals(input),
 		OperatorUserID:     operatorID,

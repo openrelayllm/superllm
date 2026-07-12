@@ -12,7 +12,6 @@
               </p>
               <div class="mt-4 flex flex-wrap gap-2 text-xs">
                 <span class="badge badge-gray">采集源 {{ sourceURL || '-' }}</span>
-                <span class="badge badge-gray">代理 {{ proxyPolicySummary }}</span>
                 <span class="badge" :class="settings.registration_enabled ? 'badge-success' : 'badge-warning'">
                   {{ settings.registration_enabled ? '自动注册已启用' : '自动注册未启用' }}
                 </span>
@@ -27,10 +26,6 @@
               <button type="button" class="btn btn-secondary" :disabled="discoveryActionBusy" @click="classifyAllItemsNow">
                 <Icon name="search" size="sm" />
                 {{ classifying ? '识别中...' : '一键识别全部' }}
-              </button>
-              <button type="button" class="btn btn-secondary" :disabled="discoveryActionBusy" @click="bulkAddCatalogNow">
-                <Icon name="database" size="sm" />
-                {{ bulkAddingCatalog ? '加入中...' : '批量加入目录' }}
               </button>
               <button type="button" class="btn btn-primary" :disabled="discoveryActionBusy" @click="runDiscoveryNow">
                 <Icon name="play" size="sm" />
@@ -89,15 +84,12 @@
                 <button type="button" class="btn btn-secondary btn-sm" :disabled="discoveryActionBusy" @click="classifyAllItemsNow">
                   {{ classifying ? '识别中...' : '一键识别全部' }}
                 </button>
-                <button type="button" class="btn btn-secondary btn-sm" :disabled="discoveryActionBusy" @click="bulkAddCatalogNow">
-                  {{ bulkAddingCatalog ? '加入中...' : '批量加入目录' }}
-                </button>
                 <button type="button" class="btn btn-primary btn-sm" :disabled="discoveryActionBusy" @click="runDiscoveryNow">
                   {{ running ? '采集中...' : '开始采集' }}
                 </button>
               </div>
             </div>
-            <div class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_180px_120px_180px_180px] xl:items-end">
+            <div class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_120px_180px_180px] xl:items-end">
               <label class="block min-w-0">
                 <span class="input-label">采集源</span>
                 <input v-model.trim="sourceURL" class="input font-mono text-sm" />
@@ -115,16 +107,6 @@
                 </div>
               </label>
               <label class="block">
-                <span class="flex items-center justify-between gap-2">
-                  <span class="input-label">代理策略</span>
-                  <button type="button" class="text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400" @click="loadProxyPolicies">刷新</button>
-                </span>
-                <select v-model.number="proxyPolicyID" class="input">
-                  <option :value="0">不使用代理</option>
-                  <option v-for="policy in proxyPolicies" :key="policy.id" :value="policy.id">{{ proxyPolicyOptionLabel(policy) }}</option>
-                </select>
-              </label>
-              <label class="block">
                 <span class="input-label">本次上限</span>
                 <input v-model.number="runLimit" type="number" min="0" max="1000" class="input" />
               </label>
@@ -137,10 +119,6 @@
                 页面深度探测
               </label>
             </div>
-            <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-dark-400">
-              <span>{{ proxyPolicySummary }}</span>
-              <RouterLink to="/admin/proxy#egress" class="text-primary-600 hover:text-primary-700 dark:text-primary-400">配置代理出口</RouterLink>
-            </div>
           </div>
 
           <div class="card overflow-hidden">
@@ -149,7 +127,7 @@
                 <h2 class="text-lg font-semibold text-gray-900 dark:text-white">采集进度</h2>
                 <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ discoveryProgressLabel }}</p>
               </div>
-              <span class="badge" :class="discoveryActionBusy ? 'badge-warning' : 'badge-gray'">{{ running ? '采集中' : classifying ? '识别中' : bulkAddingCatalog ? '加入目录中' : bulkRegistering ? '批量注册中' : bulkRerunning ? '批量重跑中' : '空闲' }}</span>
+              <span class="badge" :class="discoveryActionBusy ? 'badge-warning' : 'badge-gray'">{{ running ? '采集中' : classifying ? '识别中' : bulkRegistering ? '批量注册中' : bulkRerunning ? '批量重跑中' : '空闲' }}</span>
             </div>
             <div class="p-5">
               <div class="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-800">
@@ -256,9 +234,6 @@
                 <button type="button" class="btn btn-sm" :class="classificationFilterClass('unknown')" @click="setClassificationFilter('unknown')">未知</button>
                 <button type="button" class="btn btn-sm" :class="providerFilterClass('')" @click="clearTypeFilters">全部类型</button>
                 <span class="mx-1 h-8 border-l border-gray-200 dark:border-dark-700"></span>
-                <button type="button" class="btn btn-secondary btn-sm" :disabled="discoveryActionBusy" @click="bulkAddCatalogNow">
-                  {{ bulkAddingCatalog ? '加入中...' : '批量加入目录' }}
-                </button>
                 <button type="button" class="btn btn-primary btn-sm" :disabled="discoveryActionBusy || bulkRegisterableItems.length === 0" @click="bulkRegisterCurrentPage">
                   {{ bulkRegisterButtonLabel }}
                 </button>
@@ -381,13 +356,9 @@
                 </td>
                 <td class="px-4 py-4">
                   <span class="badge" :class="processedClass(item)">{{ processedLabel(item) }}</span>
-                  <div v-if="item.catalog_site_id" class="mt-1 font-mono text-xs text-gray-500">目录 #{{ item.catalog_site_id }}</div>
                 </td>
                 <td class="px-4 py-4">
                   <div class="flex justify-end gap-2">
-                    <button v-if="activeTab !== 'tasks'" type="button" class="btn btn-secondary btn-sm" :disabled="!canAddToCatalog(item) || busyItemID === item.id || registrationBulkBusy" @click="openCatalogDialog(item)">
-                      加入目录
-                    </button>
                     <button v-if="activeTab !== 'tasks' && canShowImportButton(item)" type="button" class="btn btn-secondary btn-sm" :disabled="!canImport(item) || busyItemID === item.id || registrationBulkBusy" @click="importItem(item)">
                       {{ item.supplier_id ? '已入库' : '导入' }}
                     </button>
@@ -488,20 +459,6 @@
               </div>
             </label>
             <label class="block">
-              <span class="flex items-center justify-between gap-2">
-                <span class="input-label">代理策略</span>
-                <button type="button" class="text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400" @click="loadProxyPolicies">刷新</button>
-              </span>
-              <select v-model.number="proxyPolicyID" class="input">
-                <option :value="0">不使用代理</option>
-                <option v-for="policy in proxyPolicies" :key="policy.id" :value="policy.id">{{ proxyPolicyOptionLabel(policy) }}</option>
-              </select>
-            </label>
-            <div class="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500 dark:bg-dark-800 dark:text-dark-400">
-              <div>{{ proxyPolicySummary }}</div>
-              <RouterLink to="/admin/proxy#egress" class="mt-1 inline-block text-primary-600 hover:text-primary-700 dark:text-primary-400">配置代理出口</RouterLink>
-            </div>
-            <label class="block">
               <span class="input-label">本次上限</span>
               <input v-model.number="runLimit" type="number" min="0" max="1000" class="input" />
             </label>
@@ -553,113 +510,6 @@
       </div>
     </div>
 
-    <div v-if="catalogDialogOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div class="w-full max-w-3xl overflow-hidden rounded-lg bg-white shadow-xl dark:bg-dark-900">
-        <div class="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-dark-700">
-          <div>
-            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">加入网址目录</h2>
-            <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ selectedCatalogCandidate?.host || '-' }}</p>
-          </div>
-          <button type="button" class="btn btn-secondary btn-sm" :disabled="savingCatalog" @click="closeCatalogDialog">关闭</button>
-        </div>
-        <div class="max-h-[72vh] overflow-y-auto p-5">
-          <div class="grid gap-4 md:grid-cols-2">
-            <label class="block">
-              <span class="input-label">站点名称</span>
-              <input v-model.trim="catalogForm.name" class="input" />
-            </label>
-            <label class="block">
-              <span class="input-label">Slug</span>
-              <input v-model.trim="catalogForm.slug" class="input font-mono text-sm" />
-            </label>
-            <label class="block md:col-span-2">
-              <span class="input-label">摘要</span>
-              <input v-model.trim="catalogForm.summary" class="input" />
-            </label>
-            <label class="block md:col-span-2">
-              <span class="input-label">描述</span>
-              <textarea v-model.trim="catalogForm.description" rows="3" class="input"></textarea>
-            </label>
-            <label class="block">
-              <span class="input-label">站点类型</span>
-              <select v-model="catalogForm.site_kind" class="input">
-                <option value="api_relay">API 中转</option>
-                <option value="official">官方平台</option>
-                <option value="tool">工具</option>
-                <option value="client">客户端</option>
-                <option value="benchmark">评测</option>
-                <option value="other">其他</option>
-              </select>
-            </label>
-            <label class="block">
-              <span class="input-label">发布状态</span>
-              <select v-model="catalogForm.status" class="input">
-                <option value="draft">草稿</option>
-                <option value="reviewing">待审核</option>
-                <option value="published">已发布</option>
-              </select>
-            </label>
-            <label class="block">
-              <span class="input-label">可见性</span>
-              <select v-model="catalogForm.visibility" class="input">
-                <option value="public">公开</option>
-                <option value="private">私有</option>
-              </select>
-            </label>
-            <label class="block">
-              <span class="input-label">推荐级别</span>
-              <select v-model="catalogForm.recommendation_level" class="input">
-                <option value="none">不推荐</option>
-                <option value="normal">普通</option>
-                <option value="featured">重点推荐</option>
-                <option value="avoid">避坑</option>
-              </select>
-            </label>
-            <label class="block">
-              <span class="input-label">注册链接</span>
-              <input v-model.trim="catalogForm.register_url" class="input font-mono text-sm" />
-            </label>
-            <label class="block">
-              <span class="input-label">仪表盘链接</span>
-              <input v-model.trim="catalogForm.dashboard_url" class="input font-mono text-sm" />
-            </label>
-            <label class="block md:col-span-2">
-              <span class="input-label">API Base</span>
-              <input v-model.trim="catalogForm.api_base_url" class="input font-mono text-sm" />
-            </label>
-          </div>
-
-          <div class="mt-5 grid gap-5 md:grid-cols-2">
-            <div>
-              <div class="text-sm font-medium text-gray-900 dark:text-white">分类</div>
-              <div class="mt-2 max-h-36 overflow-y-auto rounded-md border border-gray-100 p-3 dark:border-dark-700">
-                <div v-if="catalogCategories.length === 0" class="text-sm text-gray-500 dark:text-dark-400">{{ catalogLookupsLoading ? '加载中...' : '暂无分类' }}</div>
-                <label v-for="category in catalogCategories" :key="category.id" class="mb-2 flex items-center gap-2 text-sm text-gray-700 last:mb-0 dark:text-dark-200">
-                  <input v-model="catalogForm.category_ids" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" :value="category.id" />
-                  {{ category.name }}
-                </label>
-              </div>
-            </div>
-            <div>
-              <div class="text-sm font-medium text-gray-900 dark:text-white">标签</div>
-              <div class="mt-2 max-h-36 overflow-y-auto rounded-md border border-gray-100 p-3 dark:border-dark-700">
-                <div v-if="catalogTags.length === 0" class="text-sm text-gray-500 dark:text-dark-400">{{ catalogLookupsLoading ? '加载中...' : '暂无标签' }}</div>
-                <label v-for="tag in catalogTags" :key="tag.id" class="mb-2 flex items-center gap-2 text-sm text-gray-700 last:mb-0 dark:text-dark-200">
-                  <input v-model="catalogForm.tag_ids" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" :value="tag.id" />
-                  {{ tag.name }}
-                </label>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="flex justify-end gap-2 border-t border-gray-100 px-5 py-4 dark:border-dark-700">
-          <button type="button" class="btn btn-secondary" :disabled="savingCatalog" @click="closeCatalogDialog">取消</button>
-          <button type="button" class="btn btn-primary" :disabled="savingCatalog || !catalogForm.name || !catalogForm.slug" @click="submitCatalogDialog">
-            {{ savingCatalog ? '保存中...' : '创建目录站点' }}
-          </button>
-        </div>
-      </div>
-    </div>
   </AppLayout>
 </template>
 
@@ -673,30 +523,18 @@ import { useAppStore } from '@/stores/app'
 import { extractApiErrorMetadata } from '@/utils/apiError'
 import {
   getSiteDiscoverySettings,
-  addDiscoveryCandidateToCatalog,
-  bulkAddDiscoveryCandidatesToCatalogStream,
   classifySiteDiscoveryItemsStream,
   importSiteDiscoveryItem,
-  listSiteCatalogCategories,
-  listSiteCatalogTags,
   listSiteDiscoveryItems,
   listSiteDiscoveryRecommendations,
   listSiteDiscoveryRegistrationLogs,
   listSiteDiscoveryRegistrationTasks,
-  listProxyPolicies,
   registerSiteDiscoveryItem,
   rerunSiteDiscoveryRegistration,
   runSiteDiscoveryStream,
   updateSiteDiscoverySettings,
   type AdminPlusSystemLog,
   type ExtensionTask,
-  type AddDiscoveryCandidateToCatalogPayload,
-  type SiteCatalogCategory,
-  type SiteCatalogKind,
-  type SiteCatalogRecommendationLevel,
-  type SiteCatalogStatus,
-  type SiteCatalogTag,
-  type SiteCatalogVisibility,
   type RegisterSiteDiscoveryItemResponse,
   type SiteDiscoveryItem,
   type SiteDiscoveryRecommendation,
@@ -704,8 +542,7 @@ import {
   type SiteDiscoveryRunProgressEvent,
   type SiteDiscoveryRunProgressLevel,
   type SiteDiscoveryRunResult,
-  type SiteDiscoverySettings,
-  type ProxyPolicy
+  type SiteDiscoverySettings
 } from '@/api/admin/adminPlus'
 import {
   canImportDiscoveredSupplier,
@@ -732,22 +569,6 @@ type DiscoveryLogEntry = {
   current?: number
   total?: number
 }
-type CatalogForm = {
-  name: string
-  slug: string
-  summary: string
-  description: string
-  site_kind: SiteCatalogKind
-  status: SiteCatalogStatus
-  visibility: SiteCatalogVisibility
-  recommendation_level: SiteCatalogRecommendationLevel
-  risk_level: 'unknown' | 'low' | 'medium' | 'high'
-  category_ids: number[]
-  tag_ids: number[]
-  register_url: string
-  dashboard_url: string
-  api_base_url: string
-}
 
 const appStore = useAppStore()
 
@@ -769,7 +590,6 @@ const activeTab = ref<SiteDiscoveryTab>('dashboard')
 const loading = ref(false)
 const running = ref(false)
 const classifying = ref(false)
-const bulkAddingCatalog = ref(false)
 const bulkRegistering = ref(false)
 const bulkRerunning = ref(false)
 const savingSettings = ref(false)
@@ -778,8 +598,6 @@ const sourceURL = ref('https://api.daheiai.com/')
 const probeInterfaces = ref(true)
 const probeSites = ref(false)
 const runLimit = ref(0)
-const proxyPolicyID = ref(0)
-const proxyPolicies = ref<ProxyPolicy[]>([])
 const items = ref<SiteDiscoveryItem[]>([])
 const registeredItems = ref<SiteDiscoveryItem[]>([])
 const registrationTasks = ref<SiteDiscoveryRegistrationTask[]>([])
@@ -804,12 +622,6 @@ const bulkRerunProgress = reactive({
   current: 0,
   total: 0
 })
-const catalogDialogOpen = ref(false)
-const savingCatalog = ref(false)
-const catalogLookupsLoading = ref(false)
-const selectedCatalogCandidate = ref<SiteDiscoveryItem | null>(null)
-const catalogCategories = ref<SiteCatalogCategory[]>([])
-const catalogTags = ref<SiteCatalogTag[]>([])
 let discoveryLogID = 0
 
 const settings = reactive<SiteDiscoverySettings>({
@@ -818,22 +630,6 @@ const settings = reactive<SiteDiscoverySettings>({
   low_rate_threshold: 0.8
 })
 
-const catalogForm = reactive<CatalogForm>({
-  name: '',
-  slug: '',
-  summary: '',
-  description: '',
-  site_kind: 'api_relay',
-  status: 'draft',
-  visibility: 'public',
-  recommendation_level: 'none',
-  risk_level: 'unknown',
-  category_ids: [],
-  tag_ids: [],
-  register_url: '',
-  dashboard_url: '',
-  api_base_url: ''
-})
 
 const urlFilters = reactive({
   q: '',
@@ -863,7 +659,7 @@ const isTableTab = computed(() => ['urls', 'registered', 'tasks'].includes(activ
 const supportedCount = computed(() => items.value.filter((item) => item.classification_status === 'supported').length)
 const manualCount = computed(() => registrationTasks.value.filter((task) => task.status === 'waiting_manual_verification').length)
 const registrationBulkBusy = computed(() => bulkRegistering.value || bulkRerunning.value)
-const discoveryActionBusy = computed(() => running.value || classifying.value || bulkAddingCatalog.value || registrationBulkBusy.value)
+const discoveryActionBusy = computed(() => running.value || classifying.value || registrationBulkBusy.value)
 const bulkRegisterableItems = computed(() => items.value.filter((item) => canRegister(item)))
 const bulkRerunnableItems = computed(() => registrationTaskItems.value.filter((item) => canRerunTask(item)))
 const bulkRegisterButtonLabel = computed(() => {
@@ -879,24 +675,10 @@ const discoveryProgressPercent = computed(() => {
   return Math.min(100, Math.round((discoveryProgress.current / discoveryProgress.total) * 100))
 })
 const discoveryProgressLabel = computed(() => {
-  if (bulkAddingCatalog.value) return '正在把已识别候选批量加入网址目录。'
   if (classifying.value) return '正在通过接口批量判断 new-api / sub2api 类型。'
   if (running.value) return '正在采集、去重、分类并写入候选库。'
   if (discoveryLogs.value.length > 0) return '最近一次采集或识别日志。'
   return '启动采集或一键识别后显示实时进度和日志。'
-})
-const selectedProxyPolicy = computed(() => proxyPolicies.value.find((policy) => policy.id === proxyPolicyID.value))
-const proxyPolicySummary = computed(() => {
-  const policy = selectedProxyPolicy.value
-  if (!policy) return proxyPolicies.value.length > 0 ? '当前采集和注册不使用代理。' : '暂无可用代理策略，请先到代理出口管理创建策略。'
-  if (!policy.enabled) return `代理策略「${policy.name}」已停用，请先启用后再用于采集或注册。`
-  const mode = String(policy.config?.selection_mode || 'auto')
-  if (mode === 'fixed') {
-    const fixedNodeID = proxyPolicyFixedNodeID(policy)
-    return fixedNodeID ? `当前策略固定使用节点 #${fixedNodeID}，采集和注册都会走该出口。` : '当前策略为固定出口，但还没有选择节点。'
-  }
-  const regions = policy.preferred_regions?.join(', ') || '不限地区'
-  return `当前策略自动选择健康节点，地区偏好：${regions}。`
 })
 
 const activeTableItems = computed(() => {
@@ -953,7 +735,7 @@ function defaultPagination(): SiteDiscoveryPagination {
 async function loadPage() {
   loading.value = true
   try {
-    await Promise.all([loadSettings(), loadProxyPolicies(), loadItems(), loadRegisteredItems(), loadRegistrationTasks(), loadRecommendations()])
+    await Promise.all([loadSettings(), loadItems(), loadRegisteredItems(), loadRegistrationTasks(), loadRecommendations()])
   } catch (error) {
     appStore.showError(errorMessage(error))
   } finally {
@@ -964,11 +746,6 @@ async function loadPage() {
 async function loadSettings() {
   const next = await getSiteDiscoverySettings()
   Object.assign(settings, next)
-}
-
-async function loadProxyPolicies() {
-  const result = await listProxyPolicies({ page: 1, page_size: 100 })
-  proxyPolicies.value = result.items || []
 }
 
 async function loadItems() {
@@ -1031,7 +808,6 @@ async function saveSettings() {
 }
 
 async function runDiscoveryNow() {
-  if (!ensureProxyPolicyUsable()) return
   running.value = true
   resetDiscoveryProgress()
   const completedResult: { value: SiteDiscoveryRunResult | null } = { value: null }
@@ -1041,8 +817,7 @@ async function runDiscoveryNow() {
       source_url: sourceURL.value,
       probe_interfaces: probeInterfaces.value,
       probe_sites: probeSites.value,
-      limit: runLimit.value > 0 ? runLimit.value : undefined,
-      proxy_policy_id: proxyPolicyID.value > 0 ? proxyPolicyID.value : undefined
+      limit: runLimit.value > 0 ? runLimit.value : undefined
     }, (event) => {
       handleDiscoveryProgressEvent(event)
       if (event.result) completedResult.value = event.result
@@ -1085,39 +860,6 @@ async function classifyAllItemsNow() {
   }
 }
 
-async function bulkAddCatalogNow() {
-  bulkAddingCatalog.value = true
-  resetDiscoveryProgress()
-  let failedMessage = ''
-  try {
-    await bulkAddDiscoveryCandidatesToCatalogStream({
-      q: urlFilters.q || undefined,
-      provider_type: normalizeEmpty(urlFilters.provider_type) as 'new_api' | 'sub2api' | '',
-      import_status: normalizeEmpty(urlFilters.import_status) as never,
-      registration_status: normalizeEmpty(urlFilters.registration_status) as never,
-      processed_status: normalizeEmpty(urlFilters.processed_status) as 'processed' | 'unprocessed' | '',
-      only_supported: false,
-      limit: 1000,
-      site_kind: 'api_relay',
-      status: 'draft',
-      visibility: 'public',
-      recommendation_level: 'none',
-      risk_level: 'unknown'
-    }, (event) => {
-      handleBulkAddCatalogProgressEvent(event)
-      if (event.type === 'failed') failedMessage = event.message
-    })
-    if (failedMessage) throw new Error(failedMessage)
-    appStore.showSuccess('批量加入目录完成')
-    urlPagination.page = 1
-    activeTab.value = 'urls'
-    await refreshActiveLists()
-  } catch (error) {
-    appStore.showError(errorMessage(error))
-  } finally {
-    bulkAddingCatalog.value = false
-  }
-}
 
 function resetDiscoveryProgress() {
   discoveryProgress.current = 0
@@ -1146,21 +888,6 @@ function handleDiscoveryProgressEvent(event: SiteDiscoveryRunProgressEvent) {
   })
 }
 
-function handleBulkAddCatalogProgressEvent(event: { type: string; level?: SiteDiscoveryRunProgressLevel; message: string; current?: number; total?: number; result?: { total: number } }) {
-  if (typeof event.total === 'number') discoveryProgress.total = event.total
-  if (typeof event.current === 'number') discoveryProgress.current = event.current
-  if (event.result?.total) {
-    discoveryProgress.total = event.result.total
-    discoveryProgress.current = event.result.total
-  }
-  appendDiscoveryLog({
-    id: ++discoveryLogID,
-    level: event.level || discoveryLevelFromType(event.type),
-    message: event.message || event.type,
-    current: event.current,
-    total: event.total
-  })
-}
 
 function discoveryLevelFromType(type: string): SiteDiscoveryRunProgressLevel {
   if (type === 'item_success' || type === 'completed') return 'success'
@@ -1199,12 +926,9 @@ async function importItem(item: SiteDiscoveryItem) {
 }
 
 async function registerItem(item: SiteDiscoveryItem) {
-  if (!ensureProxyPolicyUsable()) return
   busyItemID.value = item.id
   try {
-    const result = await registerSiteDiscoveryItem(item.id, {
-      proxy_policy_id: proxyPolicyID.value > 0 ? proxyPolicyID.value : undefined
-    })
+    const result = await registerSiteDiscoveryItem(item.id)
     appStore.showSuccess(registrationActionSuccessMessage(result))
     taskPagination.page = 1
     taskFilters.registration_status = ''
@@ -1221,7 +945,6 @@ async function registerItem(item: SiteDiscoveryItem) {
 }
 
 async function bulkRegisterCurrentPage() {
-  if (!ensureProxyPolicyUsable()) return
   const candidates = bulkRegisterableItems.value.slice()
   if (candidates.length === 0) {
     appStore.showError('当前页没有可注册站点')
@@ -1237,9 +960,7 @@ async function bulkRegisterCurrentPage() {
     for (const item of candidates) {
       busyItemID.value = item.id
       try {
-        const result = await registerSiteDiscoveryItem(item.id, {
-          proxy_policy_id: proxyPolicyID.value > 0 ? proxyPolicyID.value : undefined
-        })
+        const result = await registerSiteDiscoveryItem(item.id)
         if (result.credential.status === 'failed') {
           failed++
           if (!firstError) firstError = registrationFailureMessage(result.credential)
@@ -1266,45 +987,19 @@ async function bulkRegisterCurrentPage() {
   }
 }
 
-function proxyPolicyFixedNodeID(policy: ProxyPolicy): number {
-  const value = policy.config?.fixed_node_id
-  if (typeof value === 'number') return value
-  if (typeof value === 'string') return Number(value) || 0
-  return 0
-}
-
-function proxyPolicyOptionLabel(policy: ProxyPolicy): string {
-  return policy.enabled ? policy.name : `${policy.name}（停用）`
-}
 
 function selectSourcePreset(url: string) {
   sourceURL.value = url
 }
 
-function ensureProxyPolicyUsable(): boolean {
-  if (proxyPolicyID.value <= 0) return true
-  const policy = selectedProxyPolicy.value
-  if (!policy) {
-    appStore.showError('代理策略不存在，请刷新代理策略后重试')
-    return false
-  }
-  if (!policy.enabled) {
-    appStore.showError('当前代理策略已停用，请先在代理出口管理启用后再使用')
-    return false
-  }
-  return true
-}
 
 async function rerunRegistration(item: SiteDiscoveryItem) {
-  if (!ensureProxyPolicyUsable()) return
   const task = registrationTaskForItem(item)
   const registrationID = task?.registration_id || task?.id || 0
   if (!task || !registrationID) return
   busyItemID.value = item.id
   try {
-    const result = await rerunSiteDiscoveryRegistration(registrationID, {
-      proxy_policy_id: proxyPolicyID.value > 0 ? proxyPolicyID.value : undefined
-    })
+    const result = await rerunSiteDiscoveryRegistration(registrationID)
     appStore.showSuccess(registrationActionSuccessMessage(result, true))
     await refreshActiveLists()
     await refreshOpenRegistrationLogs(registrationID)
@@ -1318,7 +1013,6 @@ async function rerunRegistration(item: SiteDiscoveryItem) {
 }
 
 async function bulkRerunCurrentPage() {
-  if (!ensureProxyPolicyUsable()) return
   const candidates = bulkRerunnableItems.value.slice()
   if (candidates.length === 0) {
     appStore.showError('当前页没有可重跑的注册流程')
@@ -1342,9 +1036,7 @@ async function bulkRerunCurrentPage() {
       }
       busyItemID.value = item.id
       try {
-        const result = await rerunSiteDiscoveryRegistration(registrationID, {
-          proxy_policy_id: proxyPolicyID.value > 0 ? proxyPolicyID.value : undefined
-        })
+        const result = await rerunSiteDiscoveryRegistration(registrationID)
         if (result.credential.status === 'failed') {
           failed++
           if (!firstError) firstError = registrationFailureMessage(result.credential)
@@ -1427,111 +1119,6 @@ function closeRegistrationLogs() {
   registrationLogs.value = []
 }
 
-async function openCatalogDialog(item: SiteDiscoveryItem) {
-  selectedCatalogCandidate.value = item
-  resetCatalogForm(item)
-  catalogDialogOpen.value = true
-  try {
-    await ensureCatalogLookups()
-    preselectCatalogCategory()
-    catalogForm.tag_ids = suggestedTagIDs(item)
-  } catch (error) {
-    appStore.showError(errorMessage(error))
-  }
-}
-
-function closeCatalogDialog() {
-  if (savingCatalog.value) return
-  catalogDialogOpen.value = false
-  selectedCatalogCandidate.value = null
-}
-
-async function ensureCatalogLookups() {
-  if (catalogCategories.value.length > 0 || catalogTags.value.length > 0) return
-  catalogLookupsLoading.value = true
-  try {
-    const [categories, tags] = await Promise.all([listSiteCatalogCategories(), listSiteCatalogTags()])
-    catalogCategories.value = categories.items
-    catalogTags.value = tags.items
-  } finally {
-    catalogLookupsLoading.value = false
-  }
-}
-
-function resetCatalogForm(item: SiteDiscoveryItem) {
-  catalogForm.name = item.name || item.host || `site-${item.id}`
-  catalogForm.slug = slugFromDiscoveryItem(item)
-  catalogForm.summary = truncateText(item.description || item.name || item.host || '', 120)
-  catalogForm.description = item.description || ''
-  catalogForm.site_kind = 'api_relay'
-  catalogForm.status = 'draft'
-  catalogForm.visibility = 'public'
-  catalogForm.recommendation_level = 'none'
-  catalogForm.risk_level = 'unknown'
-  catalogForm.category_ids = []
-  catalogForm.tag_ids = suggestedTagIDs(item)
-  catalogForm.register_url = item.register_url || ''
-  catalogForm.dashboard_url = item.dashboard_url || item.register_url || ''
-  catalogForm.api_base_url = item.api_base_url || ''
-}
-
-function preselectCatalogCategory() {
-  if (catalogForm.category_ids.length > 0) return
-  const matched = catalogCategories.value.find((category) => {
-    const value = `${category.slug} ${category.name}`.toLowerCase()
-    return value.includes('third') || value.includes('relay') || value.includes('中转') || value.includes('第三方')
-  })
-  if (matched) catalogForm.category_ids = [matched.id]
-}
-
-function suggestedTagIDs(item: SiteDiscoveryItem): number[] {
-  const text = `${item.provider_type || ''} ${item.description || ''} ${item.source_category || ''}`.toLowerCase()
-  return catalogTags.value.filter((tag) => {
-    const value = `${tag.slug} ${tag.name}`.toLowerCase()
-    return text.includes(value) || (item.provider_type === 'new_api' && value.includes('new')) || (item.provider_type === 'sub2api' && value.includes('sub2api'))
-  }).map((tag) => tag.id)
-}
-
-async function submitCatalogDialog() {
-  const candidate = selectedCatalogCandidate.value
-  if (!candidate) return
-  savingCatalog.value = true
-  busyItemID.value = candidate.id
-  try {
-    const payload: AddDiscoveryCandidateToCatalogPayload = {
-      name: catalogForm.name,
-      slug: catalogForm.slug,
-      summary: catalogForm.summary,
-      description: catalogForm.description,
-      site_kind: catalogForm.site_kind,
-      status: catalogForm.status,
-      visibility: catalogForm.visibility,
-      recommendation_level: catalogForm.recommendation_level,
-      risk_level: catalogForm.risk_level,
-      category_ids: catalogForm.category_ids,
-      tag_ids: catalogForm.tag_ids,
-      links: catalogLinksFromForm()
-    }
-    await addDiscoveryCandidateToCatalog(candidate.id, payload)
-    appStore.showSuccess('已加入网址目录')
-    catalogDialogOpen.value = false
-    selectedCatalogCandidate.value = null
-    await refreshActiveLists()
-  } catch (error) {
-    appStore.showError(errorMessage(error))
-  } finally {
-    savingCatalog.value = false
-    busyItemID.value = null
-  }
-}
-
-function catalogLinksFromForm(): AddDiscoveryCandidateToCatalogPayload['links'] {
-  const links: NonNullable<AddDiscoveryCandidateToCatalogPayload['links']> = []
-  if (catalogForm.register_url) links.push({ link_type: 'register', url: catalogForm.register_url, label: '注册', is_primary: true })
-  if (catalogForm.dashboard_url && catalogForm.dashboard_url !== catalogForm.register_url) links.push({ link_type: 'dashboard', url: catalogForm.dashboard_url, label: '控制台' })
-  if (catalogForm.api_base_url) links.push({ link_type: 'api_base', url: catalogForm.api_base_url, label: 'API Base' })
-  return links
-}
 
 async function refreshActiveLists() {
   await Promise.all([loadItems(), loadRegisteredItems(), loadRegistrationTasks(), loadRecommendations()])
@@ -1631,10 +1218,6 @@ function canImport(item: SiteDiscoveryItem): boolean {
 
 function canShowImportButton(item: SiteDiscoveryItem): boolean {
   return Boolean(item.supplier_id) || item.registration_status === 'succeeded'
-}
-
-function canAddToCatalog(item: SiteDiscoveryItem): boolean {
-  return item.process_status !== 'added_to_catalog' && !item.catalog_site_id
 }
 
 function canRegister(item: SiteDiscoveryItem): boolean {
@@ -1786,7 +1369,6 @@ function registrationLogEntries(log: AdminPlusSystemLog): Array<{ key: string; l
 function systemLogComponentLabel(component: string): string {
   if (component === 'admin_plus.registration') return '注册'
   if (component === 'admin_plus.extension') return '插件'
-  if (component === 'admin_plus.mail') return '验证码'
   return component
 }
 
@@ -1822,24 +1404,6 @@ function fixedRate(value: number): string {
   return Number.isFinite(value) ? value.toFixed(3) : '-'
 }
 
-function slugFromDiscoveryItem(item: SiteDiscoveryItem): string {
-  const value = item.host || safeHostname(item.register_url) || item.name || `site-${item.id}`
-  return value.toLowerCase().replace(/^www\./, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || `site-${item.id}`
-}
-
-function safeHostname(value?: string): string {
-  if (!value) return ''
-  try {
-    return new URL(value).hostname
-  } catch {
-    return ''
-  }
-}
-
-function truncateText(value: string, max: number): string {
-  return value.length > max ? `${value.slice(0, max - 1)}...` : value
-}
-
 function normalizeEmpty(value: string): string | undefined {
   return value.trim() || undefined
 }
@@ -1863,23 +1427,23 @@ function registrationFailureMessage(error: unknown): string {
   if (code === 'SUPPLIER_DIRECT_REGISTRATION_FAILED' || raw.includes('new api registration endpoint is unreachable') || raw.includes('failed to request new api registration endpoint')) {
     switch (kind) {
       case 'dns':
-        return `无法解析注册接口域名，请检查站点地址或代理 DNS${diagnostic}`
+        return `无法解析注册接口域名，请检查站点地址或 DNS${diagnostic}`
       case 'timeout':
-        return `注册接口请求超时，请检查站点可达性、代理策略或稍后重试${diagnostic}`
+        return `注册接口请求超时，请检查站点可达性或稍后重试${diagnostic}`
       case 'connection_refused':
         return `注册接口拒绝连接，请检查 API Base URL 是否正确${diagnostic}`
       case 'connection_reset':
-        return `注册接口连接被中断，请检查代理出口或供应商站点防护${diagnostic}`
+        return `注册接口连接被中断，请检查网络连接或供应商站点防护${diagnostic}`
       case 'tls':
-        return `注册接口 TLS 握手失败，请检查 HTTPS 证书或代理链路${diagnostic}`
+        return `注册接口 TLS 握手失败，请检查 HTTPS 证书和网络链路${diagnostic}`
       case 'proxy':
-        return `代理连接注册接口失败，请检查代理策略和节点可用性${diagnostic}`
+        return `网络代理连接注册接口失败，请检查运行环境网络配置${diagnostic}`
       default:
-        return `无法连接注册接口，请检查站点是否可达、API Base URL 或代理策略${diagnostic}`
+        return `无法连接注册接口，请检查站点是否可达或 API Base URL${diagnostic}`
     }
   }
   if (code === 'SUPPLIER_VERIFICATION_CODE_REQUEST_FAILED') {
-    return `验证码请求接口不可达，请检查站点是否可达或代理策略${diagnostic}`
+    return `验证码请求接口不可达，请检查站点是否可达${diagnostic}`
   }
   if (code === 'REGISTRATION_DISABLED') return '供应商站点已关闭新用户注册'
   if (code === 'PASSWORD_REGISTER_DISABLED') return '供应商站点已关闭密码注册'

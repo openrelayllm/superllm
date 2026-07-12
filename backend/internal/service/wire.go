@@ -37,10 +37,11 @@ func ProvideUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, b
 	return NewUpdateService(cache, githubClient, buildInfo.Version, buildInfo.BuildType)
 }
 
-// ProvideAdminPlusAuthService wires only the authentication dependencies used by Admin Plus.
+// ProvideAdminPlusAuthService wires only the authentication dependencies used by SuperLLM.
 func ProvideAdminPlusAuthService(
 	entClient *dbent.Client,
 	userRepo UserRepository,
+	identityReader AuthIdentityReader,
 	refreshTokenCache RefreshTokenCache,
 	cfg *config.Config,
 	settingService *SettingService,
@@ -62,7 +63,7 @@ func ProvideAdminPlusAuthService(
 		nil,
 		nil,
 		nil,
-	)
+	).WithIdentityReader(identityReader)
 }
 
 // ProvideEmailQueueService creates EmailQueueService with default worker count
@@ -250,7 +251,7 @@ func ProvideDeferredService(accountRepo AccountRepository, timingWheel *TimingWh
 	return svc
 }
 
-// ProvideConcurrencyService creates ConcurrencyService for Admin Plus read-only ops views.
+// ProvideConcurrencyService creates ConcurrencyService for SuperLLM read-only ops views.
 func ProvideConcurrencyService(cache ConcurrencyCache, cfg *config.Config) *ConcurrencyService {
 	svc := NewConcurrencyService(cache)
 	if cfg != nil {
@@ -435,12 +436,12 @@ func ProvideScheduledTestRunnerService(
 // ProvideOpsScheduledReportService creates and starts OpsScheduledReportService.
 func ProvideOpsScheduledReportService(
 	opsService *OpsService,
-	userService *UserService,
+	identityReader AuthIdentityReader,
 	emailService *EmailService,
 	redisClient *redis.Client,
 	cfg *config.Config,
 ) *OpsScheduledReportService {
-	svc := NewOpsScheduledReportService(opsService, userService, emailService, redisClient, cfg)
+	svc := NewOpsScheduledReportService(opsService, identityReader, emailService, redisClient, cfg)
 	svc.Start()
 	return svc
 }

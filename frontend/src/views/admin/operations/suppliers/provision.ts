@@ -436,7 +436,7 @@ export function attachSupplierProvision(ctx: any) {
   async function disableCurrentKeyLocalProjection(key: SupplierKey) {
     if (!groupsSupplier.value || !key || keyProjectionDisabling.value) return
     const confirmed = window.confirm([
-      '仅释放 Admin Plus 本地配额投影，不会删除第三方供应商后台 Key。',
+      '仅释放 SuperLLM 本地配额投影，不会删除第三方供应商后台 Key。',
       '如果该 Key 已落地本地账号，本地账号调度状态不会在这里自动变更。',
       '确认继续？'
     ].join('\n'))
@@ -498,7 +498,7 @@ export function attachSupplierProvision(ctx: any) {
     }
     const confirmation = window.prompt([
       '将调用第三方供应商后台删除这个 Key，可能不可恢复。',
-      '成功后 Admin Plus 会把本地 Key 投影标记为停用；下一步会预览本地账号调度影响，可选择同步关闭或仅处理第三方 Key。',
+      '成功后 SuperLLM 会把本地 Key 投影标记为停用；下一步会预览本地账号调度影响，可选择同步关闭或仅处理第三方 Key。',
       '请输入“删除”确认。'
     ].join('\n'))
     if (confirmation !== '删除') return

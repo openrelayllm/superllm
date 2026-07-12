@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Annotated tag to publish, for example v0.41.0'
+        description: 'Annotated tag to publish, for example v0.42.0'
         required: true
         type: string
       deploy_railway:
@@ -47,8 +47,8 @@ jobs:
           echo "$VERSION" > backend/cmd/server/VERSION
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "docker_image=wutongci/sub2api-admin-plus:$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Publishing Sub2API Admin Plus $VERSION"
+          echo "docker_image=wutongci/superllm:$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing SuperLLM $VERSION"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -138,8 +138,8 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: wutongci/sub2api-admin-plus
-          short-description: 'Sub2API Admin Plus - operations automation extension'
+          repository: wutongci/superllm
+          short-description: 'SuperLLM - operations automation extension'
           readme-filepath: ./deploy/DOCKER.md
 
   deploy-railway:

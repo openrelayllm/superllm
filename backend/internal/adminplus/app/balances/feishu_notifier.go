@@ -59,7 +59,7 @@ func buildFeishuBalanceText(event *adminplusdomain.BalanceEvent, snapshot *admin
 		capturedAt = snapshot.CapturedAt
 	}
 	return fmt.Sprintf(
-		"【Sub2API Admin Plus 余额通知】\n事件：%s\n供应商ID：%d\n余额：%s\n上次余额：%s\n低余额阈值：%s\n运行状态：%s\n可切换：%s\n来源：%s\n时间：%s",
+		"【SuperLLM 余额通知】\n事件：%s\n供应商ID：%d\n余额：%s\n上次余额：%s\n低余额阈值：%s\n运行状态：%s\n可切换：%s\n来源：%s\n时间：%s",
 		eventType,
 		event.SupplierID,
 		current,

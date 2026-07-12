@@ -15,11 +15,6 @@ export interface SystemSettings {
 
 export type UpdateSettingsRequest = Partial<SystemSettings>
 
-export interface AdminApiKeyStatus {
-  exists: boolean
-  masked_key: string
-}
-
 export async function getSettings(): Promise<SystemSettings> {
   const { data } = await apiClient.get<SystemSettings>('/admin/settings')
   return data
@@ -30,25 +25,7 @@ export async function updateSettings(settings: UpdateSettingsRequest): Promise<S
   return data
 }
 
-export async function getAdminApiKey(): Promise<AdminApiKeyStatus> {
-  const { data } = await apiClient.get<AdminApiKeyStatus>('/admin/settings/admin-api-key')
-  return data
-}
-
-export async function regenerateAdminApiKey(): Promise<{ key: string }> {
-  const { data } = await apiClient.post<{ key: string }>('/admin/settings/admin-api-key/regenerate')
-  return data
-}
-
-export async function deleteAdminApiKey(): Promise<{ message: string }> {
-  const { data } = await apiClient.delete<{ message: string }>('/admin/settings/admin-api-key')
-  return data
-}
-
 export default {
   getSettings,
-  updateSettings,
-  getAdminApiKey,
-  regenerateAdminApiKey,
-  deleteAdminApiKey
+  updateSettings
 }

@@ -17,7 +17,7 @@ func TestInit_DualOutput(t *testing.T) {
 		t.Fatalf("create temp dir: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
-	logPath := filepath.Join(tmpDir, "logs", "sub2api-admin-plus.log")
+	logPath := filepath.Join(tmpDir, "logs", "superllm.log")
 
 	origStdout := os.Stdout
 	origStderr := os.Stderr
@@ -118,7 +118,7 @@ func TestInit_FileOutputFailureDowngrade(t *testing.T) {
 		Output: OutputOptions{
 			ToStdout: true,
 			ToFile:   true,
-			FilePath: filepath.Join(os.DevNull, "logs", "sub2api-admin-plus.log"),
+			FilePath: filepath.Join(os.DevNull, "logs", "superllm.log"),
 		},
 		Rotation: RotationOptions{
 			MaxSizeMB:  10,

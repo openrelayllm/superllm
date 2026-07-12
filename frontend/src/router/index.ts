@@ -1,8 +1,8 @@
 /**
- * Admin Plus route configuration.
+ * SuperLLM route configuration.
  *
  * Fact source:
- * - current: setup, admin login, Admin Plus dashboard, ops, settings.
+ * - current: setup, admin login, SuperLLM dashboard, ops, settings.
  * - dead: Sub2API public/user/payment/custom-page routes.
  */
 

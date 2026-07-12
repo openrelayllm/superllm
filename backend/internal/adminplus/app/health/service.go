@@ -169,7 +169,7 @@ func (s *Service) RecordSample(ctx context.Context, in RecordSampleInput) (*Reco
 }
 
 func (s *Service) notifyHealthEvent(_ context.Context, _ *adminplusdomain.HealthEvent, _ *adminplusdomain.HealthSample) {
-	// Health events stay in Admin Plus history; Feishu push is intentionally balance-only.
+	// Health events stay in SuperLLM history; Feishu push is intentionally balance-only.
 }
 
 type FeishuNotifier struct {
@@ -216,7 +216,7 @@ func buildFeishuHealthText(event *adminplusdomain.HealthEvent, sample *adminplus
 		}
 	}
 	return fmt.Sprintf(
-		"【Sub2API Admin Plus 健康通知】\n供应商ID：%d\n模型：%s\n事件：%s\n观测值：%d\n阈值：%d\nHTTP：%d\n错误：%s\n来源：%s\n时间：%s",
+		"【SuperLLM 健康通知】\n供应商ID：%d\n模型：%s\n事件：%s\n观测值：%d\n阈值：%d\nHTTP：%d\n错误：%s\n来源：%s\n时间：%s",
 		event.SupplierID,
 		event.Model,
 		event.Type,

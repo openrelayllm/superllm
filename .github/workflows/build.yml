@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Optional build version override, for example 0.41.0'
+        description: 'Optional build version override, for example 0.42.0'
         required: false
         type: string
 
@@ -92,7 +92,7 @@ jobs:
       - name: Upload Linux binary artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: sub2api-admin-plus-${{ steps.version.outputs.version }}-linux
+          name: superllm-${{ steps.version.outputs.version }}-linux
           path: |
             dist/*.tar.gz
             dist/checksums.txt

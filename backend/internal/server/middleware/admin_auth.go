@@ -2,7 +2,6 @@
 package middleware
 
 import (
-	"crypto/subtle"
 	"errors"
 	"strings"
 
@@ -14,20 +13,14 @@ import (
 // NewAdminAuthMiddleware 创建管理员认证中间件
 func NewAdminAuthMiddleware(
 	authService *service.AuthService,
-	userService *service.UserService,
-	settingService *service.SettingService,
 ) AdminAuthMiddleware {
-	return AdminAuthMiddleware(adminAuth(authService, userService, settingService))
+	return AdminAuthMiddleware(adminAuth(authService))
 }
 
 // adminAuth 管理员认证中间件实现
-// 支持两种认证方式（通过不同的 header 区分）：
-// 1. Admin API Key: x-api-key: <admin-api-key>
-// 2. JWT Token: Authorization: Bearer <jwt-token> (需要管理员角色)
+// 使用 JWT Token: Authorization: Bearer <jwt-token>（需要管理员角色）。
 func adminAuth(
 	authService *service.AuthService,
-	userService *service.UserService,
-	settingService *service.SettingService,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// WebSocket upgrade requests cannot set Authorization headers in browsers.
@@ -36,22 +29,12 @@ func adminAuth(
 		//   Sec-WebSocket-Protocol: sub2api-admin, jwt.<token>
 		if isWebSocketUpgradeRequest(c) {
 			if token := extractJWTFromWebSocketSubprotocol(c); token != "" {
-				if !validateJWTForAdmin(c, token, authService, userService) {
+				if !validateJWTForAdmin(c, token, authService) {
 					return
 				}
 				c.Next()
 				return
 			}
-		}
-
-		// 检查 x-api-key header（Admin API Key 认证）
-		apiKey := c.GetHeader("x-api-key")
-		if apiKey != "" {
-			if !validateAdminAPIKey(c, apiKey, settingService, userService) {
-				return
-			}
-			c.Next()
-			return
 		}
 
 		// 检查 Authorization header（JWT 认证）
@@ -64,7 +47,7 @@ func adminAuth(
 					AbortWithError(c, 401, "UNAUTHORIZED", "Authorization required")
 					return
 				}
-				if !validateJWTForAdmin(c, token, authService, userService) {
+				if !validateJWTForAdmin(c, token, authService) {
 					return
 				}
 				c.Next()
@@ -115,47 +98,11 @@ func extractJWTFromWebSocketSubprotocol(c *gin.Context) string {
 	return ""
 }
 
-// validateAdminAPIKey 验证管理员 API Key
-func validateAdminAPIKey(
-	c *gin.Context,
-	key string,
-	settingService *service.SettingService,
-	userService *service.UserService,
-) bool {
-	storedKey, err := settingService.GetAdminAPIKey(c.Request.Context())
-	if err != nil {
-		AbortWithError(c, 500, "INTERNAL_ERROR", "Internal server error")
-		return false
-	}
-
-	// 未配置或不匹配，统一返回相同错误（避免信息泄露）
-	if storedKey == "" || subtle.ConstantTimeCompare([]byte(key), []byte(storedKey)) != 1 {
-		AbortWithError(c, 401, "INVALID_ADMIN_KEY", "Invalid admin API key")
-		return false
-	}
-
-	// 获取真实的管理员用户
-	admin, err := userService.GetFirstAdmin(c.Request.Context())
-	if err != nil {
-		AbortWithError(c, 500, "INTERNAL_ERROR", "No admin user found")
-		return false
-	}
-
-	c.Set(string(ContextKeyUser), AuthSubject{
-		UserID:      admin.ID,
-		Concurrency: admin.Concurrency,
-	})
-	c.Set(string(ContextKeyUserRole), admin.Role)
-	c.Set("auth_method", "admin_api_key")
-	return true
-}
-
 // validateJWTForAdmin 验证 JWT 并检查管理员权限
 func validateJWTForAdmin(
 	c *gin.Context,
 	token string,
 	authService *service.AuthService,
-	userService *service.UserService,
 ) bool {
 	// 验证 JWT token
 	claims, err := authService.ValidateToken(token)
@@ -169,7 +116,7 @@ func validateJWTForAdmin(
 	}
 
 	// 从数据库获取用户
-	user, err := userService.GetByID(c.Request.Context(), claims.UserID)
+	user, err := authService.GetIdentityByID(c.Request.Context(), claims.UserID)
 	if err != nil {
 		AbortWithError(c, 401, "USER_NOT_FOUND", "User not found")
 		return false
@@ -182,7 +129,7 @@ func validateJWTForAdmin(
 	}
 
 	// 校验 TokenVersion，确保管理员改密后旧 token 失效
-	if claims.TokenVersion != user.TokenVersion {
+	if claims.TokenVersion != authService.IdentityTokenVersion(user) {
 		AbortWithError(c, 401, "TOKEN_REVOKED", "Token has been revoked (password changed)")
 		return false
 	}

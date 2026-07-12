@@ -6,7 +6,7 @@
           管理员登录
         </h2>
         <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
-          使用 Sub2API Admin Plus 管理员账号继续
+          使用 Sub2API 管理员账号继续
         </p>
       </div>
 
@@ -191,7 +191,7 @@ function resolvePostLoginRedirect(): string {
 async function ensureAdminSession(): Promise<boolean> {
   if (authStore.isAdmin) return true
   await authStore.logout().catch(() => undefined)
-  appStore.showError('当前账号不是管理员，不能进入 Admin Plus')
+  appStore.showError('当前账号不是管理员，不能进入 SuperLLM')
   return false
 }
 

@@ -86,19 +86,6 @@ export class AdminPlusClient {
     })
   }
 
-  async registrationVerificationCode(task, options = {}) {
-    return this.request(`/api/v1/admin-plus/extension/tasks/${task.id}/registration-verification-code/read`, {
-      method: 'POST',
-      body: {
-        device_id: task.device_id,
-        lease_token: task.lease_token,
-        triggered_at: options.triggeredAt || null,
-        timeout_seconds: Number(options.timeoutSeconds || 90),
-        poll_interval_seconds: Number(options.pollIntervalSeconds || 5)
-      }
-    })
-  }
-
   async complete(task, result) {
     return this.request(`/api/v1/admin-plus/extension/tasks/${task.id}/complete`, {
       method: 'POST',

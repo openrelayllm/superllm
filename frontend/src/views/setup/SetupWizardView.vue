@@ -127,7 +127,7 @@
                 v-model="formData.database.dbname"
                 type="text"
                 class="input"
-                placeholder="sub2api_admin_plus"
+                placeholder="superllm"
               />
             </div>
             <div>
@@ -382,53 +382,6 @@
           </div>
         </div>
 
-        <div v-if="currentStep === 3" class="space-y-6">
-          <div class="mb-6 text-center">
-            <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
-              {{ t('setup.admin.title') }}
-            </h2>
-            <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-              {{ t('setup.admin.description') }}
-            </p>
-          </div>
-
-          <div>
-            <label class="input-label">{{ t('setup.admin.email') }}</label>
-            <input
-              v-model="formData.admin.email"
-              type="email"
-              class="input"
-              placeholder="admin@example.com"
-            />
-          </div>
-
-          <div>
-            <label class="input-label">{{ t('setup.admin.password') }}</label>
-            <input
-              v-model="formData.admin.password"
-              type="password"
-              class="input"
-              :placeholder="t('setup.admin.passwordPlaceholder')"
-            />
-          </div>
-
-          <div>
-            <label class="input-label">{{ t('setup.admin.confirmPassword') }}</label>
-            <input
-              v-model="confirmPassword"
-              type="password"
-              class="input"
-              :placeholder="t('setup.admin.confirmPasswordPlaceholder')"
-            />
-            <p
-              v-if="confirmPassword && formData.admin.password !== confirmPassword"
-              class="input-error-text"
-            >
-              {{ t('setup.admin.passwordMismatch') }}
-            </p>
-          </div>
-        </div>
-
         <div v-if="currentStep === finalStepIndex" class="space-y-6">
           <div class="mb-6 text-center">
             <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
@@ -462,20 +415,11 @@
 
             <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-700">
               <h3 class="mb-2 text-sm font-medium text-gray-500 dark:text-dark-400">
-                {{ t('setup.ready.adminEmail') }}
-              </h3>
-              <p class="text-gray-900 dark:text-white">{{ formData.admin.email }}</p>
-            </div>
-
-            <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-700">
-              <h3 class="mb-2 text-sm font-medium text-gray-500 dark:text-dark-400">
                 {{ t('setup.ready.sub2api') }}
               </h3>
               <p class="text-gray-900 dark:text-white">
                 {{
-                  hasSub2APIIntegration
-                    ? t('setup.ready.sub2apiConfigured')
-                    : t('setup.ready.sub2apiSkipped')
+                  hasSub2APIIntegration ? t('setup.ready.sub2apiConfigured') : ''
                 }}
               </p>
             </div>
@@ -602,7 +546,6 @@ const steps = computed(() => [
   { id: 'database', title: t('setup.database.title') },
   { id: 'redis', title: t('setup.redis.title') },
   { id: 'sub2api', title: t('setup.sub2api.title') },
-  { id: 'admin', title: t('setup.admin.title') },
   { id: 'complete', title: t('setup.ready.title') }
 ])
 const finalStepIndex = computed(() => steps.value.length - 1)
@@ -617,7 +560,6 @@ const testingRedis = ref(false)
 const dbConnected = ref(false)
 const redisConnected = ref(false)
 const installing = ref(false)
-const confirmPassword = ref('')
 const serviceReady = ref(false)
 
 const formData = reactive<InstallRequest>({
@@ -626,7 +568,7 @@ const formData = reactive<InstallRequest>({
     port: 5432,
     user: 'root',
     password: '',
-    dbname: 'sub2api_admin_plus',
+    dbname: 'superllm',
     sslmode: 'disable'
   },
   redis: {
@@ -644,10 +586,6 @@ const formData = reactive<InstallRequest>({
     admin_api_key: '',
     allow_embedded_gateway: false
   },
-  admin: {
-    email: '',
-    password: ''
-  },
   server: {
     host: '0.0.0.0',
     port: 8080,
@@ -662,13 +600,7 @@ const canProceed = computed(() => {
     case 1:
       return redisConnected.value
     case 2:
-      return true
-    case 3:
-      return (
-        formData.admin.email &&
-        formData.admin.password.length >= 8 &&
-        formData.admin.password === confirmPassword.value
-      )
+      return Boolean(formData.sub2api.readonly_database_url.trim())
     default:
       return true
   }

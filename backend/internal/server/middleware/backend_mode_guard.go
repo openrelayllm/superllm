@@ -38,7 +38,7 @@ func backendModeAllowsAuthPath(path string) bool {
 }
 
 // BackendModeAuthGuard selectively blocks auth endpoints when backend mode is enabled.
-// Allows only the minimal admin auth surface in Admin Plus.
+// Allows only the minimal admin auth surface in SuperLLM.
 func BackendModeAuthGuard(settingService *service.SettingService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if settingService == nil || !settingService.IsBackendModeEnabled(c.Request.Context()) {

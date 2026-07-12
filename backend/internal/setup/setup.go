@@ -12,10 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
-	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
@@ -24,18 +22,10 @@ import (
 
 // Config paths
 const (
-	ConfigFileName             = "config.yaml"
-	InstallLockFile            = ".installed"
-	defaultUserConcurrency     = 5
-	simpleModeAdminConcurrency = 30
+	ConfigFileName         = "config.yaml"
+	InstallLockFile        = ".installed"
+	defaultUserConcurrency = 5
 )
-
-func setupDefaultAdminConcurrency() int {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("RUN_MODE")), config.RunModeSimple) {
-		return simpleModeAdminConcurrency
-	}
-	return defaultUserConcurrency
-}
 
 // GetDataDir returns the data directory for storing config and lock files.
 // Priority: DATA_DIR env > /app/data (if exists and writable) > current directory
@@ -76,7 +66,6 @@ type SetupConfig struct {
 	Database DatabaseConfig `json:"database" yaml:"database"`
 	Redis    RedisConfig    `json:"redis" yaml:"redis"`
 	Sub2API  Sub2APIConfig  `json:"sub2api" yaml:"sub2api"`
-	Admin    AdminConfig    `json:"admin" yaml:"-"` // Not stored in config file
 	Server   ServerConfig   `json:"server" yaml:"server"`
 	JWT      JWTConfig      `json:"jwt" yaml:"jwt"`
 	Timezone string         `json:"timezone" yaml:"timezone"` // e.g. "Asia/Shanghai", "UTC"
@@ -120,11 +109,6 @@ type adminPlusYAMLConfig struct {
 	AllowEmbeddedSub2APIGateway bool   `yaml:"allow_embedded_sub2api_gateway,omitempty"`
 }
 
-type AdminConfig struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
 type ServerConfig struct {
 	Host string `json:"host" yaml:"host"`
 	Port int    `json:"port" yaml:"port"`
@@ -134,36 +118,6 @@ type ServerConfig struct {
 type JWTConfig struct {
 	Secret     string `json:"secret" yaml:"secret"`
 	ExpireHour int    `json:"expire_hour" yaml:"expire_hour"`
-}
-
-const (
-	adminBootstrapReasonEmptyDatabase          = "empty_database"
-	adminBootstrapReasonAdminExists            = "admin_exists"
-	adminBootstrapReasonUsersExistWithoutAdmin = "users_exist_without_admin"
-)
-
-type adminBootstrapDecision struct {
-	shouldCreate bool
-	reason       string
-}
-
-func decideAdminBootstrap(totalUsers, adminUsers int64) adminBootstrapDecision {
-	if adminUsers > 0 {
-		return adminBootstrapDecision{
-			shouldCreate: false,
-			reason:       adminBootstrapReasonAdminExists,
-		}
-	}
-	if totalUsers > 0 {
-		return adminBootstrapDecision{
-			shouldCreate: false,
-			reason:       adminBootstrapReasonUsersExistWithoutAdmin,
-		}
-	}
-	return adminBootstrapDecision{
-		shouldCreate: true,
-		reason:       adminBootstrapReasonEmptyDatabase,
-	}
 }
 
 // NeedsSetup checks if the system needs initial setup
@@ -322,6 +276,29 @@ func TestRedisConnection(cfg *RedisConfig) error {
 	return nil
 }
 
+// TestSub2APIIdentityConnection verifies the required readonly identity source.
+func TestSub2APIIdentityConnection(rawURL string) error {
+	if strings.TrimSpace(rawURL) == "" {
+		return fmt.Errorf("Sub2API readonly database URL is required")
+	}
+	db, err := sql.Open("postgres", rawURL)
+	if err != nil {
+		return fmt.Errorf("open Sub2API readonly database: %w", err)
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var exists bool
+	if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE deleted_at IS NULL AND role = 'admin' AND status = 'active')").Scan(&exists); err != nil {
+		return fmt.Errorf("query Sub2API users: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("Sub2API database has no active admin identity")
+	}
+	return nil
+}
+
 // Install performs the installation with the given configuration
 func Install(cfg *SetupConfig) error {
 	// Security check: prevent re-installation if already installed
@@ -347,15 +324,13 @@ func Install(cfg *SetupConfig) error {
 	if err := TestRedisConnection(&cfg.Redis); err != nil {
 		return fmt.Errorf("redis connection failed: %w", err)
 	}
+	if err := TestSub2APIIdentityConnection(cfg.Sub2API.ReadonlyDatabaseURL); err != nil {
+		return fmt.Errorf("Sub2API identity connection failed: %w", err)
+	}
 
 	// Initialize database
 	if err := initializeDatabase(cfg); err != nil {
 		return fmt.Errorf("database initialization failed: %w", err)
-	}
-
-	// Create admin user (only when database is empty and no admin exists).
-	if _, _, err := createAdminUser(cfg); err != nil {
-		return fmt.Errorf("admin user creation failed: %w", err)
 	}
 
 	// Write config file
@@ -398,84 +373,6 @@ func initializeDatabase(cfg *SetupConfig) error {
 	migrationCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	return repository.ApplyMigrations(migrationCtx, db)
-}
-
-func createAdminUser(cfg *SetupConfig) (bool, string, error) {
-	dsn := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
-		cfg.Database.Password, cfg.Database.DBName, cfg.Database.SSLMode,
-	)
-
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		return false, "", err
-	}
-
-	defer func() {
-		if err := db.Close(); err != nil {
-			logger.LegacyPrintf("setup", "failed to close postgres connection: %v", err)
-		}
-	}()
-
-	// 使用超时上下文避免安装流程因数据库异常而长时间阻塞。
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	var totalUsers int64
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&totalUsers); err != nil {
-		return false, "", err
-	}
-	var adminUsers int64
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(1) FROM users WHERE role = $1", service.RoleAdmin).Scan(&adminUsers); err != nil {
-		return false, "", err
-	}
-	decision := decideAdminBootstrap(totalUsers, adminUsers)
-	if !decision.shouldCreate {
-		return false, decision.reason, nil
-	}
-
-	if strings.TrimSpace(cfg.Admin.Password) == "" {
-		password, genErr := generateSecret(16)
-		if genErr != nil {
-			return false, "", fmt.Errorf("failed to generate admin password: %w", genErr)
-		}
-		cfg.Admin.Password = password
-		fmt.Printf("Generated admin password (one-time): %s\n", cfg.Admin.Password)
-		fmt.Println("IMPORTANT: Save this password! It will not be shown again.")
-	}
-
-	admin := &service.User{
-		Email:       cfg.Admin.Email,
-		Role:        service.RoleAdmin,
-		Status:      service.StatusActive,
-		Balance:     0,
-		Concurrency: setupDefaultAdminConcurrency(),
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
-
-	if err := admin.SetPassword(cfg.Admin.Password); err != nil {
-		return false, "", err
-	}
-
-	_, err = db.ExecContext(
-		ctx,
-		`INSERT INTO users (email, password_hash, role, balance, concurrency, status, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		admin.Email,
-		admin.PasswordHash,
-		admin.Role,
-		admin.Balance,
-		admin.Concurrency,
-		admin.Status,
-		admin.CreatedAt,
-		admin.UpdatedAt,
-	)
-	if err != nil {
-		return false, "", err
-	}
-	return true, decision.reason, nil
 }
 
 func writeConfigFile(cfg *SetupConfig) error {
@@ -646,7 +543,7 @@ func setupConfigFromEnv() *SetupConfig {
 			Port:     getEnvIntOrDefault("DATABASE_PORT", 5432),
 			User:     getEnvOrDefault("DATABASE_USER", "postgres"),
 			Password: getEnvOrDefault("DATABASE_PASSWORD", ""),
-			DBName:   getEnvOrDefault("DATABASE_DBNAME", "sub2api"),
+			DBName:   getEnvOrDefault("DATABASE_DBNAME", "superllm"),
 			SSLMode:  getEnvOrDefault("DATABASE_SSLMODE", "disable"),
 		},
 		Redis: RedisConfig{
@@ -663,10 +560,6 @@ func setupConfigFromEnv() *SetupConfig {
 			AdminBaseURL:         getEnvOrDefault("ADMIN_PLUS_SUB2API_ADMIN_BASE_URL", ""),
 			AdminAPIKey:          getEnvOrDefault("ADMIN_PLUS_SUB2API_ADMIN_API_KEY", ""),
 			AllowEmbeddedGateway: getEnvOrDefault("ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY", "false") == "true",
-		},
-		Admin: AdminConfig{
-			Email:    getEnvOrDefault("ADMIN_EMAIL", "admin@sub2api.local"),
-			Password: getEnvOrDefault("ADMIN_PASSWORD", ""),
 		},
 		Server: ServerConfig{
 			Host: getEnvOrDefault("SERVER_HOST", "0.0.0.0"),
@@ -713,31 +606,18 @@ func AutoSetupFromEnv() error {
 	}
 	logger.LegacyPrintf("setup", "%s", "Redis connection successful")
 
+	logger.LegacyPrintf("setup", "%s", "Testing Sub2API identity connection...")
+	if err := TestSub2APIIdentityConnection(cfg.Sub2API.ReadonlyDatabaseURL); err != nil {
+		return fmt.Errorf("Sub2API identity connection failed: %w", err)
+	}
+	logger.LegacyPrintf("setup", "%s", "Sub2API identity connection successful")
+
 	// Initialize database
 	logger.LegacyPrintf("setup", "%s", "Initializing database...")
 	if err := initializeDatabase(cfg); err != nil {
 		return fmt.Errorf("database initialization failed: %w", err)
 	}
 	logger.LegacyPrintf("setup", "%s", "Database initialized successfully")
-
-	// Create admin user
-	logger.LegacyPrintf("setup", "%s", "Creating admin user...")
-	created, reason, err := createAdminUser(cfg)
-	if err != nil {
-		return fmt.Errorf("admin user creation failed: %w", err)
-	}
-	if created {
-		logger.LegacyPrintf("setup", "Admin user created: %s", cfg.Admin.Email)
-	} else {
-		switch reason {
-		case adminBootstrapReasonAdminExists:
-			logger.LegacyPrintf("setup", "%s", "Admin user already exists, skipping admin bootstrap")
-		case adminBootstrapReasonUsersExistWithoutAdmin:
-			logger.LegacyPrintf("setup", "%s", "Database already has user data; skipping auto admin bootstrap to avoid password overwrite")
-		default:
-			logger.LegacyPrintf("setup", "%s", "Admin bootstrap skipped")
-		}
-	}
 
 	// Write config file
 	logger.LegacyPrintf("setup", "%s", "Writing configuration file...")
@@ -753,154 +633,5 @@ func AutoSetupFromEnv() error {
 	logger.LegacyPrintf("setup", "%s", "Installation lock created")
 
 	logger.LegacyPrintf("setup", "%s", "Auto setup completed successfully!")
-	return nil
-}
-
-// EnsureDevAdminFromEnv resets or creates the configured admin account for local dev.
-func EnsureDevAdminFromEnv() error {
-	if !getEnvBool("ADMIN_PLUS_DEV_RESET_ADMIN_PASSWORD") {
-		return nil
-	}
-
-	mode := strings.ToLower(strings.TrimSpace(getEnvOrDefault("SERVER_MODE", "release")))
-	if mode != "debug" {
-		return fmt.Errorf("ADMIN_PLUS_DEV_RESET_ADMIN_PASSWORD is only allowed when SERVER_MODE=debug")
-	}
-
-	cfg := setupConfigFromEnv()
-	if strings.TrimSpace(cfg.Admin.Email) == "" {
-		return fmt.Errorf("ADMIN_EMAIL is required when ADMIN_PLUS_DEV_RESET_ADMIN_PASSWORD is enabled")
-	}
-	if strings.TrimSpace(cfg.Admin.Password) == "" {
-		return fmt.Errorf("ADMIN_PASSWORD is required when ADMIN_PLUS_DEV_RESET_ADMIN_PASSWORD is enabled")
-	}
-
-	if err := initializeDatabase(cfg); err != nil {
-		return fmt.Errorf("database initialization failed before dev admin reset: %w", err)
-	}
-	if err := ensureDevAdmin(cfg); err != nil {
-		return err
-	}
-
-	logger.LegacyPrintf("setup", "Dev admin is ready: %s", cfg.Admin.Email)
-	return nil
-}
-
-func ensureDevAdmin(cfg *SetupConfig) error {
-	db, err := sql.Open("postgres", buildPostgresDSN(&cfg.Database, cfg.Database.DBName))
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := db.Close(); err != nil {
-			logger.LegacyPrintf("setup", "failed to close postgres connection: %v", err)
-		}
-	}()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	admin := &service.User{}
-	if err := admin.SetPassword(cfg.Admin.Password); err != nil {
-		return err
-	}
-
-	now := time.Now().UTC()
-	concurrency := setupDefaultAdminConcurrency()
-	var userID int64
-	err = db.QueryRowContext(
-		ctx,
-		`UPDATE users
-		    SET password_hash = $1,
-		        role = $2,
-		        status = $3,
-		        concurrency = GREATEST(concurrency, $4),
-		        deleted_at = NULL,
-		        updated_at = $5
-		  WHERE LOWER(BTRIM(email)) = LOWER(BTRIM($6))
-		  RETURNING id`,
-		admin.PasswordHash,
-		service.RoleAdmin,
-		service.StatusActive,
-		concurrency,
-		now,
-		cfg.Admin.Email,
-	).Scan(&userID)
-	if err != nil && err != sql.ErrNoRows {
-		return fmt.Errorf("reset dev admin password: %w", err)
-	}
-	if err == sql.ErrNoRows {
-		if err := db.QueryRowContext(
-			ctx,
-			`INSERT INTO users (email, password_hash, role, balance, concurrency, status, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			 RETURNING id`,
-			cfg.Admin.Email,
-			admin.PasswordHash,
-			service.RoleAdmin,
-			0,
-			concurrency,
-			service.StatusActive,
-			now,
-			now,
-		).Scan(&userID); err != nil {
-			return fmt.Errorf("create dev admin: %w", err)
-		}
-	}
-
-	if err := ensureDevAdminEmailIdentity(ctx, db, userID, cfg.Admin.Email); err != nil {
-		return err
-	}
-	return nil
-}
-
-func ensureDevAdminEmailIdentity(ctx context.Context, db *sql.DB, userID int64, email string) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx, "SELECT to_regclass('public.auth_identities') IS NOT NULL").Scan(&exists); err != nil {
-		return fmt.Errorf("check auth identity table: %w", err)
-	}
-	if !exists {
-		return nil
-	}
-
-	subject := strings.ToLower(strings.TrimSpace(email))
-	if subject == "" {
-		return nil
-	}
-
-	_, err := db.ExecContext(
-		ctx,
-		`INSERT INTO auth_identities (
-		     user_id, provider_type, provider_key, provider_subject, verified_at, metadata
-		 )
-		 VALUES ($1, 'email', 'email', $2, $3, '{"source":"dev_admin_reset"}'::jsonb)
-		 ON CONFLICT (provider_type, provider_key, provider_subject) DO NOTHING`,
-		userID,
-		subject,
-		time.Now().UTC(),
-	)
-	if err != nil {
-		return fmt.Errorf("ensure dev admin email identity: %w", err)
-	}
-
-	var ownerID int64
-	err = db.QueryRowContext(
-		ctx,
-		`SELECT user_id
-		   FROM auth_identities
-		  WHERE provider_type = 'email'
-		    AND provider_key = 'email'
-		    AND provider_subject = $1`,
-		subject,
-	).Scan(&ownerID)
-	if err == sql.ErrNoRows {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("load dev admin email identity: %w", err)
-	}
-	if ownerID != userID {
-		return fmt.Errorf("email auth identity %q belongs to user %d, not dev admin %d", subject, ownerID, userID)
-	}
 	return nil
 }

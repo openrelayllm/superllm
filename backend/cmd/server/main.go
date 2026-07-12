@@ -62,7 +62,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		log.Printf("Sub2API %s (commit: %s, built: %s)\n", Version, Commit, Date)
+		log.Printf("SuperLLM %s (commit: %s, built: %s)\n", Version, Commit, Date)
 		return
 	}
 
@@ -90,10 +90,6 @@ func main() {
 		}
 	}
 
-	if err := setup.EnsureDevAdminFromEnv(); err != nil {
-		log.Fatalf("Dev admin reset failed: %v", err)
-	}
-
 	// Normal server mode
 	runMainServer()
 }
@@ -116,7 +112,7 @@ func runSetupServer() {
 	// This allows users to run setup on a different address if needed
 	addr := config.GetServerAddress()
 	log.Printf("Setup wizard available at http://%s", addr)
-	log.Println("Complete the setup wizard to configure Sub2API")
+	log.Println("Complete the setup wizard to configure SuperLLM")
 
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)

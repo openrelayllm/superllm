@@ -20,7 +20,7 @@ type ComponentImportFn = () => Promise<unknown>
  * 只存储路由路径，不存储 import 函数，避免打包问题
  */
 const PREFETCH_ADJACENCY: Record<string, string[]> = {
-  // Admin Plus current routes only. 用户端、支付、旧后台页面属于 dead 路径。
+  // SuperLLM current routes only. 用户端、支付、旧后台页面属于 dead 路径。
   '/admin/dashboard': ['/admin/settings'],
   '/admin/settings': ['/admin/dashboard']
 }
@@ -188,6 +188,6 @@ export function useRoutePrefetch(router?: Router) {
   }
 }
 
-// 兼容旧测试的导出；Admin Plus 已不保留用户端预加载表。
+// 兼容旧测试的导出；SuperLLM 已不保留用户端预加载表。
 export const _adminPrefetchMap = PREFETCH_ADJACENCY
 export const _userPrefetchMap: Record<string, string[]> = {}

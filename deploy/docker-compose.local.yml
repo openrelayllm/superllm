@@ -1,5 +1,5 @@
 # =============================================================================
-# Sub2API Admin Plus Docker Compose - Local Directory Version
+# SuperLLM Docker Compose - Local Directory Version
 # =============================================================================
 # This configuration uses local directories for data storage instead of named
 # volumes, making it easy to migrate the entire deployment by simply copying
@@ -9,12 +9,12 @@
 #   1. Copy .env.example to .env and configure
 #   2. mkdir -p admin_plus_data admin_plus_postgres_data admin_plus_redis_data
 #   3. docker compose -f docker-compose.local.yml up -d
-#   4. Check logs: docker compose -f docker-compose.local.yml logs -f admin-plus
+#   4. Check logs: docker compose -f docker-compose.local.yml logs -f superllm
 #   5. Access: http://localhost:8080
 #
 # Migration to New Server:
 #   1. docker compose -f docker-compose.local.yml down
-#   2. tar czf sub2api-admin-plus-deploy.tar.gz deploy/
+#   2. tar czf superllm-deploy.tar.gz deploy/
 #   3. Transfer to new server and extract
 #   4. docker compose -f docker-compose.local.yml up -d
 # =============================================================================
@@ -23,9 +23,9 @@ services:
   # ===========================================================================
   # Admin Plus Application
   # ===========================================================================
-  admin-plus:
-    image: ${ADMIN_PLUS_IMAGE:-wutongci/sub2api-admin-plus:latest}
-    container_name: sub2api-admin-plus
+  superllm:
+    image: ${ADMIN_PLUS_IMAGE:-wutongci/superllm:latest}
+    container_name: superllm
     restart: unless-stopped
     ulimits:
       nofile:
@@ -60,9 +60,9 @@ services:
       - DATABASE_PORT=5432
       # Admin Plus runs with an independent primary database.
       # Do not point this at an existing production Sub2API database.
-      - DATABASE_USER=${POSTGRES_USER:-sub2api_admin_plus}
+      - DATABASE_USER=${POSTGRES_USER:-superllm}
       - DATABASE_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      - DATABASE_DBNAME=${POSTGRES_DB:-sub2api_admin_plus}
+      - DATABASE_DBNAME=${POSTGRES_DB:-superllm}
       - DATABASE_SSLMODE=disable
       - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-50}
       - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-10}
@@ -81,20 +81,14 @@ services:
       - REDIS_ENABLE_TLS=${REDIS_ENABLE_TLS:-false}
 
       # =======================================================================
-      # Sub2API Integration (optional)
+      # Sub2API identity and data source (required)
       # =======================================================================
-      - SUB2API_READONLY_DATABASE_URL=${SUB2API_READONLY_DATABASE_URL:-}
+      - SUB2API_READONLY_DATABASE_URL=${SUB2API_READONLY_DATABASE_URL:?SUB2API_READONLY_DATABASE_URL is required}
       - SUB2API_READONLY_REDIS_URL=${SUB2API_READONLY_REDIS_URL:-}
       - SUB2API_READONLY_REDIS_DB=${SUB2API_READONLY_REDIS_DB:-}
       - ADMIN_PLUS_SUB2API_ADMIN_BASE_URL=${ADMIN_PLUS_SUB2API_ADMIN_BASE_URL:-}
       - ADMIN_PLUS_SUB2API_ADMIN_API_KEY=${ADMIN_PLUS_SUB2API_ADMIN_API_KEY:-}
       - ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY=${ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY:-false}
-
-      # =======================================================================
-      # Admin Account (auto-created on first run)
-      # =======================================================================
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@sub2api-admin-plus.local}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
 
       # =======================================================================
       # JWT Configuration
@@ -183,7 +177,7 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - sub2api-admin-plus-network
+      - superllm-network
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 30s
@@ -196,7 +190,7 @@ services:
   # ===========================================================================
   postgres:
     image: postgres:18-alpine
-    container_name: sub2api-admin-plus-postgres
+    container_name: superllm-postgres
     restart: unless-stopped
     ulimits:
       nofile:
@@ -206,15 +200,15 @@ services:
       # Local directory mapping for easy migration
       - ./admin_plus_postgres_data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_USER=${POSTGRES_USER:-sub2api_admin_plus}
+      - POSTGRES_USER=${POSTGRES_USER:-superllm}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      - POSTGRES_DB=${POSTGRES_DB:-sub2api_admin_plus}
+      - POSTGRES_DB=${POSTGRES_DB:-superllm}
       - PGDATA=/var/lib/postgresql/data
       - TZ=${TZ:-Asia/Shanghai}
     networks:
-      - sub2api-admin-plus-network
+      - superllm-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sub2api_admin_plus} -d ${POSTGRES_DB:-sub2api_admin_plus}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-superllm} -d ${POSTGRES_DB:-superllm}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -227,7 +221,7 @@ services:
   # ===========================================================================
   redis:
     image: redis:8-alpine
-    container_name: sub2api-admin-plus-redis
+    container_name: superllm-redis
     restart: unless-stopped
     ulimits:
       nofile:
@@ -248,7 +242,7 @@ services:
       # REDISCLI_AUTH is used by redis-cli for authentication (safer than -a flag)
       - REDISCLI_AUTH=${REDIS_PASSWORD:-}
     networks:
-      - sub2api-admin-plus-network
+      - superllm-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -260,5 +254,5 @@ services:
 # Networks
 # =============================================================================
 networks:
-  sub2api-admin-plus-network:
+  superllm-network:
     driver: bridge

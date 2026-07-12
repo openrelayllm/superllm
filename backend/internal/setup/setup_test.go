@@ -6,70 +6,6 @@ import (
 	"testing"
 )
 
-func TestDecideAdminBootstrap(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name       string
-		totalUsers int64
-		adminUsers int64
-		should     bool
-		reason     string
-	}{
-		{
-			name:       "empty database should create admin",
-			totalUsers: 0,
-			adminUsers: 0,
-			should:     true,
-			reason:     adminBootstrapReasonEmptyDatabase,
-		},
-		{
-			name:       "admin exists should skip",
-			totalUsers: 10,
-			adminUsers: 1,
-			should:     false,
-			reason:     adminBootstrapReasonAdminExists,
-		},
-		{
-			name:       "users exist without admin should skip",
-			totalUsers: 5,
-			adminUsers: 0,
-			should:     false,
-			reason:     adminBootstrapReasonUsersExistWithoutAdmin,
-		},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := decideAdminBootstrap(tc.totalUsers, tc.adminUsers)
-			if got.shouldCreate != tc.should {
-				t.Fatalf("shouldCreate=%v, want %v", got.shouldCreate, tc.should)
-			}
-			if got.reason != tc.reason {
-				t.Fatalf("reason=%q, want %q", got.reason, tc.reason)
-			}
-		})
-	}
-}
-
-func TestSetupDefaultAdminConcurrency(t *testing.T) {
-	t.Run("simple mode admin uses higher concurrency", func(t *testing.T) {
-		t.Setenv("RUN_MODE", "simple")
-		if got := setupDefaultAdminConcurrency(); got != simpleModeAdminConcurrency {
-			t.Fatalf("setupDefaultAdminConcurrency()=%d, want %d", got, simpleModeAdminConcurrency)
-		}
-	})
-
-	t.Run("standard mode keeps existing default", func(t *testing.T) {
-		t.Setenv("RUN_MODE", "standard")
-		if got := setupDefaultAdminConcurrency(); got != defaultUserConcurrency {
-			t.Fatalf("setupDefaultAdminConcurrency()=%d, want %d", got, defaultUserConcurrency)
-		}
-	})
-}
-
 func TestWriteConfigFileKeepsDefaultUserConcurrency(t *testing.T) {
 	t.Setenv("RUN_MODE", "simple")
 	t.Setenv("DATA_DIR", t.TempDir())
@@ -160,7 +96,7 @@ func TestBuildPostgresDSNOmitsEmptyPassword(t *testing.T) {
 		Host:    "127.0.0.1",
 		Port:    5432,
 		User:    "root",
-		DBName:  "sub2api_admin_plus",
+		DBName:  "superllm",
 		SSLMode: "disable",
 	}
 
@@ -169,7 +105,7 @@ func TestBuildPostgresDSNOmitsEmptyPassword(t *testing.T) {
 	if strings.Contains(targetDSN, "password=") {
 		t.Fatalf("target DSN = %q, empty password should be omitted", targetDSN)
 	}
-	if !strings.Contains(targetDSN, "dbname=sub2api_admin_plus") {
+	if !strings.Contains(targetDSN, "dbname=superllm") {
 		t.Fatalf("target DSN = %q, want configured database", targetDSN)
 	}
 }

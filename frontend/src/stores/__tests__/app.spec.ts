@@ -281,6 +281,16 @@ describe('useAppStore', () => {
       expect(store.publicSettingsLoaded).toBe(false)
     })
 
+    it('旧产品名称自动迁移为 SuperLLM', () => {
+      const windowAny = window as any
+      windowAny.__APP_CONFIG__ = { site_name: 'Sub2API Admin' }
+      const store = useAppStore()
+
+      store.initFromInjectedConfig()
+
+      expect(store.siteName).toBe('SuperLLM')
+    })
+
     it('clearPublicSettingsCache 清除缓存', () => {
       const windowAny = window as any
       windowAny.__APP_CONFIG__ = { site_name: 'Test' }

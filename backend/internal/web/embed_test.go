@@ -22,7 +22,7 @@ func init() {
 
 func TestInjectSiteTitle(t *testing.T) {
 	t.Run("replaces_title_with_site_name", func(t *testing.T) {
-		html := []byte(`<html><head><title>Sub2API Admin Plus - Operations Automation Console</title></head><body></body></html>`)
+		html := []byte(`<html><head><title>SuperLLM - Operations Automation Console</title></head><body></body></html>`)
 		settingsJSON := []byte(`{"site_name":"MyCustomSite"}`)
 
 		result := injectSiteTitle(html, settingsJSON)
@@ -32,7 +32,7 @@ func TestInjectSiteTitle(t *testing.T) {
 	})
 
 	t.Run("returns_unchanged_when_site_name_empty", func(t *testing.T) {
-		html := []byte(`<html><head><title>Sub2API Admin Plus - Operations Automation Console</title></head><body></body></html>`)
+		html := []byte(`<html><head><title>SuperLLM - Operations Automation Console</title></head><body></body></html>`)
 		settingsJSON := []byte(`{"site_name":""}`)
 
 		result := injectSiteTitle(html, settingsJSON)
@@ -41,7 +41,7 @@ func TestInjectSiteTitle(t *testing.T) {
 	})
 
 	t.Run("returns_unchanged_when_site_name_missing", func(t *testing.T) {
-		html := []byte(`<html><head><title>Sub2API Admin Plus - Operations Automation Console</title></head><body></body></html>`)
+		html := []byte(`<html><head><title>SuperLLM - Operations Automation Console</title></head><body></body></html>`)
 		settingsJSON := []byte(`{"other_field":"value"}`)
 
 		result := injectSiteTitle(html, settingsJSON)
@@ -50,7 +50,7 @@ func TestInjectSiteTitle(t *testing.T) {
 	})
 
 	t.Run("returns_unchanged_when_invalid_json", func(t *testing.T) {
-		html := []byte(`<html><head><title>Sub2API Admin Plus - Operations Automation Console</title></head><body></body></html>`)
+		html := []byte(`<html><head><title>SuperLLM - Operations Automation Console</title></head><body></body></html>`)
 		settingsJSON := []byte(`{invalid json}`)
 
 		result := injectSiteTitle(html, settingsJSON)

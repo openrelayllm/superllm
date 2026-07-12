@@ -515,7 +515,7 @@ export function attachPresentationStatus(ctx: any) {
     const code = extractApiErrorCode(error)
     const status = (error as { status?: number })?.status
     if ((status === 404 || code === '404') && !((error as { reason?: string })?.reason)) {
-      return 'Admin Plus 后端服务还没有加载供应商渠道状态路由，请确认已发布并重启到包含 /api/v1/admin-plus/suppliers/:id/channel-monitors 的版本。'
+      return 'SuperLLM 后端服务还没有加载供应商渠道状态路由，请确认已发布并重启到包含 /api/v1/admin-plus/suppliers/:id/channel-monitors 的版本。'
     }
     if (code && ['SUPPLIER_SESSION_NOT_FOUND', 'SUPPLIER_SESSION_EXPIRED', 'SUPPLIER_SESSION_DECRYPT_FAILED'].includes(code)) {
       return '当前供应商还没有可用会话，请先一键登录，或使用 Chrome 插件采集供应商会话后再读取渠道状态。'

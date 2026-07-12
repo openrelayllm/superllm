@@ -50,7 +50,7 @@
               <div class="flex gap-3">
                 <Icon name="exclamationTriangle" size="sm" class="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
                 <div class="text-sm text-amber-800 dark:text-amber-300">
-                  导出文件包含账号凭据密文、API Key、邮件 token 密文和代理订阅密文。浏览器会话、调度运行、成本流水和审计日志不会导出。
+                  导出文件包含账号凭据密文和 API Key。浏览器会话、调度运行、成本流水和审计日志不会导出。
                 </div>
               </div>
             </div>
@@ -176,7 +176,7 @@
                 v-model="archiveText"
                 class="input min-h-[220px] resize-y font-mono text-xs leading-5"
                 spellcheck="false"
-                placeholder="{&quot;version&quot;:1,&quot;product&quot;:&quot;sub2api-admin-plus&quot;,...}"
+                placeholder="{&quot;version&quot;:1,&quot;product&quot;:&quot;superllm&quot;,...}"
                 @input="clearImportState"
               />
             </label>
@@ -321,11 +321,11 @@ const scopeRows = computed(() => {
   )
 })
 const scopeIncludedLabel = computed(() => {
-  if (!scope.value) return '设置、用户、分组、账号、Key、渠道、供应商、目录、调度计划、通知、邮件和代理策略。'
+  if (!scope.value) return '设置、分组、账号、Key、渠道、供应商、调度计划和通知。用户身份不在迁移范围内。'
   return previewTableNames(scope.value.included_tables)
 })
 const scopeExcludedLabel = computed(() => {
-  if (!scope.value) return '使用日志、任务运行、健康采样、余额事件、成本流水、通知投递、代理审计和本机运行态。'
+  if (!scope.value) return '使用日志、任务运行、健康采样、余额事件、成本流水、通知投递和本机运行态。'
   return previewTableNames(scope.value.excluded_tables)
 })
 const archiveSizeLabel = computed(() => {
@@ -353,7 +353,7 @@ async function downloadArchive() {
   try {
     const archive = await adminPlusAPI.exportMigrationArchive()
     const text = JSON.stringify(archive, null, 2)
-    const filename = `sub2api-admin-plus-core-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+    const filename = `superllm-core-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
     downloadTextFile(filename, text)
     appStore.showSuccess('迁移 JSON 已生成')
   } catch (error) {

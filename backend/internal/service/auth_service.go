@@ -64,6 +64,7 @@ type JWTClaims struct {
 type AuthService struct {
 	entClient             *dbent.Client
 	userRepo              UserRepository
+	identityReader        AuthIdentityReader
 	redeemRepo            RedeemCodeRepository
 	refreshTokenCache     RefreshTokenCache
 	cfg                   *config.Config
@@ -75,6 +76,14 @@ type AuthService struct {
 	affiliateService      *AffiliateService
 	defaultSubAssigner    DefaultSubscriptionAssigner
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+}
+
+// AuthIdentityReader is the readonly identity boundary used by SuperLLM.
+// Implementations must read users from the existing Sub2API database.
+type AuthIdentityReader interface {
+	GetByID(ctx context.Context, id int64) (*User, error)
+	GetByEmail(ctx context.Context, email string) (*User, error)
+	GetFirstAdmin(ctx context.Context) (*User, error)
 }
 
 type DefaultSubscriptionAssigner interface {
@@ -119,6 +128,43 @@ func NewAuthService(
 		defaultSubAssigner:    defaultSubAssigner,
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
 	}
+}
+
+// WithIdentityReader configures the authoritative readonly user source.
+func (s *AuthService) WithIdentityReader(reader AuthIdentityReader) *AuthService {
+	if s != nil {
+		s.identityReader = reader
+	}
+	return s
+}
+
+func (s *AuthService) identitySource() AuthIdentityReader {
+	if s != nil && s.identityReader != nil {
+		return s.identityReader
+	}
+	if s != nil {
+		return s.userRepo
+	}
+	return nil
+}
+
+// GetIdentityByID returns the current user from the authoritative identity source.
+func (s *AuthService) GetIdentityByID(ctx context.Context, id int64) (*User, error) {
+	reader := s.identitySource()
+	if reader == nil {
+		return nil, ErrServiceUnavailable
+	}
+	return reader.GetByID(ctx, id)
+}
+
+// GetByID implements the readonly identity reader contract for auth middleware.
+func (s *AuthService) GetByID(ctx context.Context, id int64) (*User, error) {
+	return s.GetIdentityByID(ctx, id)
+}
+
+// IdentityTokenVersion returns the password-derived version stored in SuperLLM tokens.
+func (s *AuthService) IdentityTokenVersion(user *User) int64 {
+	return resolvedTokenVersion(user)
 }
 
 func (s *AuthService) EntClient() *dbent.Client {
@@ -439,7 +485,11 @@ func (s *AuthService) IsEmailVerifyEnabled(ctx context.Context) bool {
 // Login 用户登录，返回JWT token
 func (s *AuthService) Login(ctx context.Context, email, password string) (string, *User, error) {
 	// 查找用户
-	user, err := s.userRepo.GetByEmail(ctx, email)
+	reader := s.identitySource()
+	if reader == nil {
+		return "", nil, ErrServiceUnavailable
+	}
+	user, err := reader.GetByEmail(ctx, strings.TrimSpace(strings.ToLower(email)))
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			return "", nil, ErrInvalidCredentials
@@ -1250,7 +1300,7 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldTokenString string) (
 	}
 
 	// 获取最新的用户信息
-	user, err := s.userRepo.GetByID(ctx, claims.UserID)
+	user, err := s.GetIdentityByID(ctx, claims.UserID)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			return "", ErrInvalidToken
@@ -1555,7 +1605,7 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 	}
 
 	// 获取用户信息
-	user, err := s.userRepo.GetByID(ctx, data.UserID)
+	user, err := s.GetIdentityByID(ctx, data.UserID)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			// 用户已删除，撤销整个Token家族

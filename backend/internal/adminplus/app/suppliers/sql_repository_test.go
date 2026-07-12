@@ -40,7 +40,7 @@ func TestSQLRepositoryCreatePersistsSupplier(t *testing.T) {
 			"https://relay.example.com/admin",
 			"https://relay.example.com",
 			"https://relay.example.com/custom/topup",
-			"https://sub2apiplus.example.com/custom/topup",
+			"https://superllm.example.com/custom/topup",
 			"ops@example.com",
 			"primary upstream",
 			true,
@@ -72,7 +72,7 @@ func TestSQLRepositoryCreatePersistsSupplier(t *testing.T) {
 			"https://relay.example.com/admin",
 			"https://relay.example.com",
 			"https://relay.example.com/custom/topup",
-			"https://sub2apiplus.example.com/custom/topup",
+			"https://superllm.example.com/custom/topup",
 			"ops@example.com",
 			"primary upstream",
 			true,
@@ -103,7 +103,7 @@ func TestSQLRepositoryCreatePersistsSupplier(t *testing.T) {
 		DashboardURL:          "https://relay.example.com/admin",
 		APIBaseURL:            "https://relay.example.com",
 		ThirdPartyRechargeURL: "https://relay.example.com/custom/topup",
-		LocalRechargeURL:      "https://sub2apiplus.example.com/custom/topup",
+		LocalRechargeURL:      "https://superllm.example.com/custom/topup",
 		Contact:               "ops@example.com",
 		Notes:                 "primary upstream",
 		BrowserLoginUsername:  "ops@example.com",
@@ -130,7 +130,7 @@ func TestSQLRepositoryCreatePersistsSupplier(t *testing.T) {
 	require.Equal(t, int64(7), got.ID)
 	require.Equal(t, adminplusdomain.SupplierRuntimeStatusCandidate, got.RuntimeStatus)
 	require.Equal(t, "https://relay.example.com/custom/topup", got.ThirdPartyRechargeURL)
-	require.Equal(t, "https://sub2apiplus.example.com/custom/topup", got.LocalRechargeURL)
+	require.Equal(t, "https://superllm.example.com/custom/topup", got.LocalRechargeURL)
 	require.Equal(t, "limited", got.KeyLimitPolicy)
 	require.Equal(t, 10, got.KeyLimitValue)
 	require.Equal(t, "available", got.KeyCapacityStatus)

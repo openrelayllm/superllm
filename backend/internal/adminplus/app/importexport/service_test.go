@@ -21,25 +21,22 @@ func TestDefaultTableSpecsIncludeCoreButNotRuntimeLogs(t *testing.T) {
 
 	for _, table := range []string{
 		"settings",
-		"users",
 		"proxies",
 		"accounts",
 		"api_keys",
 		"admin_plus_suppliers",
 		"admin_plus_supplier_keys",
 		"admin_plus_scheduler_plans",
-		"admin_plus_mail_credentials",
-		"admin_plus_proxy_subscriptions",
 	} {
 		require.Contains(t, names, table)
 	}
 
 	for _, table := range []string{
+		"users",
 		"usage_logs",
 		"admin_plus_scheduler_runs",
 		"admin_plus_routing_refill_runs",
 		"admin_plus_extension_tasks",
-		"admin_plus_proxy_audit_events",
 		"admin_plus_supplier_browser_sessions",
 	} {
 		require.NotContains(t, names, table)

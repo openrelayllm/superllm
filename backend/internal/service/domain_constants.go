@@ -306,9 +306,6 @@ const (
 	SettingKeyAuthSourceDefaultDingTalkGrantOnFirstBind = "auth_source_default_dingtalk_grant_on_first_bind"
 	SettingKeyForceEmailOnThirdPartySignup              = "force_email_on_third_party_signup"
 
-	// 管理员 API Key
-	SettingKeyAdminAPIKey = "admin_api_key" // 全局管理员 API Key（用于外部系统集成）
-
 	// Gemini 配额策略（JSON）
 	SettingKeyGeminiQuotaPolicy = "gemini_quota_policy"
 
@@ -473,9 +470,6 @@ const SettingKeyDefaultPlatformQuotas = "default_platform_quotas"
 func SettingKeyAuthSourcePlatformQuotas(source string) string {
 	return fmt.Sprintf("auth_source_default_%s_platform_quotas", source)
 }
-
-// AdminAPIKeyPrefix is the prefix for admin API keys (distinct from user "sk-" keys).
-const AdminAPIKeyPrefix = "admin-"
 
 // SettingKeyAllowUserViewErrorRequests controls whether end users can view
 // their own failed requests on the usage page. Default false (opt-in).

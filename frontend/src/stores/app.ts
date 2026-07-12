@@ -14,7 +14,7 @@ import {
   type ReleaseInfo
 } from '@/api/admin/system'
 import { getPublicSettings as fetchPublicSettingsAPI } from '@/api/auth'
-import { DEFAULT_SITE_NAME } from '@/constants/product'
+import { DEFAULT_SITE_NAME, normalizeProductSiteName } from '@/constants/product'
 
 export const useAppStore = defineStore('app', () => {
   // ==================== State ====================
@@ -294,7 +294,7 @@ export const useAppStore = defineStore('app', () => {
       window.__APP_CONFIG__ = { ...config }
     }
     cachedPublicSettings.value = config
-    siteName.value = config.site_name || DEFAULT_SITE_NAME
+    siteName.value = normalizeProductSiteName(config.site_name)
     siteLogo.value = config.site_logo || ''
     siteVersion.value = config.version || ''
     contactInfo.value = config.contact_info || ''

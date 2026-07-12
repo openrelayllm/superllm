@@ -378,7 +378,7 @@ func costOptionalCapabilityMissing(err error) bool {
 }
 
 func (s *Service) notifyCostReconcileAnomaly(_ context.Context, _ *adminplusdomain.SupplierCostSnapshot) {
-	// Cost snapshots stay in Admin Plus history; Feishu push is intentionally balance-only.
+	// Cost snapshots stay in SuperLLM history; Feishu push is intentionally balance-only.
 }
 
 func (s *Service) ListSnapshots(ctx context.Context, filter SummaryFilter) ([]*adminplusdomain.SupplierCostSnapshot, error) {

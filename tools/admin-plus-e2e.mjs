@@ -5,9 +5,9 @@ import { createServer } from 'node:http'
 import process from 'node:process'
 
 const baseURL = trimTrailingSlash(process.env.ADMIN_PLUS_BASE_URL || 'http://localhost:3000')
-const email = process.env.ADMIN_PLUS_E2E_EMAIL || 'admin@sub2api-admin-plus.local'
+const email = process.env.ADMIN_PLUS_E2E_EMAIL || 'admin@superllm.local'
 const password = process.env.ADMIN_PLUS_E2E_PASSWORD || 'AdminPlus@123456'
-const dbURL = process.env.ADMIN_PLUS_E2E_DB_URL || 'postgresql://root:root@127.0.0.1:5432/sub2api_admin_plus?sslmode=disable'
+const dbURL = process.env.ADMIN_PLUS_E2E_DB_URL || 'postgresql://root:root@127.0.0.1:5432/superllm?sslmode=disable'
 const redisURL = process.env.ADMIN_PLUS_E2E_REDIS_URL || 'redis://127.0.0.1:6379/0'
 const cleanupEnabled = process.env.ADMIN_PLUS_E2E_CLEANUP !== 'false'
 const allowNonLocal = process.env.ADMIN_PLUS_E2E_ALLOW_NON_LOCAL === '1'

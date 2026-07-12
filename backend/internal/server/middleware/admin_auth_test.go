@@ -20,8 +20,6 @@ func TestAdminAuthJWTValidatesTokenVersion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{JWT: config.JWTConfig{Secret: "test-secret", ExpireHour: 1}}
-	authService := service.NewAuthService(nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, nil)
-
 	admin := &service.User{
 		ID:           1,
 		Email:        "admin@example.com",
@@ -40,10 +38,9 @@ func TestAdminAuthJWTValidatesTokenVersion(t *testing.T) {
 			return &clone, nil
 		},
 	}
-	userService := service.NewUserService(userRepo, nil, nil, nil)
-
+	authService := service.NewAuthService(nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, nil).WithIdentityReader(userRepo)
 	router := gin.New()
-	router.Use(gin.HandlerFunc(NewAdminAuthMiddleware(authService, userService, nil)))
+	router.Use(gin.HandlerFunc(NewAdminAuthMiddleware(authService)))
 	router.GET("/t", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
@@ -64,6 +61,16 @@ func TestAdminAuthJWTValidatesTokenVersion(t *testing.T) {
 
 		require.Equal(t, http.StatusUnauthorized, w.Code)
 		require.Contains(t, w.Body.String(), "TOKEN_REVOKED")
+	})
+
+	t.Run("admin_api_key_is_not_accepted", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/t", nil)
+		req.Header.Set("x-api-key", "admin-legacy-key")
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusUnauthorized, w.Code)
+		require.Contains(t, w.Body.String(), "UNAUTHORIZED")
 	})
 
 	t.Run("token_version_match_allows", func(t *testing.T) {

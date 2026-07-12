@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,9 +14,7 @@ import (
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
 	healthapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/health"
 	importexportapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/importexport"
-	mailverificationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
 	notificationsapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/notifications"
-	proxyapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/proxy"
 	purityapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/purity"
 	ratesapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/rates"
 	schedulerapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/scheduler"
@@ -46,8 +43,7 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 	v1 := router.Group("/api/v1")
 	supplierService := suppliersapp.NewService(suppliersapp.NewMemoryRepository())
 	extensionService := extensionapp.NewService(extensionapp.NewMemoryRepository())
-	mailVerificationService := mailverificationapp.NewService(mailverificationapp.NewMemoryRepository(), nil, nil, nil)
-	siteDiscoveryService := sitediscoveryapp.NewService(nil, supplierService, extensionService, mailVerificationService, nil, nil)
+	siteDiscoveryService := sitediscoveryapp.NewService(nil, supplierService, extensionService, nil, nil)
 	sessionService := sessionsapp.NewServiceWithDependencies(
 		sessionsapp.NewMemoryRepository(),
 		routeSurfaceSessionCipher{},
@@ -79,29 +75,26 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 			System:    &adminhandler.SystemHandler{},
 		},
 		AdminPlus: &handler.AdminPlusHandlers{
-			Supplier:         adminplushandler.NewSupplierHandler(supplierService),
-			SupplierGroup:    adminplushandler.NewSupplierGroupHandler(supplierGroupService),
-			SupplierKey:      adminplushandler.NewSupplierKeyHandler(supplierKeyService),
-			Rate:             adminplushandler.NewRateHandler(ratesapp.NewServiceWithDependencies(newRouteSurfaceRateRepository(), nil, sessionService, &routeSurfaceRateReader{})),
-			Balance:          adminplushandler.NewBalanceHandler(balancesapp.NewService(balancesapp.NewMemoryRepository())),
-			Health:           adminplushandler.NewHealthHandler(healthapp.NewService(healthapp.NewMemoryRepository())),
-			Notification:     adminplushandler.NewNotificationHandler(notificationService),
-			UsageCost:        adminplushandler.NewUsageCostHandler(usagecostsapp.NewServiceWithDependencies(usagecostsapp.NewMemoryRepository(), sessionService, &routeSurfaceUsageCostReader{})),
-			Cost:             adminplushandler.NewCostHandlerWithProvisionJobsAndScheduler(costsapp.NewService(costsapp.NewMemoryRepository()), nil, schedulerService),
-			ChannelCheck:     adminplushandler.NewChannelCheckHandler(channelchecksapp.NewService(nil, supplierService, sessionService, healthapp.NewService(healthapp.NewMemoryRepository()))),
-			AccountRateSync:  adminplushandler.NewAccountRateSyncHandler(nil),
-			Extension:        adminplushandler.NewExtensionHandler(extensionService, nil),
-			SiteDiscovery:    adminplushandler.NewSiteDiscoveryHandler(siteDiscoveryService),
-			PublicProxyAI:    adminplushandler.NewPublicProxyAIHandler(nil, nil),
-			Purity:           adminplushandler.NewPurityHandler(purityapp.NewService(nil), nil, nil),
-			MailVerification: adminplushandler.NewMailVerificationHandler(mailVerificationService),
-			Session:          adminplushandler.NewSessionHandler(sessionService, nil),
-			Scheduler:        adminplushandler.NewSchedulerHandler(schedulerService),
-			Action:           adminplushandler.NewActionHandler(actionsapp.NewRuleService()),
-			Sub2API:          adminplushandler.NewSub2APIHandler(sub2apiapp.NewService(newRouteSurfaceSub2APIRepository(), newRouteSurfaceSub2APIRuntimeReader())),
-			Proxy:            adminplushandler.NewProxyHandler(proxyapp.NewService(nil, nil, nil, nil, proxyapp.RuntimeConfig{})),
-			Backup:           adminplushandler.NewBackupHandler(nil, nil, nil, nil),
-			ImportExport:     adminplushandler.NewImportExportHandler(importexportapp.NewService(nil)),
+			Supplier:        adminplushandler.NewSupplierHandler(supplierService),
+			SupplierGroup:   adminplushandler.NewSupplierGroupHandler(supplierGroupService),
+			SupplierKey:     adminplushandler.NewSupplierKeyHandler(supplierKeyService),
+			Rate:            adminplushandler.NewRateHandler(ratesapp.NewServiceWithDependencies(newRouteSurfaceRateRepository(), nil, sessionService, &routeSurfaceRateReader{})),
+			Balance:         adminplushandler.NewBalanceHandler(balancesapp.NewService(balancesapp.NewMemoryRepository())),
+			Health:          adminplushandler.NewHealthHandler(healthapp.NewService(healthapp.NewMemoryRepository())),
+			Notification:    adminplushandler.NewNotificationHandler(notificationService),
+			UsageCost:       adminplushandler.NewUsageCostHandler(usagecostsapp.NewServiceWithDependencies(usagecostsapp.NewMemoryRepository(), sessionService, &routeSurfaceUsageCostReader{})),
+			Cost:            adminplushandler.NewCostHandlerWithProvisionJobsAndScheduler(costsapp.NewService(costsapp.NewMemoryRepository()), nil, schedulerService),
+			ChannelCheck:    adminplushandler.NewChannelCheckHandler(channelchecksapp.NewService(nil, supplierService, sessionService, healthapp.NewService(healthapp.NewMemoryRepository()))),
+			AccountRateSync: adminplushandler.NewAccountRateSyncHandler(nil),
+			Extension:       adminplushandler.NewExtensionHandler(extensionService, nil),
+			SiteDiscovery:   adminplushandler.NewSiteDiscoveryHandler(siteDiscoveryService),
+			Purity:          adminplushandler.NewPurityHandler(purityapp.NewService(nil), nil, nil),
+			Session:         adminplushandler.NewSessionHandler(sessionService, nil),
+			Scheduler:       adminplushandler.NewSchedulerHandler(schedulerService),
+			Action:          adminplushandler.NewActionHandler(actionsapp.NewRuleService()),
+			Sub2API:         adminplushandler.NewSub2APIHandler(sub2apiapp.NewService(newRouteSurfaceSub2APIRepository(), newRouteSurfaceSub2APIRuntimeReader())),
+			Backup:          adminplushandler.NewBackupHandler(nil, nil),
+			ImportExport:    adminplushandler.NewImportExportHandler(importexportapp.NewService(nil)),
 		},
 	}
 
@@ -111,11 +104,6 @@ func newAdminPlusSurfaceRouter() *gin.Engine {
 		servermiddleware.JWTAuthMiddleware(func(c *gin.Context) { c.Next() }),
 		nil,
 		nil,
-	)
-	RegisterPublicProxyAIRoutes(
-		v1,
-		handlers,
-		servermiddleware.APIKeyAuthMiddleware(func(c *gin.Context) { c.Next() }),
 	)
 	RegisterAdminRoutes(
 		v1,
@@ -137,17 +125,6 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 
 	currentRoutes := []string{
 		"GET /api/v1/settings/public",
-		"GET /api/v1/public/proxyai/summary",
-		"GET /api/v1/public/proxyai/runtime-config",
-		"GET /api/v1/public/proxyai/sites",
-		"GET /api/v1/public/proxyai/sites/:slug",
-		"POST /api/v1/public/proxyai/web/purity/checks",
-		"POST /api/v1/public/proxyai/web/purity/checks/stream",
-		"POST /api/v1/public/proxyai/api/purity/checks",
-		"POST /api/v1/public/proxyai/api/purity/checks/stream",
-		"POST /api/v1/public/proxyai/purity/checks",
-		"POST /api/v1/public/proxyai/purity/checks/stream",
-		"OPTIONS /api/v1/public/proxyai/*path",
 		"POST /api/v1/auth/login",
 		"POST /api/v1/auth/login/2fa",
 		"POST /api/v1/auth/refresh",
@@ -158,15 +135,6 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin/settings",
 		"GET /api/v1/admin/ops/dashboard/snapshot-v2",
 		"GET /api/v1/admin/system/version",
-		"GET /api/v1/admin-plus/site-catalog/sites",
-		"POST /api/v1/admin-plus/site-catalog/sites",
-		"POST /api/v1/admin-plus/site-catalog/sites/bulk-publish",
-		"GET /api/v1/admin-plus/site-catalog/sites/:id",
-		"DELETE /api/v1/admin-plus/site-catalog/sites/:id",
-		"GET /api/v1/admin-plus/site-catalog/categories",
-		"GET /api/v1/admin-plus/site-catalog/tags",
-		"POST /api/v1/admin-plus/site-catalog/candidates/bulk-add/stream",
-		"POST /api/v1/admin-plus/site-catalog/candidates/:id/add",
 		"GET /api/v1/admin-plus/suppliers",
 		"POST /api/v1/admin-plus/suppliers",
 		"POST /api/v1/admin-plus/suppliers/site-match",
@@ -261,17 +229,6 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin-plus/import-export/export",
 		"POST /api/v1/admin-plus/import-export/preview",
 		"POST /api/v1/admin-plus/import-export/import",
-		"GET /api/v1/admin-plus/server-renewal",
-		"PUT /api/v1/admin-plus/server-renewal",
-		"GET /api/v1/admin-plus/mails/oauth/config",
-		"PUT /api/v1/admin-plus/mails/oauth/config",
-		"POST /api/v1/admin-plus/mails/oauth/authorize",
-		"POST /api/v1/admin-plus/mails/oauth/exchange",
-		"GET /api/v1/admin-plus/mails/credentials",
-		"POST /api/v1/admin-plus/mails/credentials",
-		"POST /api/v1/admin-plus/mails/credentials/:id/check",
-		"POST /api/v1/admin-plus/mails/verification-code/read",
-		"POST /api/v1/admin-plus/mails/verification-code/send-test",
 		"POST /api/v1/admin-plus/usage-costs/lines/import",
 		"GET /api/v1/admin-plus/usage-costs/lines",
 		"POST /api/v1/admin-plus/costs/backfill-history",
@@ -280,22 +237,6 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"GET /api/v1/admin-plus/supplier-channel-checks/best",
 		"GET /api/v1/admin-plus/supplier-channel-checks/overview",
 		"GET /api/v1/admin-plus/supplier-groups",
-		"GET /api/v1/admin-plus/kanban/overview",
-		"GET /api/v1/admin-plus/kanban/market-price-sources/discover",
-		"POST /api/v1/admin-plus/kanban/market-prices/parse",
-		"POST /api/v1/admin-plus/kanban/market-prices/import-url",
-		"POST /api/v1/admin-plus/kanban/market-prices",
-		"GET /api/v1/admin-plus/kanban/market-prices",
-		"POST /api/v1/admin-plus/kanban/cache-efficiency",
-		"GET /api/v1/admin-plus/kanban/cache-efficiency",
-		"POST /api/v1/admin-plus/kanban/supply-quality",
-		"GET /api/v1/admin-plus/kanban/supply-quality",
-		"POST /api/v1/admin-plus/kanban/acceptance-reports/generate",
-		"POST /api/v1/admin-plus/kanban/acceptance-reports/refresh-from-run",
-		"POST /api/v1/admin-plus/kanban/acceptance-reports",
-		"GET /api/v1/admin-plus/kanban/acceptance-reports",
-		"GET /api/v1/admin-plus/kanban/events",
-		"PATCH /api/v1/admin-plus/kanban/events/:id/status",
 		"GET /api/v1/admin-plus/account-rate-sync/accounts",
 		"POST /api/v1/admin-plus/account-rate-sync/sync",
 		"POST /api/v1/admin-plus/account-rate-sync/rename-matched",
@@ -310,7 +251,6 @@ func TestAdminPlusCurrentRoutesAreMounted(t *testing.T) {
 		"POST /api/v1/admin-plus/extension/tasks/claim",
 		"POST /api/v1/admin-plus/extension/tasks/:id/heartbeat",
 		"POST /api/v1/admin-plus/extension/tasks/:id/registration-credential",
-		"POST /api/v1/admin-plus/extension/tasks/:id/registration-verification-code/read",
 		"POST /api/v1/admin-plus/extension/tasks/:id/complete",
 		"POST /api/v1/admin-plus/extension/tasks/:id/fail",
 		"GET /api/v1/admin-plus/scheduler/status",
@@ -356,6 +296,13 @@ func TestAdminPlusDeadRoutesStayUnregistered(t *testing.T) {
 	routes := registeredRouteSet(router)
 
 	deadRoutes := []string{
+		"OPTIONS /api/v1/public/proxyai/*path",
+		"POST /api/v1/public/proxyai/web/purity/checks",
+		"POST /api/v1/public/proxyai/web/purity/checks/stream",
+		"POST /api/v1/public/proxyai/api/purity/checks",
+		"POST /api/v1/public/proxyai/api/purity/checks/stream",
+		"POST /api/v1/public/proxyai/purity/checks",
+		"POST /api/v1/public/proxyai/purity/checks/stream",
 		"POST /api/v1/auth/register",
 		"POST /api/v1/auth/send-verify-code",
 		"POST /api/v1/auth/forgot-password",
@@ -369,6 +316,15 @@ func TestAdminPlusDeadRoutesStayUnregistered(t *testing.T) {
 		"GET /api/v1/admin/payment",
 		"GET /api/v1/admin/subscriptions",
 		"GET /api/v1/admin/redeem-codes",
+		"GET /api/v1/admin/settings/admin-api-key",
+		"POST /api/v1/admin/settings/admin-api-key/regenerate",
+		"DELETE /api/v1/admin/settings/admin-api-key",
+		"GET /api/v1/public/proxyai/sites",
+		"GET /api/v1/admin-plus/kanban/overview",
+		"GET /api/v1/admin-plus/proxy/center/status",
+		"GET /api/v1/admin-plus/mails/credentials",
+		"GET /api/v1/admin-plus/site-catalog/sites",
+		"GET /api/v1/admin-plus/server-renewal",
 		"POST /api/v1/admin-plus/promotions",
 		"GET /api/v1/admin-plus/promotions",
 		"PATCH /api/v1/admin-plus/promotions/:id/ack",
@@ -396,6 +352,13 @@ func TestAdminPlusDeadPathsReturn404(t *testing.T) {
 		method string
 		path   string
 	}{
+		{http.MethodOptions, "/api/v1/public/proxyai/web/purity/checks"},
+		{http.MethodPost, "/api/v1/public/proxyai/web/purity/checks"},
+		{http.MethodPost, "/api/v1/public/proxyai/web/purity/checks/stream"},
+		{http.MethodPost, "/api/v1/public/proxyai/api/purity/checks"},
+		{http.MethodPost, "/api/v1/public/proxyai/api/purity/checks/stream"},
+		{http.MethodPost, "/api/v1/public/proxyai/purity/checks"},
+		{http.MethodPost, "/api/v1/public/proxyai/purity/checks/stream"},
 		{http.MethodPost, "/api/v1/auth/register"},
 		{http.MethodPost, "/api/v1/auth/send-verify-code"},
 		{http.MethodPost, "/api/v1/auth/forgot-password"},
@@ -407,6 +370,15 @@ func TestAdminPlusDeadPathsReturn404(t *testing.T) {
 		{http.MethodGet, "/api/v1/admin/groups/1"},
 		{http.MethodGet, "/api/v1/admin/payment"},
 		{http.MethodGet, "/api/v1/admin/subscriptions"},
+		{http.MethodGet, "/api/v1/admin/settings/admin-api-key"},
+		{http.MethodPost, "/api/v1/admin/settings/admin-api-key/regenerate"},
+		{http.MethodDelete, "/api/v1/admin/settings/admin-api-key"},
+		{http.MethodGet, "/api/v1/public/proxyai/sites"},
+		{http.MethodGet, "/api/v1/admin-plus/kanban/overview"},
+		{http.MethodGet, "/api/v1/admin-plus/proxy/center/status"},
+		{http.MethodGet, "/api/v1/admin-plus/mails/credentials"},
+		{http.MethodGet, "/api/v1/admin-plus/site-catalog/sites"},
+		{http.MethodGet, "/api/v1/admin-plus/server-renewal"},
 		{http.MethodPost, "/api/v1/admin-plus/promotions"},
 		{http.MethodGet, "/api/v1/admin-plus/promotions"},
 		{http.MethodPatch, "/api/v1/admin-plus/promotions/1/ack"},
@@ -427,46 +399,6 @@ func TestAdminPlusDeadPathsReturn404(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		require.Equal(t, http.StatusNotFound, w.Code, "%s %s", deadPath.method, deadPath.path)
-	}
-}
-
-func TestPublicProxyAIRoutesAllowCrossOriginPreflight(t *testing.T) {
-	router := newAdminPlusSurfaceRouter()
-	req := httptest.NewRequest(http.MethodOptions, "/api/v1/public/proxyai/sites", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusNoContent, w.Code)
-	require.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
-	require.Equal(t, "GET, HEAD, POST, OPTIONS", w.Header().Get("Access-Control-Allow-Methods"))
-	require.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "Authorization")
-	require.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "X-API-Key")
-	require.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "X-ProxyAI-Key")
-}
-
-func TestPublicProxyAIDeveloperAPIRoutesFailClosedWithoutAuthMiddleware(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	v1 := router.Group("/api/v1")
-	handlers := &handler.Handlers{
-		AdminPlus: &handler.AdminPlusHandlers{
-			Purity: adminplushandler.NewPurityHandler(nil, nil, nil),
-		},
-	}
-	RegisterPublicProxyAIRoutes(v1, handlers, nil)
-
-	for _, path := range []string{
-		"/api/v1/public/proxyai/api/purity/checks",
-		"/api/v1/public/proxyai/purity/checks",
-	} {
-		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		require.Equal(t, http.StatusServiceUnavailable, w.Code, path)
-		require.Contains(t, w.Body.String(), "proxyai_api_auth_not_configured")
 	}
 }
 

@@ -1,5 +1,5 @@
 # =============================================================================
-# Sub2API Admin Plus Multi-Stage Dockerfile
+# SuperLLM Multi-Stage Dockerfile
 # =============================================================================
 # Stage 1: Build frontend
 # Stage 2: Build Go backend with embedded frontend
@@ -12,7 +12,6 @@ ARG ALPINE_IMAGE=alpine:3.21
 ARG POSTGRES_IMAGE=postgres:18-alpine
 ARG GOPROXY=https://goproxy.cn,direct
 ARG GOSUMDB=sum.golang.google.cn
-ARG MIHOMO_VERSION=v1.19.27
 
 # -----------------------------------------------------------------------------
 # Stage 1: Frontend Builder
@@ -76,7 +75,7 @@ RUN VERSION_VALUE="${VERSION}" && \
     -tags embed \
     -ldflags="-s -w -X main.Version=${VERSION_VALUE} -X main.Commit=${COMMIT} -X main.Date=${DATE_VALUE} -X main.BuildType=release" \
     -trimpath \
-    -o /app/sub2api-admin-plus \
+    -o /app/superllm \
     ./cmd/server
 
 # -----------------------------------------------------------------------------
@@ -85,33 +84,14 @@ RUN VERSION_VALUE="${VERSION}" && \
 FROM ${POSTGRES_IMAGE} AS pg-client
 
 # -----------------------------------------------------------------------------
-# Stage 4: Mihomo Core
-# -----------------------------------------------------------------------------
-FROM ${ALPINE_IMAGE} AS mihomo-core
-
-ARG TARGETARCH
-ARG MIHOMO_VERSION
-
-RUN apk add --no-cache ca-certificates curl gzip && \
-    case "${TARGETARCH:-amd64}" in \
-      amd64) MIHOMO_ASSET="mihomo-linux-amd64-compatible-${MIHOMO_VERSION}.gz" ;; \
-      arm64) MIHOMO_ASSET="mihomo-linux-arm64-${MIHOMO_VERSION}.gz" ;; \
-      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
-    esac && \
-    curl -fsSL "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/${MIHOMO_ASSET}" -o /tmp/mihomo.gz && \
-    gzip -dc /tmp/mihomo.gz > /mihomo && \
-    chmod +x /mihomo && \
-    test -s /mihomo
-
-# -----------------------------------------------------------------------------
 # Stage 5: Final Runtime Image
 # -----------------------------------------------------------------------------
 FROM ${ALPINE_IMAGE}
 
 # Labels
 LABEL maintainer="openrelayllm"
-LABEL description="Sub2API Admin Plus - operations automation extension"
-LABEL org.opencontainers.image.source="https://github.com/openrelayllm/sub2api-admin-plus"
+LABEL description="SuperLLM - operations automation extension"
+LABEL org.opencontainers.image.source="https://github.com/openrelayllm/superllm"
 
 # Install runtime dependencies
 RUN apk add --no-cache \
@@ -133,8 +113,8 @@ COPY --from=pg-client /usr/local/bin/psql /usr/local/bin/psql
 COPY --from=pg-client /usr/local/lib/libpq.so.5* /usr/local/lib/
 
 # Create non-root user
-RUN addgroup -g 1000 sub2api && \
-    adduser -u 1000 -G sub2api -s /bin/sh -D sub2api
+RUN addgroup -g 1000 superllm && \
+    adduser -u 1000 -G superllm -s /bin/sh -D superllm
 
 # Set working directory
 WORKDIR /app
@@ -142,15 +122,14 @@ WORKDIR /app
 RUN mkdir -p /app/bin
 
 # Copy binary/resources with ownership to avoid extra full-layer chown copy
-COPY --from=backend-builder --chown=sub2api:sub2api /app/sub2api-admin-plus /app/sub2api-admin-plus
-COPY --from=backend-builder --chown=sub2api:sub2api /app/backend/resources /app/resources
-COPY --from=mihomo-core --chown=sub2api:sub2api /mihomo /app/bin/mihomo
-COPY --chown=sub2api:sub2api extension /app/extension
+COPY --from=backend-builder --chown=superllm:superllm /app/superllm /app/superllm
+COPY --from=backend-builder --chown=superllm:superllm /app/backend/resources /app/resources
+COPY --chown=superllm:superllm extension /app/extension
 
 # Create data directory
-RUN mkdir -p /app/data && chown sub2api:sub2api /app/data
+RUN mkdir -p /app/data && chown superllm:superllm /app/data
 
-# Copy entrypoint script (fixes volume permissions then drops to sub2api)
+# Copy entrypoint script (fixes volume permissions then drops to superllm)
 COPY deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
@@ -161,6 +140,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD wget -q -T 5 -O /dev/null http://localhost:${SERVER_PORT:-8080}/health || exit 1
 
-# Run the application (entrypoint fixes /app/data ownership then execs as sub2api)
+# Run the application (entrypoint fixes /app/data ownership then execs as superllm)
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["/app/sub2api-admin-plus"]
+CMD ["/app/superllm"]

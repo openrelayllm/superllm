@@ -87,7 +87,7 @@ func buildFeishuGroupChangeText(eventType string, event *adminplusdomain.Supplie
 		change = fmt.Sprintf("%+.1f%%", *event.ChangePercent)
 	}
 	return fmt.Sprintf(
-		"【Sub2API Admin Plus %s】\n供应商ID：%d\n分组：%s\n分组ID：%s\n平台：%s\n变更：%s\n原倍率：%s\n新倍率：%s\n变化：%s\n%s\n时间：%s",
+		"【SuperLLM %s】\n供应商ID：%d\n分组：%s\n分组ID：%s\n平台：%s\n变更：%s\n原倍率：%s\n新倍率：%s\n变化：%s\n%s\n时间：%s",
 		title,
 		event.SupplierID,
 		event.GroupName,

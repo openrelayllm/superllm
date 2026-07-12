@@ -36,11 +36,11 @@ return 0
 `)
 
 type OpsScheduledReportService struct {
-	opsService   *OpsService
-	userService  *UserService
-	emailService *EmailService
-	redisClient  *redis.Client
-	cfg          *config.Config
+	opsService     *OpsService
+	identityReader AuthIdentityReader
+	emailService   *EmailService
+	redisClient    *redis.Client
+	cfg            *config.Config
 
 	instanceID string
 	loc        *time.Location
@@ -57,7 +57,7 @@ type OpsScheduledReportService struct {
 
 func NewOpsScheduledReportService(
 	opsService *OpsService,
-	userService *UserService,
+	identityReader AuthIdentityReader,
 	emailService *EmailService,
 	redisClient *redis.Client,
 	cfg *config.Config,
@@ -71,11 +71,11 @@ func NewOpsScheduledReportService(
 		}
 	}
 	return &OpsScheduledReportService{
-		opsService:   opsService,
-		userService:  userService,
-		emailService: emailService,
-		redisClient:  redisClient,
-		cfg:          cfg,
+		opsService:     opsService,
+		identityReader: identityReader,
+		emailService:   emailService,
+		redisClient:    redisClient,
+		cfg:            cfg,
 
 		instanceID:        uuid.NewString(),
 		loc:               loc,
@@ -326,8 +326,8 @@ func (s *OpsScheduledReportService) runReport(ctx context.Context, report *opsSc
 	}
 
 	recipients := report.Recipients
-	if len(recipients) == 0 && s.userService != nil {
-		admin, err := s.userService.GetFirstAdmin(ctx)
+	if len(recipients) == 0 && s.identityReader != nil {
+		admin, err := s.identityReader.GetFirstAdmin(ctx)
 		if err == nil && admin != nil && strings.TrimSpace(admin.Email) != "" {
 			recipients = []string{strings.TrimSpace(admin.Email)}
 		}

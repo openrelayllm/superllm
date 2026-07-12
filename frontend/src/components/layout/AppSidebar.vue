@@ -279,19 +279,6 @@ const ChevronDoubleRightIcon = {
 const adminNavItems = computed((): NavItem[] => [
   { path: '/admin/dashboard', label: t('nav.dashboard'), icon: DashboardIcon },
   {
-    path: '/admin/kanban',
-    label: '运营看板',
-    icon: ChartIcon,
-    children: [
-      { path: '/admin/kanban/market-prices', label: '市场价格', icon: ChartIcon },
-      { path: '/admin/kanban/supply-quality', label: '供应质量', icon: ChartIcon },
-      { path: '/admin/kanban/profit', label: '模型利润', icon: ChartIcon },
-      { path: '/admin/kanban/acceptance', label: '接入验收', icon: ChartIcon },
-      { path: '/admin/kanban/events', label: '价格事件', icon: ChartIcon },
-      { path: '/admin/kanban/settings', label: '设置', icon: ChartIcon }
-    ]
-  },
-  {
     path: '/admin/suppliers',
     label: '供应商',
     icon: OperationsIcon,
@@ -309,17 +296,7 @@ const adminNavItems = computed((): NavItem[] => [
     icon: OperationsIcon,
     children: [
       { path: '/admin/collection/sessions', label: '采集会话', icon: OperationsIcon },
-      { path: '/admin/collection/site-discovery', label: '渠道索引采集', icon: OperationsIcon },
-      { path: '/admin/proxy', label: '代理出口管理', icon: OperationsIcon }
-    ]
-  },
-  { path: '/admin/mails', label: '邮箱验证码', icon: OperationsIcon },
-  {
-    path: '/admin/site-catalog',
-    label: '网址目录',
-    icon: OperationsIcon,
-    children: [
-      { path: '/admin/site-catalog', label: '站点列表', icon: OperationsIcon }
+      { path: '/admin/collection/site-discovery', label: '渠道索引采集', icon: OperationsIcon }
     ]
   },
   {
@@ -332,10 +309,7 @@ const adminNavItems = computed((): NavItem[] => [
       { path: '/admin/scheduler/notifications', label: '通知中心', icon: OperationsIcon },
       { path: '/admin/actions', label: '智能动作', icon: OperationsIcon },
       { path: '/admin/action-audits', label: '操作审计', icon: OperationsIcon },
-      { path: '/admin/system-logs', label: '系统日志', icon: OperationsIcon },
-      { path: '/admin/server-renewal', label: '续费提醒', icon: OperationsIcon },
-      { path: '/admin/backup', label: '数据备份', icon: OperationsIcon },
-      { path: '/admin/import-export', label: '导入/导出', icon: OperationsIcon }
+      { path: '/admin/system-logs', label: '系统日志', icon: OperationsIcon }
     ]
   },
   {

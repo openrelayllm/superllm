@@ -35,7 +35,6 @@ type GenerateInput struct {
 	LocalAccountSchedule []LocalAccountScheduleSignal
 	BalanceEvents        []*adminplusdomain.BalanceEvent
 	HealthEvents         []*adminplusdomain.HealthEvent
-	KanbanEvents         []*adminplusdomain.KanbanEvent
 	CostSnapshots        []*adminplusdomain.SupplierCostSnapshot
 	MinProfitMargin      float64
 }
@@ -189,7 +188,7 @@ func NewRuleService() *Service {
 }
 
 func (s *Service) Generate(ctx context.Context, in GenerateInput) (*GenerateResult, error) {
-	if len(in.Suppliers) == 0 && len(in.CandidateEvaluations) == 0 && len(in.LocalGroupCapacity) == 0 && len(in.LocalAccountSchedule) == 0 && len(in.BalanceEvents) == 0 && len(in.HealthEvents) == 0 && len(in.KanbanEvents) == 0 && len(in.CostSnapshots) == 0 {
+	if len(in.Suppliers) == 0 && len(in.CandidateEvaluations) == 0 && len(in.LocalGroupCapacity) == 0 && len(in.LocalAccountSchedule) == 0 && len(in.BalanceEvents) == 0 && len(in.HealthEvents) == 0 && len(in.CostSnapshots) == 0 {
 		return nil, badRequest("ACTION_SIGNALS_REQUIRED", "action signals are required")
 	}
 	now := s.now().UTC()
@@ -202,7 +201,6 @@ func (s *Service) Generate(ctx context.Context, in GenerateInput) (*GenerateResu
 	items = append(items, s.actionsFromLocalAccountSchedule(now, in.LocalAccountSchedule)...)
 	items = append(items, s.actionsFromBalanceEvents(now, suppliers, in.BalanceEvents, bestCandidate)...)
 	items = append(items, s.actionsFromHealthEvents(now, suppliers, in.HealthEvents, bestCandidate)...)
-	items = append(items, s.actionsFromKanbanEvents(now, suppliers, in.KanbanEvents, bestCandidate)...)
 	items = append(items, s.actionsFromCostSnapshots(now, in.CostSnapshots)...)
 	sort.SliceStable(items, func(i, j int) bool {
 		return severityRank(items[i].Severity) > severityRank(items[j].Severity)
@@ -288,7 +286,6 @@ func recommendationIdentity(action *adminplusdomain.ActionRecommendation) string
 		"supplier_group_id",
 		"balance_event_id",
 		"cost_snapshot_id",
-		"kanban_event_id",
 	} {
 		if value := signalValue(action.Signals, key); value != "" {
 			return key + "=" + value
@@ -618,7 +615,7 @@ func (s *Service) actionsFromSuppliers(now time.Time, suppliers []SupplierSignal
 		case adminplusdomain.SupplierKeyCapacityExhausted:
 			items = append(items, newAction(now, supplier.SupplierID, nil, adminplusdomain.ActionTypeReviewCredential, adminplusdomain.ActionSeverityWarning, "supplier_key_capacity_exhausted", "Review supplier key capacity", "Supplier key capacity is exhausted. Batch provisioning may only create part of the plan.", "free stale keys, raise the key limit, or explicitly run the partial provisioning plan", supplierKeyCapacitySignals(supplier)))
 		case adminplusdomain.SupplierKeyCapacityUnknown:
-			items = append(items, newAction(now, supplier.SupplierID, nil, adminplusdomain.ActionTypeReviewCredential, adminplusdomain.ActionSeverityInfo, "supplier_key_capacity_unknown", "Configure supplier key capacity", "Supplier key capacity is unknown. Admin Plus will block blind batch provisioning until the policy is configured or refreshed.", "make provisioning plans predictable before creating keys", supplierKeyCapacitySignals(supplier)))
+			items = append(items, newAction(now, supplier.SupplierID, nil, adminplusdomain.ActionTypeReviewCredential, adminplusdomain.ActionSeverityInfo, "supplier_key_capacity_unknown", "Configure supplier key capacity", "Supplier key capacity is unknown. SuperLLM will block blind batch provisioning until the policy is configured or refreshed.", "make provisioning plans predictable before creating keys", supplierKeyCapacitySignals(supplier)))
 		case adminplusdomain.SupplierKeyCapacityUnsupported:
 			items = append(items, newAction(now, supplier.SupplierID, nil, adminplusdomain.ActionTypeReviewCredential, adminplusdomain.ActionSeverityInfo, "supplier_key_provisioning_unsupported", "Review manual key provisioning", "Supplier does not support automatic key provisioning. Use manual key handling for blocked groups.", "avoid failed automatic key creation attempts", supplierKeyCapacitySignals(supplier)))
 		}
@@ -782,64 +779,6 @@ func (s *Service) actionsFromHealthEvents(now time.Time, suppliers map[int64]Sup
 	return items
 }
 
-func (s *Service) actionsFromKanbanEvents(now time.Time, suppliers map[int64]SupplierSignal, events []*adminplusdomain.KanbanEvent, bestCandidate *SupplierSignal) []*adminplusdomain.ActionRecommendation {
-	items := make([]*adminplusdomain.ActionRecommendation, 0, len(events))
-	for _, event := range events {
-		if event == nil || event.Status != "open" {
-			continue
-		}
-		supplierID := supplierIDFromKanbanEvent(event)
-		severity := actionSeverityFromKanbanEvent(event.Severity)
-		signals := kanbanEventSignals(event)
-		supplier := suppliers[supplierID]
-		switch event.EventType {
-		case "supply_quality_risk":
-			if supplierID <= 0 {
-				items = append(items, newAction(now, 0, nil, adminplusdomain.ActionTypeInvestigateProfit, severity, "kanban_supply_quality_risk", "Review supply quality risk", eventDescription(event, "Supply quality risk needs manual review."), "prevent low-quality supply from entering production", signals))
-				continue
-			}
-			actionType := adminplusdomain.ActionTypeDegradeSupplier
-			reason := "kanban_supply_quality_risk"
-			title := "Degrade risky supplier"
-			impact := "reduce exposure to low-quality supply while keeping fallback capacity"
-			if severity == adminplusdomain.ActionSeverityCritical {
-				actionType = adminplusdomain.ActionTypePauseSupplier
-				reason = "kanban_supply_quality_blocked"
-				title = "Pause blocked supplier"
-				impact = "stop routing production traffic to failed quality source"
-			}
-			items = append(items, newAction(now, supplierID, nil, actionType, severity, reason, title, eventDescription(event, "Supply quality is below production standard."), impact, signals))
-			items = append(items, switchActionFromKanban(now, supplier, supplierID, bestCandidate, severity, "switch_from_supply_quality_risk", "Switch from risky supplier", eventDescription(event, "Active supplier has quality risk and another candidate is available."), "restore stable traffic with a safer supplier", signals)...)
-		case "acceptance_risk":
-			if supplierID <= 0 {
-				items = append(items, newAction(now, 0, nil, adminplusdomain.ActionTypeReviewCredential, severity, "kanban_acceptance_risk", "Review acceptance risk", eventDescription(event, "Acceptance failed or is not production-ready."), "keep unaccepted supply out of production candidates", signals))
-				continue
-			}
-			actionType := adminplusdomain.ActionTypeReviewCredential
-			reason := "kanban_acceptance_risk"
-			title := "Review supplier acceptance"
-			impact := "keep unaccepted supply out of production candidates"
-			if severity == adminplusdomain.ActionSeverityCritical && supplier.RuntimeStatus == adminplusdomain.SupplierRuntimeStatusActive {
-				actionType = adminplusdomain.ActionTypePauseSupplier
-				reason = "kanban_acceptance_blocked_active_supplier"
-				title = "Pause supplier with failed acceptance"
-				impact = "stop routing production traffic to a supplier that failed acceptance"
-			}
-			items = append(items, newAction(now, supplierID, nil, actionType, severity, reason, title, eventDescription(event, "Acceptance failed or is not production-ready."), impact, signals))
-			items = append(items, switchActionFromKanban(now, supplier, supplierID, bestCandidate, severity, "switch_from_acceptance_risk", "Switch from failed-acceptance supplier", eventDescription(event, "Active supplier failed acceptance and another candidate is available."), "restore traffic with an accepted supplier candidate", signals)...)
-		case "cache_efficiency_risk":
-			if supplierID > 0 {
-				items = append(items, newAction(now, supplierID, nil, adminplusdomain.ActionTypeDegradeSupplier, severity, "kanban_cache_efficiency_risk", "Degrade low-cache supplier", eventDescription(event, "Cache efficiency risk increases real cost."), "reduce repeated-input cost caused by low cache hit rate", signals))
-			} else {
-				items = append(items, newAction(now, 0, nil, adminplusdomain.ActionTypeInvestigateProfit, severity, "kanban_cache_efficiency_risk", "Review cache-adjusted cost", eventDescription(event, "Cache efficiency risk increases real cost."), "correct pricing and routing assumptions for low cache hit rate", signals))
-			}
-		case "market_price_drop", "market_price_anomaly", "market_model_added", "market_model_removed", "market_promotion", "unprofitable_model", "pricing_recommendation":
-			items = append(items, newAction(now, 0, nil, adminplusdomain.ActionTypeInvestigateProfit, severity, "kanban_pricing_review", "Review model pricing", eventDescription(event, "Market pricing or margin signal needs review."), "avoid following unsustainable prices without quality and cache evidence", signals))
-		}
-	}
-	return items
-}
-
 func (s *Service) actionsFromCostSnapshots(now time.Time, snapshots []*adminplusdomain.SupplierCostSnapshot) []*adminplusdomain.ActionRecommendation {
 	items := make([]*adminplusdomain.ActionRecommendation, 0, len(snapshots))
 	for _, snapshot := range snapshots {
@@ -896,79 +835,6 @@ func findBestSwitchCandidate(items []SupplierSignal) *SupplierSignal {
 		}
 	}
 	return best
-}
-
-func switchActionFromKanban(now time.Time, supplier SupplierSignal, supplierID int64, bestCandidate *SupplierSignal, severity adminplusdomain.ActionSeverity, reason string, title string, description string, impact string, signals []string) []*adminplusdomain.ActionRecommendation {
-	if bestCandidate == nil || bestCandidate.SupplierID <= 0 || bestCandidate.SupplierID == supplierID {
-		return nil
-	}
-	if supplier.RuntimeStatus != adminplusdomain.SupplierRuntimeStatusActive {
-		return nil
-	}
-	if severity != adminplusdomain.ActionSeverityCritical {
-		return nil
-	}
-	return []*adminplusdomain.ActionRecommendation{
-		newAction(now, supplierID, &bestCandidate.SupplierID, adminplusdomain.ActionTypeSwitchSupplier, severity, reason, title, description, impact, append(normalizeSignals(signals), "candidate_available")),
-	}
-}
-
-func supplierIDFromKanbanEvent(event *adminplusdomain.KanbanEvent) int64 {
-	if event == nil {
-		return 0
-	}
-	if event.SourceType == "supplier" && event.SourceID > 0 {
-		return event.SourceID
-	}
-	if event.Payload != nil {
-		return int64FromPayload(event.Payload, "supplier_id")
-	}
-	return 0
-}
-
-func int64FromPayload(payload map[string]any, key string) int64 {
-	switch value := payload[key].(type) {
-	case int64:
-		return value
-	case int:
-		return int64(value)
-	case float64:
-		return int64(value)
-	case string:
-		parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-		if err == nil {
-			return parsed
-		}
-	}
-	return 0
-}
-
-func actionSeverityFromKanbanEvent(severity string) adminplusdomain.ActionSeverity {
-	switch adminplusdomain.ActionSeverity(strings.ToLower(strings.TrimSpace(severity))) {
-	case adminplusdomain.ActionSeverityCritical:
-		return adminplusdomain.ActionSeverityCritical
-	case adminplusdomain.ActionSeverityWarning:
-		return adminplusdomain.ActionSeverityWarning
-	default:
-		return adminplusdomain.ActionSeverityInfo
-	}
-}
-
-func kanbanEventSignals(event *adminplusdomain.KanbanEvent) []string {
-	if event == nil {
-		return nil
-	}
-	signals := []string{"kanban_event", "kanban_event_id=" + strconv.FormatInt(event.ID, 10)}
-	if event.EventType != "" {
-		signals = append(signals, "kanban_event_type="+event.EventType)
-	}
-	if event.Model != "" {
-		signals = append(signals, "model="+event.Model)
-	}
-	if event.RelatedSnapshotType != "" {
-		signals = append(signals, "snapshot_type="+event.RelatedSnapshotType)
-	}
-	return signals
 }
 
 func candidateEvaluationSignals(evaluation CandidateSignal) []string {
@@ -1175,26 +1041,6 @@ func supplierKeyCapacitySignals(supplier SupplierSignal) []string {
 		signals = append(signals, "key_limit_value="+strconv.Itoa(supplier.KeyLimitValue))
 	}
 	return signals
-}
-
-func eventDescription(event *adminplusdomain.KanbanEvent, fallback string) string {
-	if event == nil {
-		return fallback
-	}
-	parts := make([]string, 0, 3)
-	if strings.TrimSpace(event.Title) != "" {
-		parts = append(parts, strings.TrimSpace(event.Title))
-	}
-	if strings.TrimSpace(event.Description) != "" {
-		parts = append(parts, strings.TrimSpace(event.Description))
-	}
-	if strings.TrimSpace(event.Recommendation) != "" {
-		parts = append(parts, strings.TrimSpace(event.Recommendation))
-	}
-	if len(parts) == 0 {
-		return fallback
-	}
-	return strings.Join(parts, " ")
 }
 
 func newAction(now time.Time, supplierID int64, targetSupplierID *int64, actionType adminplusdomain.ActionType, severity adminplusdomain.ActionSeverity, reason string, title string, description string, impact string, signals []string) *adminplusdomain.ActionRecommendation {

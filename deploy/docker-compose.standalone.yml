@@ -1,5 +1,5 @@
 # =============================================================================
-# Sub2API Admin Plus Docker Compose - Standalone Configuration
+# SuperLLM Docker Compose - Standalone Configuration
 # =============================================================================
 # This configuration runs only the Admin Plus application.
 # PostgreSQL and Redis must be provided externally.
@@ -11,9 +11,9 @@
 # =============================================================================
 
 services:
-  admin-plus:
-    image: ${ADMIN_PLUS_IMAGE:-wutongci/sub2api-admin-plus:latest}
-    container_name: sub2api-admin-plus
+  superllm:
+    image: ${ADMIN_PLUS_IMAGE:-wutongci/superllm:latest}
+    container_name: superllm
     restart: unless-stopped
     ulimits:
       nofile:
@@ -46,9 +46,9 @@ services:
       - DATABASE_PORT=${DATABASE_PORT:-5432}
       # Admin Plus runs with an independent primary database.
       # Do not point this at an existing production Sub2API database.
-      - DATABASE_USER=${DATABASE_USER:-sub2api_admin_plus}
+      - DATABASE_USER=${DATABASE_USER:-superllm}
       - DATABASE_PASSWORD=${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
-      - DATABASE_DBNAME=${DATABASE_DBNAME:-sub2api_admin_plus}
+      - DATABASE_DBNAME=${DATABASE_DBNAME:-superllm}
       - DATABASE_SSLMODE=${DATABASE_SSLMODE:-disable}
       - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-50}
       - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-10}
@@ -67,20 +67,14 @@ services:
       - REDIS_ENABLE_TLS=${REDIS_ENABLE_TLS:-false}
 
       # =======================================================================
-      # Sub2API Integration (optional)
+      # Sub2API identity and data source (required)
       # =======================================================================
-      - SUB2API_READONLY_DATABASE_URL=${SUB2API_READONLY_DATABASE_URL:-}
+      - SUB2API_READONLY_DATABASE_URL=${SUB2API_READONLY_DATABASE_URL:?SUB2API_READONLY_DATABASE_URL is required}
       - SUB2API_READONLY_REDIS_URL=${SUB2API_READONLY_REDIS_URL:-}
       - SUB2API_READONLY_REDIS_DB=${SUB2API_READONLY_REDIS_DB:-}
       - ADMIN_PLUS_SUB2API_ADMIN_BASE_URL=${ADMIN_PLUS_SUB2API_ADMIN_BASE_URL:-}
       - ADMIN_PLUS_SUB2API_ADMIN_API_KEY=${ADMIN_PLUS_SUB2API_ADMIN_API_KEY:-}
       - ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY=${ADMIN_PLUS_ALLOW_EMBEDDED_SUB2API_GATEWAY:-false}
-
-      # =======================================================================
-      # Admin Account (auto-created on first run)
-      # =======================================================================
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@sub2api-admin-plus.local}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
 
       # =======================================================================
       # JWT Configuration

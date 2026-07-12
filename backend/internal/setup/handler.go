@@ -243,8 +243,7 @@ func testRedis(c *gin.Context) {
 type InstallRequest struct {
 	Database DatabaseConfig `json:"database" binding:"required"`
 	Redis    RedisConfig    `json:"redis" binding:"required"`
-	Sub2API  Sub2APIConfig  `json:"sub2api"`
-	Admin    AdminConfig    `json:"admin" binding:"required"`
+	Sub2API  Sub2APIConfig  `json:"sub2api" binding:"required"`
 	Server   ServerConfig   `json:"server"`
 }
 
@@ -266,7 +265,6 @@ func install(c *gin.Context) {
 		return
 	}
 
-	req.Admin.Email = strings.TrimSpace(req.Admin.Email)
 	req.Database.Host = strings.TrimSpace(req.Database.Host)
 	req.Database.User = strings.TrimSpace(req.Database.User)
 	req.Database.DBName = strings.TrimSpace(req.Database.DBName)
@@ -310,6 +308,10 @@ func install(c *gin.Context) {
 	}
 
 	// Sub2API integration validation
+	if req.Sub2API.ReadonlyDatabaseURL == "" {
+		response.Error(c, http.StatusBadRequest, "Sub2API readonly database URL is required")
+		return
+	}
 	if !validateOptionalURL(req.Sub2API.ReadonlyDatabaseURL, "postgres", "postgresql") {
 		response.Error(c, http.StatusBadRequest, "Invalid Sub2API readonly database URL")
 		return
@@ -328,16 +330,6 @@ func install(c *gin.Context) {
 	}
 	if (req.Sub2API.AdminBaseURL == "") != (req.Sub2API.AdminAPIKey == "") {
 		response.Error(c, http.StatusBadRequest, "Sub2API Admin API base URL and API key must be configured together")
-		return
-	}
-
-	// Admin validation
-	if !validateEmail(req.Admin.Email) {
-		response.Error(c, http.StatusBadRequest, "Invalid admin email format")
-		return
-	}
-	if err := validatePassword(req.Admin.Password); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -374,7 +366,6 @@ func install(c *gin.Context) {
 		Database: req.Database,
 		Redis:    req.Redis,
 		Sub2API:  req.Sub2API,
-		Admin:    req.Admin,
 		Server:   req.Server,
 		JWT: JWTConfig{
 			ExpireHour: 24,

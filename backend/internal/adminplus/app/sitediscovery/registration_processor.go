@@ -17,7 +17,6 @@ type RegistrationProcessor struct {
 	suppliers *suppliersapp.Service
 	cipher    CredentialCipher
 	bizlog    *bizlogs.Recorder
-	proxy     ProxyManager
 	now       func() time.Time
 }
 
@@ -33,13 +32,6 @@ func NewRegistrationProcessor(repo Repository, suppliers *suppliersapp.Service, 
 func (p *RegistrationProcessor) WithDiagnostics(recorder *bizlogs.Recorder) *RegistrationProcessor {
 	if p != nil {
 		p.bizlog = recorder
-	}
-	return p
-}
-
-func (p *RegistrationProcessor) WithProxyManager(manager ProxyManager) *RegistrationProcessor {
-	if p != nil {
-		p.proxy = manager
 	}
 	return p
 }
@@ -60,7 +52,6 @@ func (p *RegistrationProcessor) ProcessRegistrationTaskResult(ctx context.Contex
 	}
 	attemptedAt := p.now().UTC()
 	if !boolValue(result, "registration_submitted") {
-		p.releaseTaskProxy(ctx, task, true, "REGISTRATION_RESULT_INCOMPLETE", "registration result is incomplete")
 		updated, err := p.repo.CompleteRegistration(ctx, credential.ID, credential.SupplierID, adminplusdomain.SupplierRegistrationStatusFailed, "REGISTRATION_RESULT_INCOMPLETE", "registration result is incomplete", attemptedAt)
 		if err != nil {
 			return nil, err
@@ -72,17 +63,14 @@ func (p *RegistrationProcessor) ProcessRegistrationTaskResult(ctx context.Contex
 		}, nil
 	}
 	if p.suppliers == nil {
-		p.releaseTaskProxy(ctx, task, true, "SUPPLIER_SERVICE_NOT_CONFIGURED", "supplier service is not configured")
 		return nil, internalError("supplier service is not configured")
 	}
 	password, err := p.decryptRegistrationPassword(credential)
 	if err != nil {
-		p.releaseTaskProxy(ctx, task, true, infraerrors.Reason(err), err.Error())
 		return nil, err
 	}
 	supplier, err := p.ensureRegisteredSupplier(ctx, item, credential.Email, password)
 	if err != nil {
-		p.releaseTaskProxy(ctx, task, true, infraerrors.Reason(err), err.Error())
 		return nil, err
 	}
 	if supplier == nil {
@@ -90,10 +78,8 @@ func (p *RegistrationProcessor) ProcessRegistrationTaskResult(ctx context.Contex
 	}
 	updated, err := p.repo.CompleteRegistration(ctx, credential.ID, supplier.ID, adminplusdomain.SupplierRegistrationStatusSucceeded, "", "", attemptedAt)
 	if err != nil {
-		p.releaseTaskProxy(ctx, task, true, infraerrors.Reason(err), err.Error())
 		return nil, err
 	}
-	p.releaseTaskProxy(ctx, task, false, "", "")
 	p.recordRegistrationEvent(ctx, "complete_registration", bizlogs.OutcomeSucceeded, "site discovery registration succeeded", item, updated, task, "")
 	return map[string]any{
 		"registration_status": string(updated.Status),
@@ -117,7 +103,6 @@ func (p *RegistrationProcessor) ProcessRegistrationTaskFailure(ctx context.Conte
 	if credential == nil {
 		return nil, infraerrors.New(http.StatusNotFound, "SITE_DISCOVERY_REGISTRATION_CREDENTIAL_NOT_FOUND", "registration credential not found")
 	}
-	p.releaseTaskProxy(ctx, task, true, errorCode, errorMessage)
 	status := adminplusdomain.SupplierRegistrationStatusFailed
 	verificationStatus := strings.TrimSpace(errorCode)
 	if verificationStatus == "REGISTRATION_VERIFICATION_REQUIRED" {
@@ -132,17 +117,6 @@ func (p *RegistrationProcessor) ProcessRegistrationTaskFailure(ctx context.Conte
 		"registration_status": string(updated.Status),
 		"manual_required":     updated.Status == adminplusdomain.SupplierRegistrationStatusWaitingManualVerification,
 	}, nil
-}
-
-func (p *RegistrationProcessor) releaseTaskProxy(ctx context.Context, task *adminplusdomain.ExtensionTask, failed bool, code string, message string) {
-	if p == nil || p.proxy == nil || task == nil || task.Payload == nil {
-		return
-	}
-	assignmentID := int64FromAny(task.Payload["proxy_assignment_id"])
-	if assignmentID <= 0 {
-		return
-	}
-	_, _ = p.proxy.ReleaseAssignment(ctx, assignmentID, failed, code, message)
 }
 
 func (p *RegistrationProcessor) recordRegistrationEvent(ctx context.Context, action string, outcome string, message string, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, task *adminplusdomain.ExtensionTask, reason string) {

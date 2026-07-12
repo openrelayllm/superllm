@@ -146,7 +146,7 @@ func (s *GroupService) ListActive(ctx context.Context) ([]Group, error) {
 	return groups, nil
 }
 
-// GetAllGroups returns active groups for Admin Plus read-only filters.
+// GetAllGroups returns active groups for SuperLLM read-only filters.
 func (s *GroupService) GetAllGroups(ctx context.Context) ([]Group, error) {
 	return s.ListActive(ctx)
 }
@@ -160,7 +160,7 @@ func (s *GroupService) GetAllGroupsByPlatform(ctx context.Context, platform stri
 	return groups, nil
 }
 
-// GetAllGroupsIncludingInactive returns all groups needed by Admin Plus filters.
+// GetAllGroupsIncludingInactive returns all groups needed by SuperLLM filters.
 func (s *GroupService) GetAllGroupsIncludingInactive(ctx context.Context) ([]Group, error) {
 	groups, _, err := s.groupRepo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 1000}, "", "", "", nil)
 	if err != nil {

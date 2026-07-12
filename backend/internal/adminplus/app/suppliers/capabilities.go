@@ -39,8 +39,8 @@ func buildSupplierCapabilities(in *adminplusdomain.Supplier) []adminplusdomain.S
 		return []adminplusdomain.SupplierCapability{
 			availableCapability("health_probe", "健康探测", "local_sub2api_account", "通过本地 Sub2API 账号做源站健康探测，不接管源站凭据。"),
 			readonlyCapability(in, "local_runtime_observation", "本地运行态", "sub2api_readonly", "通过本地 Sub2API 只读 PG/Redis 观测账号运行态，不接管调度。"),
-			unsupportedCapability("profile_balance", "Profile/余额", "source_provider", "源站账号能力不由 Admin Plus 直接读取，保持由 Sub2API 与本地账号绑定承载。"),
-			unsupportedCapability("keys", "Key 管理", "source_provider", "源站 Key 创建不在 Admin Plus 供应商运营边界内。"),
+			unsupportedCapability("profile_balance", "Profile/余额", "source_provider", "源站账号能力不由 SuperLLM 直接读取，保持由 Sub2API 与本地账号绑定承载。"),
+			unsupportedCapability("keys", "Key 管理", "source_provider", "源站 Key 创建不在 SuperLLM 供应商运营边界内。"),
 		}
 	case adminplusdomain.SupplierTypeBrowserOnly:
 		return []adminplusdomain.SupplierCapability{

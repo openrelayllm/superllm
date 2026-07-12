@@ -66,26 +66,6 @@ func RegisterAdminPlusRoutes(
 		adminPlus.GET("/supplier-channel-checks/overview", h.AdminPlus.ChannelCheck.Overview)
 		adminPlus.GET("/supplier-groups", h.AdminPlus.SupplierGroup.ListAll)
 
-		kanban := adminPlus.Group("/kanban")
-		{
-			kanban.GET("/overview", h.AdminPlus.Kanban.Overview)
-			kanban.GET("/market-price-sources/discover", h.AdminPlus.Kanban.DiscoverMarketPriceSources)
-			kanban.POST("/market-prices/parse", h.AdminPlus.Kanban.ParseMarketPrices)
-			kanban.POST("/market-prices/import-url", h.AdminPlus.Kanban.ImportMarketPricesFromURL)
-			kanban.POST("/market-prices", h.AdminPlus.Kanban.RecordMarketPrice)
-			kanban.GET("/market-prices", h.AdminPlus.Kanban.ListMarketPrices)
-			kanban.POST("/cache-efficiency", h.AdminPlus.Kanban.RecordCacheEfficiency)
-			kanban.GET("/cache-efficiency", h.AdminPlus.Kanban.ListCacheEfficiency)
-			kanban.POST("/supply-quality", h.AdminPlus.Kanban.RecordSupplyQuality)
-			kanban.GET("/supply-quality", h.AdminPlus.Kanban.ListSupplyQuality)
-			kanban.POST("/acceptance-reports/generate", h.AdminPlus.Kanban.GenerateAcceptanceReport)
-			kanban.POST("/acceptance-reports/refresh-from-run", h.AdminPlus.Kanban.RefreshAcceptanceReportFromEvidenceRun)
-			kanban.POST("/acceptance-reports", h.AdminPlus.Kanban.RecordAcceptanceReport)
-			kanban.GET("/acceptance-reports", h.AdminPlus.Kanban.ListAcceptanceReports)
-			kanban.GET("/events", h.AdminPlus.Kanban.ListEvents)
-			kanban.PATCH("/events/:id/status", h.AdminPlus.Kanban.UpdateEventStatus)
-		}
-
 		accountRateSync := adminPlus.Group("/account-rate-sync")
 		{
 			accountRateSync.GET("/accounts", h.AdminPlus.AccountRateSync.List)
@@ -110,19 +90,6 @@ func RegisterAdminPlusRoutes(
 			siteDiscovery.GET("/registrations/:id/logs", h.AdminPlus.SiteDiscovery.ListRegistrationLogs)
 			siteDiscovery.POST("/registrations/:id/rerun", h.AdminPlus.SiteDiscovery.RerunRegistration)
 			siteDiscovery.GET("/recommendations", h.AdminPlus.SiteDiscovery.Recommendations)
-		}
-
-		siteCatalog := adminPlus.Group("/site-catalog")
-		{
-			siteCatalog.GET("/sites", h.AdminPlus.SiteCatalog.ListSites)
-			siteCatalog.POST("/sites", h.AdminPlus.SiteCatalog.CreateSite)
-			siteCatalog.POST("/sites/bulk-publish", h.AdminPlus.SiteCatalog.BulkPublishSites)
-			siteCatalog.GET("/sites/:id", h.AdminPlus.SiteCatalog.GetSite)
-			siteCatalog.DELETE("/sites/:id", h.AdminPlus.SiteCatalog.DeleteSite)
-			siteCatalog.GET("/categories", h.AdminPlus.SiteCatalog.ListCategories)
-			siteCatalog.GET("/tags", h.AdminPlus.SiteCatalog.ListTags)
-			siteCatalog.POST("/candidates/bulk-add/stream", h.AdminPlus.SiteCatalog.BulkAddDiscoveryCandidatesStream)
-			siteCatalog.POST("/candidates/:id/add", h.AdminPlus.SiteCatalog.AddDiscoveryCandidate)
 		}
 
 		sub2api := adminPlus.Group("/sub2api")
@@ -217,55 +184,6 @@ func RegisterAdminPlusRoutes(
 			importExport.POST("/import", h.AdminPlus.ImportExport.Import)
 		}
 
-		adminPlus.GET("/server-renewal", h.AdminPlus.Backup.GetServerRenewal)
-		adminPlus.PUT("/server-renewal", h.AdminPlus.Backup.UpdateServerRenewal)
-
-		proxy := adminPlus.Group("/proxy")
-		{
-			proxy.GET("/center/status", h.AdminPlus.Proxy.CenterStatus)
-			proxy.GET("/subscriptions", h.AdminPlus.Proxy.ListSubscriptions)
-			proxy.POST("/subscriptions", h.AdminPlus.Proxy.CreateSubscription)
-			proxy.PATCH("/subscriptions/:id", h.AdminPlus.Proxy.UpdateSubscription)
-			proxy.POST("/subscriptions/:id/refresh", h.AdminPlus.Proxy.RefreshSubscription)
-			proxy.DELETE("/subscriptions/:id", h.AdminPlus.Proxy.DeleteSubscription)
-			proxy.GET("/nodes", h.AdminPlus.Proxy.ListNodes)
-			proxy.POST("/nodes/check", h.AdminPlus.Proxy.CheckNodes)
-			proxy.POST("/nodes/:id/check", h.AdminPlus.Proxy.CheckNode)
-			proxy.POST("/nodes/:id/disable", h.AdminPlus.Proxy.DisableNode)
-			proxy.POST("/nodes/:id/enable", h.AdminPlus.Proxy.EnableNode)
-			proxy.GET("/policies", h.AdminPlus.Proxy.ListPolicies)
-			proxy.POST("/policies", h.AdminPlus.Proxy.CreatePolicy)
-			proxy.PATCH("/policies/:id", h.AdminPlus.Proxy.UpdatePolicy)
-			proxy.DELETE("/policies/:id", h.AdminPlus.Proxy.DeletePolicy)
-			proxy.GET("/policies/:id/targets", h.AdminPlus.Proxy.ListTargets)
-			proxy.POST("/policies/:id/targets", h.AdminPlus.Proxy.CreateTarget)
-			proxy.PATCH("/policies/:id/targets/:targetID", h.AdminPlus.Proxy.UpdateTarget)
-			proxy.DELETE("/policies/:id/targets/:targetID", h.AdminPlus.Proxy.DeleteTarget)
-			proxy.GET("/runtime-slots", h.AdminPlus.Proxy.ListRuntimeSlots)
-			proxy.POST("/runtime-slots/:id/restart", h.AdminPlus.Proxy.RestartRuntimeSlot)
-			proxy.POST("/runtime-slots/:id/rotate-secret", h.AdminPlus.Proxy.RotateRuntimeSlotSecret)
-			proxy.GET("/assignments", h.AdminPlus.Proxy.ListAssignments)
-			proxy.POST("/assignments", h.AdminPlus.Proxy.CreateAssignment)
-			proxy.POST("/assignments/:id/release", h.AdminPlus.Proxy.ReleaseAssignment)
-			proxy.POST("/assignments/:id/switch", h.AdminPlus.Proxy.SwitchAssignment)
-			proxy.POST("/assignments/:id/failure", h.AdminPlus.Proxy.ReportAssignmentFailure)
-			proxy.GET("/audit-events/export", h.AdminPlus.Proxy.ExportAuditEvents)
-			proxy.GET("/audit-events", h.AdminPlus.Proxy.ListAuditEvents)
-		}
-
-		mails := adminPlus.Group("/mails")
-		{
-			mails.GET("/oauth/config", h.AdminPlus.MailVerification.OAuthSettings)
-			mails.PUT("/oauth/config", h.AdminPlus.MailVerification.UpdateOAuthSettings)
-			mails.POST("/oauth/authorize", h.AdminPlus.MailVerification.AuthorizeURL)
-			mails.POST("/oauth/exchange", h.AdminPlus.MailVerification.ExchangeCode)
-			mails.GET("/credentials", h.AdminPlus.MailVerification.ListCredentials)
-			mails.POST("/credentials", h.AdminPlus.MailVerification.SaveCredential)
-			mails.POST("/credentials/:id/check", h.AdminPlus.MailVerification.CheckCredential)
-			mails.POST("/verification-code/read", h.AdminPlus.MailVerification.ReadVerificationCode)
-			mails.POST("/verification-code/send-test", h.AdminPlus.MailVerification.SendTestVerificationCode)
-		}
-
 		usageCosts := adminPlus.Group("/usage-costs")
 		{
 			usageCosts.POST("/lines/import", h.AdminPlus.UsageCost.ImportUsageCostLines)
@@ -291,7 +209,6 @@ func RegisterAdminPlusRoutes(
 			extension.POST("/tasks/:id/heartbeat", h.AdminPlus.Extension.Heartbeat)
 			extension.POST("/tasks/:id/browser-credential", h.AdminPlus.Extension.GetBrowserCredential)
 			extension.POST("/tasks/:id/registration-credential", h.AdminPlus.SiteDiscovery.GetRegistrationCredential)
-			extension.POST("/tasks/:id/registration-verification-code/read", h.AdminPlus.SiteDiscovery.ReadRegistrationVerificationCode)
 			extension.POST("/tasks/:id/complete", h.AdminPlus.Extension.CompleteTask)
 			extension.POST("/tasks/:id/fail", h.AdminPlus.Extension.FailTask)
 		}

@@ -315,12 +315,12 @@ func TestServiceCreateSupplierPersistsRechargeURLs(t *testing.T) {
 		Kind:                  adminplusdomain.SupplierKindRelay,
 		Type:                  adminplusdomain.SupplierTypeSub2API,
 		ThirdPartyRechargeURL: " https://relay.example.com/custom/topup ",
-		LocalRechargeURL:      " https://sub2apiplus.example.com/custom/topup ",
+		LocalRechargeURL:      " https://superllm.example.com/custom/topup ",
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, "https://relay.example.com/custom/topup", supplier.ThirdPartyRechargeURL)
-	require.Equal(t, "https://sub2apiplus.example.com/custom/topup", supplier.LocalRechargeURL)
+	require.Equal(t, "https://superllm.example.com/custom/topup", supplier.LocalRechargeURL)
 }
 
 func TestServiceAllowsMonitorOnlySupplierWithoutBalance(t *testing.T) {

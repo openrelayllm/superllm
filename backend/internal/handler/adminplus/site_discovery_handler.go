@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	sitediscoveryapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sitediscovery"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
@@ -32,7 +31,6 @@ type runSiteDiscoveryRequest struct {
 	ProbeInterfaces *bool  `json:"probe_interfaces"`
 	ProbeSites      bool   `json:"probe_sites"`
 	Limit           int    `json:"limit"`
-	ProxyPolicyID   int64  `json:"proxy_policy_id"`
 }
 
 type classifySiteDiscoveryRequest struct {
@@ -45,18 +43,6 @@ type classifySiteDiscoveryRequest struct {
 	ProbeInterfaces      *bool  `json:"probe_interfaces"`
 	ProbeSites           bool   `json:"probe_sites"`
 	Limit                int    `json:"limit"`
-}
-
-type readRegistrationVerificationCodeRequest struct {
-	DeviceID            string     `json:"device_id" binding:"required"`
-	LeaseToken          string     `json:"lease_token" binding:"required"`
-	TriggeredAt         *time.Time `json:"triggered_at"`
-	TimeoutSeconds      int        `json:"timeout_seconds"`
-	PollIntervalSeconds int        `json:"poll_interval_seconds"`
-}
-
-type registerSiteDiscoveryItemRequest struct {
-	ProxyPolicyID int64 `json:"proxy_policy_id"`
 }
 
 func (h *SiteDiscoveryHandler) GetSettings(c *gin.Context) {
@@ -95,7 +81,6 @@ func (h *SiteDiscoveryHandler) Run(c *gin.Context) {
 		ProbeInterfaces: boolDefault(req.ProbeInterfaces, true),
 		ProbeSites:      req.ProbeSites,
 		Limit:           req.Limit,
-		ProxyPolicyID:   req.ProxyPolicyID,
 	})
 	if response.ErrorFrom(c, err) {
 		return
@@ -128,7 +113,6 @@ func (h *SiteDiscoveryHandler) RunStream(c *gin.Context) {
 		ProbeInterfaces: boolDefault(req.ProbeInterfaces, true),
 		ProbeSites:      req.ProbeSites,
 		Limit:           req.Limit,
-		ProxyPolicyID:   req.ProxyPolicyID,
 	}, emit)
 	if err != nil {
 		emit(sitediscoveryapp.RunProgressEvent{
@@ -214,11 +198,8 @@ func (h *SiteDiscoveryHandler) RegisterItem(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req registerSiteDiscoveryItemRequest
-	_ = c.ShouldBindJSON(&req)
 	credential, task, err := h.service.RegisterItemWithOptions(c.Request.Context(), sitediscoveryapp.RegisterItemInput{
-		ItemID:        id,
-		ProxyPolicyID: req.ProxyPolicyID,
+		ItemID: id,
 	})
 	if response.ErrorFrom(c, err) {
 		return
@@ -249,11 +230,8 @@ func (h *SiteDiscoveryHandler) RerunRegistration(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req registerSiteDiscoveryItemRequest
-	_ = c.ShouldBindJSON(&req)
 	credential, task, err := h.service.RerunRegistrationWithOptions(c.Request.Context(), sitediscoveryapp.RerunRegistrationInput{
 		RegistrationID: id,
-		ProxyPolicyID:  req.ProxyPolicyID,
 	})
 	if response.ErrorFrom(c, err) {
 		return
@@ -301,30 +279,6 @@ func (h *SiteDiscoveryHandler) GetRegistrationCredential(c *gin.Context) {
 		return
 	}
 	response.Success(c, credential)
-}
-
-func (h *SiteDiscoveryHandler) ReadRegistrationVerificationCode(c *gin.Context) {
-	id, ok := parseExtensionTaskID(c)
-	if !ok {
-		return
-	}
-	var req readRegistrationVerificationCodeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "invalid request: "+err.Error())
-		return
-	}
-	result, err := h.service.ReadTaskRegistrationVerificationCode(c.Request.Context(), sitediscoveryapp.ReadRegistrationVerificationCodeInput{
-		TaskID:              id,
-		DeviceID:            req.DeviceID,
-		LeaseToken:          req.LeaseToken,
-		TriggeredAt:         req.TriggeredAt,
-		TimeoutSeconds:      req.TimeoutSeconds,
-		PollIntervalSeconds: req.PollIntervalSeconds,
-	})
-	if response.ErrorFrom(c, err) {
-		return
-	}
-	response.Success(c, result)
 }
 
 func parseSiteDiscoveryItemID(c *gin.Context) (int64, bool) {

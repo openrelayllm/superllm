@@ -11,8 +11,8 @@ import (
 )
 
 // NewJWTAuthMiddleware 创建 JWT 认证中间件
-func NewJWTAuthMiddleware(authService *service.AuthService, userService *service.UserService) JWTAuthMiddleware {
-	return JWTAuthMiddleware(jwtAuth(authService, userService, userService))
+func NewJWTAuthMiddleware(authService *service.AuthService) JWTAuthMiddleware {
+	return JWTAuthMiddleware(jwtAuth(authService, authService, nil))
 }
 
 type jwtUserReader interface {
@@ -72,7 +72,7 @@ func jwtAuth(authService *service.AuthService, userService jwtUserReader, activi
 
 		// Security: Validate TokenVersion to ensure token hasn't been invalidated
 		// This check ensures tokens issued before a password change are rejected
-		if claims.TokenVersion != user.TokenVersion {
+		if claims.TokenVersion != authService.IdentityTokenVersion(user) {
 			AbortWithError(c, 401, "TOKEN_REVOKED", "Token has been revoked (password changed)")
 			return
 		}

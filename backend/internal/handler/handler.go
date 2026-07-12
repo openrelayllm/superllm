@@ -14,34 +14,29 @@ type AdminHandlers struct {
 	System    *admin.SystemHandler
 }
 
-// AdminPlusHandlers contains Admin Plus business HTTP handlers.
+// AdminPlusHandlers contains SuperLLM business HTTP handlers.
 type AdminPlusHandlers struct {
-	Supplier         *adminplushandler.SupplierHandler
-	SupplierGroup    *adminplushandler.SupplierGroupHandler
-	SupplierKey      *adminplushandler.SupplierKeyHandler
-	ProvisionJob     *adminplushandler.ProvisionJobHandler
-	Rate             *adminplushandler.RateHandler
-	Balance          *adminplushandler.BalanceHandler
-	Health           *adminplushandler.HealthHandler
-	Kanban           *adminplushandler.KanbanHandler
-	Notification     *adminplushandler.NotificationHandler
-	UsageCost        *adminplushandler.UsageCostHandler
-	Cost             *adminplushandler.CostHandler
-	ChannelCheck     *adminplushandler.ChannelCheckHandler
-	AccountRateSync  *adminplushandler.AccountRateSyncHandler
-	Extension        *adminplushandler.ExtensionHandler
-	SiteDiscovery    *adminplushandler.SiteDiscoveryHandler
-	SiteCatalog      *adminplushandler.SiteCatalogHandler
-	PublicProxyAI    *adminplushandler.PublicProxyAIHandler
-	Purity           *adminplushandler.PurityHandler
-	MailVerification *adminplushandler.MailVerificationHandler
-	Session          *adminplushandler.SessionHandler
-	Scheduler        *adminplushandler.SchedulerHandler
-	Action           *adminplushandler.ActionHandler
-	Sub2API          *adminplushandler.Sub2APIHandler
-	Proxy            *adminplushandler.ProxyHandler
-	Backup           *adminplushandler.BackupHandler
-	ImportExport     *adminplushandler.ImportExportHandler
+	Supplier        *adminplushandler.SupplierHandler
+	SupplierGroup   *adminplushandler.SupplierGroupHandler
+	SupplierKey     *adminplushandler.SupplierKeyHandler
+	ProvisionJob    *adminplushandler.ProvisionJobHandler
+	Rate            *adminplushandler.RateHandler
+	Balance         *adminplushandler.BalanceHandler
+	Health          *adminplushandler.HealthHandler
+	Notification    *adminplushandler.NotificationHandler
+	UsageCost       *adminplushandler.UsageCostHandler
+	Cost            *adminplushandler.CostHandler
+	ChannelCheck    *adminplushandler.ChannelCheckHandler
+	AccountRateSync *adminplushandler.AccountRateSyncHandler
+	Extension       *adminplushandler.ExtensionHandler
+	SiteDiscovery   *adminplushandler.SiteDiscoveryHandler
+	Purity          *adminplushandler.PurityHandler
+	Session         *adminplushandler.SessionHandler
+	Scheduler       *adminplushandler.SchedulerHandler
+	Action          *adminplushandler.ActionHandler
+	Sub2API         *adminplushandler.Sub2APIHandler
+	Backup          *adminplushandler.BackupHandler
+	ImportExport    *adminplushandler.ImportExportHandler
 }
 
 // Handlers contains all HTTP handlers

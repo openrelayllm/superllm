@@ -9,18 +9,6 @@
     @click.stop
   >
     <div class="p-2">
-      <button type="button" class="row-action-menu-item" role="menuitem" @click="openRowStatusDialog">
-        <span class="row-action-menu-icon bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
-          <Icon name="checkCircle" size="sm" />
-        </span>
-        <span>状态</span>
-      </button>
-      <button type="button" class="row-action-menu-item" role="menuitem" @click="openRowSessionDialog">
-        <span class="row-action-menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
-          <Icon name="shield" size="sm" />
-        </span>
-        <span>会话</span>
-      </button>
       <button type="button" class="row-action-menu-item" role="menuitem" @click="openRowGroupsDialog">
         <span class="row-action-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
           <Icon name="database" size="sm" />
@@ -32,33 +20,6 @@
           <Icon name="chart" size="sm" />
         </span>
         <span>渠道状态</span>
-      </button>
-      <a
-        v-if="rowActionsMenuSupplier?.third_party_recharge_url"
-        class="row-action-menu-item"
-        role="menuitem"
-        :href="rowActionsMenuSupplier.third_party_recharge_url"
-        target="_blank"
-        rel="noopener noreferrer"
-        @click="closeRowActionsMenu"
-      >
-        <span class="row-action-menu-icon bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
-          <Icon name="externalLink" size="sm" />
-        </span>
-        <span>第三方兑换</span>
-      </a>
-      <button
-        type="button"
-        v-else
-        class="row-action-menu-item"
-        role="menuitem"
-        disabled
-        title="未配置第三方兑换入口，请编辑供应商补齐"
-      >
-        <span class="row-action-menu-icon bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500">
-          <Icon name="externalLink" size="sm" />
-        </span>
-        <span>第三方兑换</span>
       </button>
       <div class="my-2 border-t border-gray-100 dark:border-gray-700"></div>
       <button type="button" class="row-action-menu-item text-red-600 dark:text-red-300" role="menuitem" @click="openRowDeleteDialog">
@@ -78,9 +39,6 @@ const props = defineProps<{ vm: any }>()
 const {
   rowActionsMenuSupplier,
   rowActionsMenuStyle,
-  closeRowActionsMenu,
-  openRowStatusDialog,
-  openRowSessionDialog,
   openRowGroupsDialog,
   openRowChannelStatusDialog,
   openRowDeleteDialog

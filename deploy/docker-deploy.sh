@@ -1,8 +1,8 @@
 #!/bin/bash
 # =============================================================================
-# Sub2API Admin Plus Docker Deployment Preparation Script
+# SuperLLM Docker Deployment Preparation Script
 # =============================================================================
-# This script prepares deployment files for Sub2API Admin Plus:
+# This script prepares deployment files for SuperLLM:
 #   - Downloads docker-compose.local.yml and .env.example
 #   - Generates secure secrets (JWT_SECRET, TOTP_ENCRYPTION_KEY, POSTGRES_PASSWORD)
 #   - Creates necessary data directories
@@ -21,7 +21,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # GitHub raw content base URL
-GITHUB_RAW_URL="${GITHUB_RAW_URL:-https://raw.githubusercontent.com/openrelayllm/sub2api-admin-plus/main/deploy}"
+GITHUB_RAW_URL="${GITHUB_RAW_URL:-https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy}"
 
 # Print colored message
 print_info() {
@@ -54,13 +54,22 @@ command_exists() {
 main() {
     echo ""
     echo "=========================================="
-    echo "  Sub2API Admin Plus Deployment Preparation"
+    echo "  SuperLLM Deployment Preparation"
     echo "=========================================="
     echo ""
 
     # Check if openssl is available
     if ! command_exists openssl; then
         print_error "openssl is not installed. Please install openssl first."
+        exit 1
+    fi
+
+    if [ -z "${SUB2API_READONLY_DATABASE_URL:-}" ] && [ -r /dev/tty ]; then
+        read -r -p "Sub2API readonly PostgreSQL URL: " SUB2API_READONLY_DATABASE_URL < /dev/tty
+    fi
+    if [ -z "${SUB2API_READONLY_DATABASE_URL:-}" ]; then
+        print_error "SUB2API_READONLY_DATABASE_URL is required."
+        print_info "Set it before running this script; SuperLLM authenticates existing Sub2API users."
         exit 1
     fi
 
@@ -121,6 +130,9 @@ main() {
         sed -i '' "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${POSTGRES_PASSWORD}/" .env
     fi
 
+    # Append so URL query strings do not need sed escaping; the last dotenv value wins.
+    printf '\nSUB2API_READONLY_DATABASE_URL=%s\n' "${SUB2API_READONLY_DATABASE_URL}" >> .env
+
     # Create data directories
     print_info "Creating data directories..."
     mkdir -p admin_plus_data admin_plus_postgres_data admin_plus_redis_data
@@ -152,18 +164,17 @@ main() {
     echo "  admin_plus_redis_data/        - Redis data"
     echo ""
     echo "Next steps:"
-    echo "  1. (Optional) Edit .env to customize configuration"
+    echo "  1. Review .env and ensure TOTP_ENCRYPTION_KEY matches Sub2API when 2FA is enabled"
     echo "  2. Start services:"
     echo "     docker compose up -d"
     echo ""
     echo "  3. View logs:"
-    echo "     docker compose logs -f admin-plus"
+    echo "     docker compose logs -f superllm"
     echo ""
     echo "  4. Access Web UI:"
     echo "     http://localhost:8080"
     echo ""
-    print_info "If admin password is not set in .env, it will be auto-generated."
-    print_info "Check logs for the generated admin password on first startup."
+    print_info "Sign in with an active Sub2API administrator account."
     echo ""
 }
 

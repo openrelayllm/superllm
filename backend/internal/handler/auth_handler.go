@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"log/slog"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -19,17 +18,15 @@ import (
 type AuthHandler struct {
 	cfg         *config.Config
 	authService *service.AuthService
-	userService *service.UserService
 	settingSvc  *service.SettingService
 	totpService *service.TotpService
 }
 
 // NewAuthHandler creates a new AuthHandler
-func NewAuthHandler(cfg *config.Config, authService *service.AuthService, userService *service.UserService, settingService *service.SettingService, totpService *service.TotpService) *AuthHandler {
+func NewAuthHandler(cfg *config.Config, authService *service.AuthService, settingService *service.SettingService, totpService *service.TotpService) *AuthHandler {
 	return &AuthHandler{
 		cfg:         cfg,
 		authService: authService,
-		userService: userService,
 		settingSvc:  settingService,
 		totpService: totpService,
 	}
@@ -94,25 +91,14 @@ func (h *AuthHandler) respondWithTokenPair(c *gin.Context, user *service.User) {
 	})
 }
 
-func (h *AuthHandler) ensureBackendModeAllowsUser(ctx context.Context, user *service.User) error {
+func ensureAdminUser(user *service.User) error {
 	if user == nil {
 		return infraerrors.Unauthorized("INVALID_USER", "user not found")
 	}
-	if h == nil || !h.isBackendModeEnabled(ctx) || user.IsAdmin() {
+	if user.IsAdmin() {
 		return nil
 	}
-	return infraerrors.Forbidden("BACKEND_MODE_ADMIN_ONLY", "Backend mode is active. Only admin login is allowed.")
-}
-
-func (h *AuthHandler) isBackendModeEnabled(ctx context.Context) bool {
-	if h == nil || h.settingSvc == nil {
-		return false
-	}
-	settings, err := h.settingSvc.GetPublicSettings(ctx)
-	if err == nil && settings != nil {
-		return settings.BackendModeEnabled
-	}
-	return h.settingSvc.IsBackendModeEnabled(ctx)
+	return infraerrors.Forbidden("ADMIN_ONLY", "Only Sub2API administrators can access SuperLLM.")
 }
 
 // Login handles user login
@@ -137,13 +123,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 	_ = token // token 由 authService.Login 返回但此处由 respondWithTokenPair 重新生成
 
-	if err := h.ensureBackendModeAllowsUser(c.Request.Context(), user); err != nil {
+	if err := ensureAdminUser(user); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
 	// Check if TOTP 2FA is enabled for this user
-	if h.totpService != nil && h.settingSvc.IsTotpEnabled(c.Request.Context()) && user.TotpEnabled {
+	if h.totpService != nil && user.TotpEnabled {
 		// Create a temporary login session for 2FA
 		tempToken, err := h.totpService.CreateLoginSession(c.Request.Context(), user.ID, user.Email)
 		if err != nil {
@@ -158,8 +144,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		})
 		return
 	}
-
-	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
 
 	h.respondWithTokenPair(c, user)
 }
@@ -209,7 +193,12 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		"email", session.Email)
 
 	// Verify the TOTP code
-	if err := h.totpService.VerifyCode(c.Request.Context(), session.UserID, req.TotpCode); err != nil {
+	user, err := h.authService.GetIdentityByID(c.Request.Context(), session.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if err := h.totpService.VerifyIdentityCode(c.Request.Context(), user, req.TotpCode); err != nil {
 		slog.Debug("login_2fa_verify_failed",
 			"user_id", session.UserID,
 			"error", err)
@@ -218,25 +207,18 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 	}
 
 	// Get the user (before session deletion so we can check backend mode)
-	user, err := h.userService.GetByID(c.Request.Context(), session.UserID)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	if err := ensureLoginUserActive(user); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
-	if err := h.ensureBackendModeAllowsUser(c.Request.Context(), user); err != nil {
+	if err := ensureAdminUser(user); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
 	// Delete the login session (only after all checks pass)
 	_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
-
-	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
 
 	h.respondWithTokenPair(c, user)
 }
@@ -250,20 +232,14 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userService.GetByID(c.Request.Context(), subject.UserID)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	identities, err := h.userService.GetProfileIdentitySummaries(c.Request.Context(), subject.UserID, user)
+	user, err := h.authService.GetIdentityByID(c.Request.Context(), subject.UserID)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
 	type UserResponse struct {
-		userProfileResponse
+		dto.User
 		RunMode string `json:"run_mode"`
 	}
 
@@ -273,8 +249,8 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	}
 
 	response.Success(c, UserResponse{
-		userProfileResponse: userProfileResponseFromService(user, identities),
-		RunMode:             runMode,
+		User:    *dto.UserFromService(user),
+		RunMode: runMode,
 	})
 }
 
@@ -308,9 +284,8 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	// Backend mode: block non-admin token refresh
-	if h.settingSvc.IsBackendModeEnabled(c.Request.Context()) && result.UserRole != "admin" {
-		response.Forbidden(c, "Backend mode is active. Only admin login is allowed.")
+	if result.UserRole != service.RoleAdmin {
+		response.Forbidden(c, "Only Sub2API administrators can access SuperLLM.")
 		return
 	}
 

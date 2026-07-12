@@ -228,7 +228,7 @@
                 type="button"
                 class="btn btn-secondary btn-sm"
                 :disabled="releasableSupplierKeys.length === 0"
-                title="仅释放 Admin Plus 本地投影，不会删除第三方供应商后台 Key"
+                title="仅释放 SuperLLM 本地投影，不会删除第三方供应商后台 Key"
                 @click="scrollToReleasableKeys"
               >
                 可释放 Key
@@ -245,7 +245,7 @@
             <div>
               <h5 class="text-sm font-semibold text-blue-950 dark:text-blue-100">可释放的本地 Key 投影</h5>
               <p class="mt-1 text-xs text-blue-800 dark:text-blue-200">
-                只把 Admin Plus 中的 Key 投影标记为停用，用于释放本地配额计算；不会删除第三方后台 Key，也不会自动变更本地账号调度。若第三方后台仍占用真实上限，后续创建仍可能被供应商拒绝。
+                只把 SuperLLM 中的 Key 投影标记为停用，用于释放本地配额计算；不会删除第三方后台 Key，也不会自动变更本地账号调度。若第三方后台仍占用真实上限，后续创建仍可能被供应商拒绝。
               </p>
             </div>
             <span class="badge badge-primary">{{ releasableSupplierKeys.length }} 个</span>
@@ -270,7 +270,7 @@
                   type="button"
                   class="btn btn-secondary btn-sm"
                   :disabled="keyProjectionDisabling === key.id"
-                  title="只释放 Admin Plus 本地投影，不调用第三方后台"
+                  title="只释放 SuperLLM 本地投影，不调用第三方后台"
                   @click="disableCurrentKeyLocalProjection(key)"
                 >
                   <Icon name="x" size="xs" :class="{ 'animate-spin': keyProjectionDisabling === key.id }" />
@@ -952,7 +952,7 @@ function blockedPlanAdvice(reason?: string): string {
     return '该供应商标记为不支持自动创建 Key。需要切换策略，或后续接入手动 Key 录入流程。'
   }
   if (reason === 'provider_key_exists_unbound') {
-    return '第三方后台已存在该分组的有效 Key，但 Admin Plus 没有绑定记录。先导入或修复绑定；不再使用时先在第三方停用/删除并重新同步。'
+    return '第三方后台已存在该分组的有效 Key，但 SuperLLM 没有绑定记录。先导入或修复绑定；不再使用时先在第三方停用/删除并重新同步。'
   }
   if (reason === 'provider_key_capacity_incomplete') {
     return '第三方 Key 列表读取不完整，不能安全判断真实占用。请重新同步，检查注册用户会话权限或稍后重试后再创建。'

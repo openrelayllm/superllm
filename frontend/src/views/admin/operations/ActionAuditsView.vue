@@ -5,7 +5,7 @@
         <div>
           <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">操作审计</h1>
           <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-            聚合 Admin Plus 人工和自动动作，优先用于排查本地账号写回、drift 同步、供应商直登、余额同步和插件任务。
+            聚合 SuperLLM 人工和自动动作，优先用于排查本地账号写回、drift 同步、供应商直登、余额同步和插件任务。
           </p>
         </div>
         <div class="flex flex-wrap gap-2">
@@ -51,7 +51,7 @@
           <label class="block">
             <span class="input-label">组件</span>
             <select v-model="filters.component" class="input" @change="resetPagination">
-              <option value="">全部 Admin Plus</option>
+              <option value="">全部 SuperLLM</option>
               <option v-for="option in componentOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
             </select>
           </label>
@@ -196,7 +196,6 @@ const componentOptions: Array<{ value: Exclude<AdminPlusSystemLogComponent, ''>;
   { value: 'admin_plus.balance', label: '余额同步' },
   { value: 'admin_plus.registration', label: '注册任务' },
   { value: 'admin_plus.extension', label: '插件任务' },
-  { value: 'admin_plus.mail', label: '邮箱验证码' }
 ]
 
 const actionOptions = [
@@ -205,7 +204,7 @@ const actionOptions = [
   { value: 'remove_from_groups', label: '移出本地分组' },
   { value: 'local_account_state_sync', label: '同步本地状态' },
   { value: 'accept_observed', label: '采纳原后台变更' },
-  { value: 'restore_accepted', label: '恢复 Admin Plus 基线' },
+  { value: 'restore_accepted', label: '恢复 SuperLLM 基线' },
   { value: 'direct_login', label: '供应商直登' },
   { value: 'refresh_balance', label: '余额同步' }
 ]

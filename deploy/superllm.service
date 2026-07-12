@@ -1,0 +1,32 @@
+[Unit]
+Description=SuperLLM - operations automation platform
+Documentation=https://github.com/openrelayllm/superllm
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=superllm
+Group=superllm
+WorkingDirectory=/opt/superllm
+ExecStart=/opt/superllm/superllm
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=superllm
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/superllm
+ReadWritePaths=/etc/superllm
+
+Environment=GIN_MODE=release
+Environment=DATA_DIR=/etc/superllm
+Environment=SERVER_HOST=0.0.0.0
+Environment=SERVER_PORT=8080
+
+[Install]
+WantedBy=multi-user.target

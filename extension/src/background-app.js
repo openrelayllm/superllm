@@ -207,18 +207,6 @@ class AdminPlusClient {
     })
   }
 
-  async registrationVerificationCode(task, options = {}) {
-    return this.request(`/api/v1/admin-plus/extension/tasks/${task.id}/registration-verification-code/read`, {
-      method: 'POST',
-      body: {
-        device_id: task.device_id,
-        lease_token: task.lease_token,
-        triggered_at: options.triggeredAt || null,
-        timeout_seconds: Number(options.timeoutSeconds || 90),
-        poll_interval_seconds: Number(options.pollIntervalSeconds || 5)
-      }
-    })
-  }
 
   async complete(task, result) {
     return this.request(`/api/v1/admin-plus/extension/tasks/${task.id}/complete`, {
@@ -911,79 +899,12 @@ async function runNextRegistrationTaskOnce() {
     })
     const result = injected?.result || {}
     if (result.manual_verification_required) {
-      if (!result.email_verification_required) {
-        await client.fail(task, 'REGISTRATION_VERIFICATION_REQUIRED', result.message || 'registration requires manual verification')
-        return {
-          status: 'waiting_manual_verification',
-          task,
-          result,
-          message: result.message || '需要人工完成验证码或邮箱验证'
-        }
-      }
-      await client.heartbeat(task, 180)
-      let verification
-      try {
-        verification = await client.registrationVerificationCode(task, {
-          triggeredAt: result.submitted_at || result.started_at || new Date().toISOString(),
-          timeoutSeconds: 90,
-          pollIntervalSeconds: 5
-        })
-      } catch (error) {
-        if (error?.reason === 'MAIL_VERIFICATION_CODE_NOT_FOUND' || error?.reason === 'MAIL_CREDENTIAL_NOT_FOUND') {
-          await client.fail(task, 'REGISTRATION_VERIFICATION_CODE_NOT_FOUND', error.message || 'registration verification code not found')
-          return {
-            status: 'failed',
-            task,
-            result,
-            message: error.message || '未读取到邮箱验证码'
-          }
-        }
-        throw error
-      }
-      if (!verification?.code) {
-        await client.fail(task, 'REGISTRATION_VERIFICATION_CODE_NOT_FOUND', 'registration verification code not found')
-        return {
-          status: 'failed',
-          task,
-          result,
-          message: '未读取到邮箱验证码'
-        }
-      }
-      await client.heartbeat(task, 180)
-      const [verificationInjected] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: fillRegistrationVerificationCode,
-        args: [verification.code]
-      })
-      const verificationResult = verificationInjected?.result || {}
-      if (!verificationResult.ok) {
-        await client.fail(task, verificationResult.error_code || 'REGISTRATION_VERIFICATION_FILL_FAILED', verificationResult.message || 'registration verification fill failed')
-        return {
-          status: 'failed',
-          task,
-          result: verificationResult,
-          message: verificationResult.message || '验证码回填失败'
-        }
-      }
-      const completed = await client.complete(task, {
-        registration_submitted: true,
-        verification_completed: true,
-        verification_message_id: verification.message_id || '',
-        verification_received_at: verification.received_at || '',
-        provider_type: credential.provider_type,
-        register_url: credential.register_url,
-        submitted_at: result.submitted_at || new Date().toISOString(),
-        result: {
-          ...result,
-          verification_filled: true,
-          verification_result: verificationResult
-        }
-      })
+      await client.fail(task, 'REGISTRATION_VERIFICATION_REQUIRED', result.message || 'registration requires manual verification')
       return {
-        status: 'succeeded',
-        task: completed,
-        result: verificationResult,
-        message: '注册验证码已回填并提交'
+        status: 'waiting_manual_verification',
+        task,
+        result,
+        message: result.message || '需要人工完成验证码或邮箱验证'
       }
     }
     if (!result.ok) {
@@ -1128,70 +1049,6 @@ function fillRegistrationForm(credential) {
   })
 }
 
-function fillRegistrationVerificationCode(code) {
-  const submittedAt = new Date().toISOString()
-  const value = String(code || '').trim()
-  const visible = (element) => {
-    if (!element || element.disabled || element.readOnly) return false
-    const style = window.getComputedStyle(element)
-    if (style.display === 'none' || style.visibility === 'hidden') return false
-    const rect = element.getBoundingClientRect()
-    return rect.width > 0 && rect.height > 0
-  }
-  const lowerAttr = (element) => [
-    element.type,
-    element.name,
-    element.id,
-    element.autocomplete,
-    element.placeholder,
-    element.getAttribute('aria-label')
-  ].join(' ').toLowerCase()
-  const setValue = (element, nextValue) => {
-    const proto = Object.getPrototypeOf(element)
-    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value')
-    if (descriptor?.set) {
-      descriptor.set.call(element, nextValue)
-    } else {
-      element.value = nextValue
-    }
-    element.dispatchEvent(new Event('input', { bubbles: true }))
-    element.dispatchEvent(new Event('change', { bubbles: true }))
-  }
-  if (!value) {
-    return {
-      ok: false,
-      error_code: 'REGISTRATION_VERIFICATION_CODE_EMPTY',
-      message: '验证码为空',
-      submitted_at: submittedAt
-    }
-  }
-  const inputs = Array.from(document.querySelectorAll('input')).filter(visible)
-  const codeInput = inputs.find((input) => {
-    const attr = lowerAttr(input)
-    if (/(captcha|turnstile|recaptcha|hcaptcha|人机|滑块)/i.test(attr)) return false
-    return /(code|otp|verification|verify|验证码|校验码|动态码|邮箱验证|邮件验证)/i.test(attr)
-  }) || inputs.find((input) => ['text', 'number', 'tel', ''].includes(input.type) && input.maxLength >= value.length && input.maxLength <= 12)
-  if (!codeInput) {
-    return {
-      ok: false,
-      error_code: 'REGISTRATION_VERIFICATION_INPUT_NOT_FOUND',
-      message: '未找到邮箱验证码输入框',
-      submitted_at: submittedAt
-    }
-  }
-  setValue(codeInput, value)
-  const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]')).filter(visible)
-  const submit = buttons.find((button) => /(验证|确认|提交|完成|continue|verify|confirm|submit|next|sign up|register)/i.test(`${button.innerText || ''} ${button.value || ''} ${button.getAttribute('aria-label') || ''}`)) ||
-    buttons.find((button) => button.type === 'submit') ||
-    document.querySelector('form button[type="submit"], form input[type="submit"]')
-  if (submit) submit.click()
-  return {
-    ok: true,
-    verification_filled: true,
-    submitted_at: submittedAt,
-    url: window.location.href
-  }
-}
 
 async function recordCaptureResult(status, message, task, supplier, activeTab, summary = {}, ingest = {}) {
   await saveLastCaptureResult({

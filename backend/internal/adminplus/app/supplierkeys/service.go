@@ -705,7 +705,7 @@ func ensureAllPlanCanApply(plan *EnsureAllPlan, allowPartial bool) error {
 			message = "supplier does not support automatic key provisioning"
 		case "provider_key_exists_unbound":
 			reason = "SUPPLIER_PROVIDER_KEY_UNBOUND"
-			message = "third-party provider already has keys that are not bound in Admin Plus"
+			message = "third-party provider already has keys that are not bound in SuperLLM"
 		case "provider_key_capacity_incomplete":
 			reason = "SUPPLIER_PROVIDER_KEY_CAPACITY_INCOMPLETE"
 			message = "third-party provider key list was not fully read; retry sync before provisioning"
@@ -1338,7 +1338,7 @@ func (s *Service) DisableLocalProjection(ctx context.Context, in DisableLocalPro
 	}
 	reason := strings.TrimSpace(in.Reason)
 	if reason == "" {
-		reason = "released from Admin Plus local projection; third-party key is not deleted"
+		reason = "released from SuperLLM local projection; third-party key is not deleted"
 	}
 	return s.repo.DisableLocalProjection(ctx, in.SupplierID, in.KeyID, reason)
 }
@@ -1349,7 +1349,7 @@ func (s *Service) DisableProviderKey(ctx context.Context, in DisableProviderKeyI
 		KeyID:         in.KeyID,
 		Reason:        in.Reason,
 		ErrorCode:     "PROVIDER_KEY_DISABLED",
-		DefaultReason: "third-party provider key disabled by Admin Plus; local Sub2API account scheduling is not changed",
+		DefaultReason: "third-party provider key disabled by SuperLLM; local Sub2API account scheduling is not changed",
 		Apply: func(ctx context.Context, input ports.SessionProbeInput, key *adminplusdomain.SupplierKey) (*ports.ProviderKeyResult, error) {
 			return s.keyAdapter.DisableKey(ctx, input, ports.DisableProviderKeyInput{
 				SupplierID:      key.SupplierID,
@@ -1368,7 +1368,7 @@ func (s *Service) DeleteProviderKey(ctx context.Context, in DeleteProviderKeyInp
 		KeyID:         in.KeyID,
 		Reason:        in.Reason,
 		ErrorCode:     "PROVIDER_KEY_DELETED",
-		DefaultReason: "third-party provider key deleted by Admin Plus; local Sub2API account scheduling is not changed",
+		DefaultReason: "third-party provider key deleted by SuperLLM; local Sub2API account scheduling is not changed",
 		Apply: func(ctx context.Context, input ports.SessionProbeInput, key *adminplusdomain.SupplierKey) (*ports.ProviderKeyResult, error) {
 			return s.keyAdapter.DeleteKey(ctx, input, ports.DeleteProviderKeyInput{
 				SupplierID:      key.SupplierID,

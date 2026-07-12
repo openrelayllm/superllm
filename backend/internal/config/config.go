@@ -168,13 +168,6 @@ type AdminPlusConfig struct {
 	Sub2APIAdminBaseURL         string `mapstructure:"sub2api_admin_base_url"`
 	Sub2APIAdminAPIKey          string `mapstructure:"sub2api_admin_api_key"`
 	AllowEmbeddedSub2APIGateway bool   `mapstructure:"allow_embedded_sub2api_gateway"`
-	ProxyDisabled               bool   `mapstructure:"proxy_disabled"`
-	ProxyMihomoBinaryPath       string `mapstructure:"proxy_mihomo_binary_path"`
-	ProxyRuntimeDir             string `mapstructure:"proxy_runtime_dir"`
-	ProxyBaseMixedPort          int    `mapstructure:"proxy_base_mixed_port"`
-	ProxyBaseControllerPort     int    `mapstructure:"proxy_base_controller_port"`
-	ProxyMaxSlots               int    `mapstructure:"proxy_max_slots"`
-	ProxyEgressCheckURL         string `mapstructure:"proxy_egress_check_url"`
 }
 
 type IdempotencyConfig struct {
@@ -1354,8 +1347,6 @@ type TurnstileConfig struct {
 }
 
 type DefaultConfig struct {
-	AdminEmail      string  `mapstructure:"admin_email"`
-	AdminPassword   string  `mapstructure:"admin_password"`
 	UserConcurrency int     `mapstructure:"user_concurrency"`
 	UserBalance     float64 `mapstructure:"user_balance"`
 	APIKeyPrefix    string  `mapstructure:"api_key_prefix"`
@@ -1483,6 +1474,7 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	// 4. Config subdirectory
 	viper.AddConfigPath("./config")
 	// 5. System config directories
+	viper.AddConfigPath("/etc/superllm")
 	viper.AddConfigPath("/etc/sub2api-admin-plus")
 	viper.AddConfigPath("/etc/sub2api")
 
@@ -1651,13 +1643,6 @@ func bindSub2APIIntegrationEnv() {
 		"admin_plus.sub2api_admin_base_url",
 		"admin_plus.sub2api_admin_api_key",
 		"admin_plus.allow_embedded_sub2api_gateway",
-		"admin_plus.proxy_disabled",
-		"admin_plus.proxy_mihomo_binary_path",
-		"admin_plus.proxy_runtime_dir",
-		"admin_plus.proxy_base_mixed_port",
-		"admin_plus.proxy_base_controller_port",
-		"admin_plus.proxy_max_slots",
-		"admin_plus.proxy_egress_check_url",
 	} {
 		_ = viper.BindEnv(key)
 	}
@@ -1686,7 +1671,7 @@ func setDefaults() {
 	// Log
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "console")
-	viper.SetDefault("log.service_name", "sub2api-admin-plus")
+	viper.SetDefault("log.service_name", "superllm")
 	viper.SetDefault("log.env", "production")
 	viper.SetDefault("log.caller", true)
 	viper.SetDefault("log.stacktrace_level", "error")
@@ -1822,7 +1807,7 @@ func setDefaults() {
 	viper.SetDefault("database.port", 5432)
 	viper.SetDefault("database.user", "postgres")
 	viper.SetDefault("database.password", "postgres")
-	viper.SetDefault("database.dbname", "sub2api")
+	viper.SetDefault("database.dbname", "superllm")
 	viper.SetDefault("database.sslmode", "prefer")
 	viper.SetDefault("database.max_open_conns", 256)
 	viper.SetDefault("database.max_idle_conns", 128)
@@ -1852,13 +1837,6 @@ func setDefaults() {
 	viper.SetDefault("admin_plus.sub2api_admin_base_url", "")
 	viper.SetDefault("admin_plus.sub2api_admin_api_key", "")
 	viper.SetDefault("admin_plus.allow_embedded_sub2api_gateway", false)
-	viper.SetDefault("admin_plus.proxy_disabled", false)
-	viper.SetDefault("admin_plus.proxy_mihomo_binary_path", "")
-	viper.SetDefault("admin_plus.proxy_runtime_dir", "runtime/proxy")
-	viper.SetDefault("admin_plus.proxy_base_mixed_port", 17890)
-	viper.SetDefault("admin_plus.proxy_base_controller_port", 19090)
-	viper.SetDefault("admin_plus.proxy_max_slots", 4)
-	viper.SetDefault("admin_plus.proxy_egress_check_url", "https://api.ipify.org?format=json")
 
 	// Ops (vNext)
 	viper.SetDefault("ops.enabled", true)
@@ -1887,8 +1865,6 @@ func setDefaults() {
 	// Default
 	// Admin credentials are created via the setup flow (web wizard / CLI / AUTO_SETUP).
 	// Do not ship fixed defaults here to avoid insecure "known credentials" in production.
-	viper.SetDefault("default.admin_email", "")
-	viper.SetDefault("default.admin_password", "")
 	viper.SetDefault("default.user_concurrency", 5)
 	viper.SetDefault("default.user_balance", 0)
 	viper.SetDefault("default.api_key_prefix", "sk-")
@@ -3013,6 +2989,7 @@ func GetServerAddress() string {
 	v.SetConfigType("yaml")
 	v.AddConfigPath(".")
 	v.AddConfigPath("./config")
+	v.AddConfigPath("/etc/superllm")
 	v.AddConfigPath("/etc/sub2api-admin-plus")
 	v.AddConfigPath("/etc/sub2api")
 

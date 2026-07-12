@@ -430,7 +430,6 @@ import {
   listActionRecommendations,
   listBalanceEvents,
   listHealthEvents,
-  listKanbanEvents,
   listLocalAccountOps,
   listLocalSub2APIGroups,
   listRateSnapshots,
@@ -448,7 +447,6 @@ import {
   type CostReconcileDetailRepairResult,
   type CostReconcileDetailType,
   type HealthEvent,
-  type KanbanEvent,
   type LocalGroupCapacitySignal,
   type LocalAccountOpsActionResult,
   type LocalAccountOpsRow,
@@ -480,7 +478,6 @@ const suppliers = ref<Supplier[]>([])
 const rateSnapshots = ref<RateSnapshot[]>([])
 const balanceEvents = ref<BalanceEvent[]>([])
 const healthEvents = ref<HealthEvent[]>([])
-const kanbanEvents = ref<KanbanEvent[]>([])
 const localAccountOpsRows = ref<LocalAccountOpsRow[]>([])
 const localGroups = ref<LocalSub2APIGroup[]>([])
 const schedulerSettings = ref<SchedulerSettings | null>(null)
@@ -575,7 +572,6 @@ const switchableCount = computed(() => suppliers.value.filter((supplier) =>
 const openSignalCount = computed(() =>
   balanceEvents.value.filter((event) => event.status === 'open').length +
   healthEvents.value.filter((event) => event.status === 'open').length +
-  kanbanEvents.value.filter((event) => event.status === 'open').length +
   suppliers.value.filter((supplier) => ['exhausted', 'unknown', 'unsupported'].includes(String(supplier.key_capacity_status || ''))).length +
   candidateEvaluationSignals().length +
   costSnapshotSignals().length +
@@ -1021,12 +1017,11 @@ async function syncOpportunityChannel(item: BalanceOpportunity) {
 async function loadPage() {
   loading.value = true
   try {
-    const [supplierResult, rateResult, balanceResult, healthResult, kanbanResult, localOpsResult, localGroupResult, settingsResult, costSnapshotResult, actionResult] = await Promise.all([
+    const [supplierResult, rateResult, balanceResult, healthResult, localOpsResult, localGroupResult, settingsResult, costSnapshotResult, actionResult] = await Promise.all([
       listSuppliers(),
       listRateSnapshots({ limit: 200 }),
       listBalanceEvents({ limit: 100 }),
       listHealthEvents({ limit: 100 }),
-      listKanbanEvents({ status: 'open', limit: 100 }),
       listLocalAccountOps({ limit: 1000 }),
       listLocalSub2APIGroups({ limit: 1000 }),
       getSchedulerSettings().catch(() => null),
@@ -1044,7 +1039,6 @@ async function loadPage() {
     rateSnapshots.value = rateResult.items
     balanceEvents.value = balanceResult.items
     healthEvents.value = healthResult.items
-    kanbanEvents.value = kanbanResult.items
     localAccountOpsRows.value = localOpsResult.items
     localGroups.value = localGroupResult.items || []
     schedulerSettings.value = settingsResult
@@ -1394,7 +1388,6 @@ async function generate() {
       local_account_schedule: localAccountScheduleSignals(),
       balance_events: balanceEvents.value.filter((event) => event.status === 'open'),
       health_events: healthEvents.value.filter((event) => event.status === 'open'),
-      kanban_events: kanbanEvents.value.filter((event) => event.status === 'open'),
       cost_snapshots: costSnapshotSignals(),
       min_profit_margin: 0.1
     })

@@ -15,7 +15,7 @@ function collectRoutePaths(routes: RouteRecordRaw[]): string[] {
 }
 
 describe('adminPlusRoutes', () => {
-  it('只暴露 Admin Plus MVP0 当前路由和兼容重定向', () => {
+  it('只暴露 SuperLLM MVP0 当前路由和兼容重定向', () => {
     expect(collectRoutePaths(adminPlusRoutes)).toEqual([
       '/setup',
       '/login',
@@ -27,13 +27,6 @@ describe('adminPlusRoutes', () => {
       '/admin/supplier-bindings',
       '/admin/local-account-ops',
       '/admin/supplier-rate-checks',
-      '/admin/kanban',
-      '/admin/kanban/market-prices',
-      '/admin/kanban/supply-quality',
-      '/admin/kanban/profit',
-      '/admin/kanban/acceptance',
-      '/admin/kanban/events',
-      '/admin/kanban/settings',
       '/admin/account-rate-sync',
       '/admin/scheduler',
       '/admin/scheduler/notifications',
@@ -41,16 +34,12 @@ describe('adminPlusRoutes', () => {
       '/admin/actions',
       '/admin/system-logs',
       '/admin/action-audits',
-      '/admin/server-renewal',
       '/admin/backup',
       '/admin/import-export',
       '/admin/collection/scheduler',
       '/admin/collection/plugin-tasks',
       '/admin/collection/sessions',
       '/admin/collection/site-discovery',
-      '/admin/site-catalog',
-      '/admin/mails',
-      '/admin/proxy',
       '/admin/events/announcements',
       '/admin/monitoring/rates',
       '/admin/monitoring/balances',
@@ -68,7 +57,6 @@ describe('adminPlusRoutes', () => {
       '/admin/operations/supplier-accounts',
       '/admin/operations/account-runtime',
       '/admin/operations/rates',
-      '/admin/operations/kanban',
       '/admin/operations/balances',
       '/admin/operations/health',
       '/admin/operations/announcements',
@@ -105,6 +93,11 @@ describe('adminPlusRoutes', () => {
       '/admin/payment',
       '/admin/subscriptions',
       '/admin/redeem',
+      '/admin/kanban',
+      '/admin/proxy',
+      '/admin/mails',
+      '/admin/site-catalog',
+      '/admin/server-renewal',
       '/admin/finance/billing',
       '/admin/finance/reconciliation',
       '/admin/operations/promotions'
@@ -123,12 +116,6 @@ describe('adminPlusRoutes', () => {
         '/admin/supplier-bindings',
         '/admin/local-account-ops',
         '/admin/supplier-rate-checks',
-        '/admin/kanban/market-prices',
-        '/admin/kanban/supply-quality',
-        '/admin/kanban/profit',
-        '/admin/kanban/acceptance',
-        '/admin/kanban/events',
-        '/admin/kanban/settings',
         '/admin/account-rate-sync',
         '/admin/scheduler',
         '/admin/scheduler/notifications',
@@ -136,13 +123,10 @@ describe('adminPlusRoutes', () => {
         '/admin/actions',
         '/admin/system-logs',
         '/admin/action-audits',
-        '/admin/server-renewal',
         '/admin/backup',
         '/admin/import-export',
         '/admin/collection/sessions',
         '/admin/collection/site-discovery',
-        '/admin/site-catalog',
-        '/admin/mails',
         '/admin/finance/costs',
         '/admin/finance/usage-costs',
         '/admin/finance/local-usage',
@@ -150,7 +134,7 @@ describe('adminPlusRoutes', () => {
       ].includes(route.path)
     )
 
-    expect(adminRoutes).toHaveLength(29)
+    expect(adminRoutes).toHaveLength(20)
     for (const route of adminRoutes) {
       expect(route.meta?.requiresAuth).toBe(true)
       expect(route.meta?.requiresAdmin).toBe(true)
@@ -170,8 +154,6 @@ describe('adminPlusRoutes', () => {
         ['/admin/monitoring/account-runtime', '/admin/local-account-ops'],
         ['/admin/operations/account-runtime', '/admin/local-account-ops'],
         ['/admin/operations/rates', '/admin/supplier-rate-checks'],
-        ['/admin/kanban', '/admin/kanban/profit'],
-        ['/admin/operations/kanban', '/admin/kanban/profit'],
         ['/admin/monitoring/balances', '/admin/suppliers'],
         ['/admin/operations/balances', '/admin/suppliers'],
         ['/admin/operations/health', '/admin/suppliers'],

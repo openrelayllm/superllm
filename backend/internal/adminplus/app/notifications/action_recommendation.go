@@ -69,7 +69,7 @@ func actionRecommendationEventType(action *adminplusdomain.ActionRecommendation)
 		return "action.credential_review"
 	case strings.Contains(reason, "cost"), strings.Contains(reason, "reconcile"), action.Type == adminplusdomain.ActionTypeSupplierCostReconcileAdjustment:
 		return "action.cost_reconcile"
-	case strings.Contains(reason, "kanban"), strings.Contains(reason, "profit"), action.Type == adminplusdomain.ActionTypeInvestigateProfit:
+	case strings.Contains(reason, "profit"), action.Type == adminplusdomain.ActionTypeInvestigateProfit:
 		return "action.profit_review"
 	default:
 		return "action.operational_review"
@@ -124,7 +124,7 @@ func signalValue(signals []string, key string) string {
 
 func actionRecommendationText(action *adminplusdomain.ActionRecommendation) string {
 	parts := []string{
-		fmt.Sprintf("Sub2API Admin Plus 动作建议：%s", strings.TrimSpace(action.Title)),
+		fmt.Sprintf("SuperLLM 动作建议：%s", strings.TrimSpace(action.Title)),
 		fmt.Sprintf("级别：%s", actionSeverityText(action.Severity)),
 		fmt.Sprintf("原因：%s", strings.TrimSpace(action.ReasonCode)),
 	}

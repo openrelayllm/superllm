@@ -5,7 +5,7 @@
         <div>
           <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">系统日志</h1>
           <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-            Admin Plus 业务诊断事件，用于排查直登、余额同步、验证码读取和插件任务。
+            SuperLLM 业务诊断事件，用于排查直登、余额同步、注册和插件任务。
           </p>
         </div>
         <button type="button" class="btn btn-secondary" :disabled="loading" @click="loadLogs">
@@ -28,8 +28,8 @@
           <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ loginFailureCount }}</p>
         </div>
         <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">读取验证码</p>
-          <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ mailCount }}</p>
+          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">注册事件</p>
+          <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ registrationCount }}</p>
         </div>
       </section>
 
@@ -38,7 +38,7 @@
           <label class="block">
             <span class="input-label">分类</span>
             <select v-model="filters.component" class="input" @change="resetAndLoad">
-              <option value="">全部 Admin Plus</option>
+              <option value="">全部 SuperLLM</option>
               <option v-for="option in componentOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
             </select>
           </label>
@@ -90,7 +90,7 @@
             <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
               <tr v-if="logs.length === 0">
                 <td colspan="7" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-dark-400">
-                  {{ loading ? '加载中...' : '暂无 Admin Plus 业务日志' }}
+                  {{ loading ? '加载中...' : '暂无 SuperLLM 业务日志' }}
                 </td>
               </tr>
               <tr v-for="log in logs" :key="`${log.component}:${log.id}`" class="align-top">
@@ -162,7 +162,6 @@ const appStore = useAppStore()
 const componentOptions: Array<{ value: AdminPlusSystemLogComponent; label: string }> = [
   { value: 'admin_plus.login', label: '供应商直登' },
   { value: 'admin_plus.balance', label: '余额同步' },
-  { value: 'admin_plus.mail', label: '邮箱验证码' },
   { value: 'admin_plus.registration', label: '注册任务' },
   { value: 'admin_plus.extension', label: '插件任务' },
   { value: 'admin_plus.sub2api', label: '本地账号动作' }
@@ -184,7 +183,7 @@ const filters = reactive({
 
 const failedCount = computed(() => logs.value.filter((item) => stringExtra(item, 'outcome') === 'failed').length)
 const loginFailureCount = computed(() => logs.value.filter((item) => item.component === 'admin_plus.login' && stringExtra(item, 'outcome') === 'failed').length)
-const mailCount = computed(() => logs.value.filter((item) => item.component === 'admin_plus.mail').length)
+const registrationCount = computed(() => logs.value.filter((item) => item.component === 'admin_plus.registration').length)
 
 onMounted(() => {
   void loadLogs()

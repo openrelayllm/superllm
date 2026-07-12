@@ -108,7 +108,7 @@
       </label>
       <label class="block">
         <span class="input-label">本地充值入口</span>
-        <input v-model.trim="form.local_recharge_url" class="input" placeholder="https://sub2apiplus.example.com/custom/..." />
+        <input v-model.trim="form.local_recharge_url" class="input" placeholder="https://SuperLLM.example.com/custom/..." />
       </label>
     </div>
 

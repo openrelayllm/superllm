@@ -25,7 +25,6 @@ func SetupRouter(
 	handlers *handler.Handlers,
 	jwtAuth middleware2.JWTAuthMiddleware,
 	adminAuth middleware2.AdminAuthMiddleware,
-	apiKeyAuth middleware2.APIKeyAuthMiddleware,
 	settingService *service.SettingService,
 	cfg *config.Config,
 	redisClient *redis.Client,
@@ -78,7 +77,7 @@ func SetupRouter(
 	}
 
 	// 注册路由
-	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, settingService, redisClient)
+	registerRoutes(r, handlers, jwtAuth, adminAuth, settingService, redisClient)
 
 	return r
 }
@@ -89,7 +88,6 @@ func registerRoutes(
 	h *handler.Handlers,
 	jwtAuth middleware2.JWTAuthMiddleware,
 	adminAuth middleware2.AdminAuthMiddleware,
-	apiKeyAuth middleware2.APIKeyAuthMiddleware,
 	settingService *service.SettingService,
 	redisClient *redis.Client,
 ) {
@@ -99,7 +97,6 @@ func registerRoutes(
 	// API v1
 	v1 := r.Group("/api/v1")
 
-	routes.RegisterPublicProxyAIRoutes(v1, h, apiKeyAuth)
 	routes.RegisterAuthRoutes(v1, h, jwtAuth, redisClient, settingService)
 	routes.RegisterAdminRoutes(v1, h, adminAuth)
 	routes.RegisterAdminPlusRoutes(v1, h, adminAuth)

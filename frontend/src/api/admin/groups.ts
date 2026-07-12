@@ -1,5 +1,5 @@
 /**
- * Minimal group API used by Admin Plus ops filters.
+ * Minimal group API used by SuperLLM ops filters.
  */
 
 import { apiClient } from '../client'

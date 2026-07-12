@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# Sub2API Admin Plus Installation Script
-# Sub2API Admin Plus 安装脚本
-# Usage: curl -sSL https://raw.githubusercontent.com/openrelayllm/sub2api-admin-plus/main/deploy/install.sh | bash
+# SuperLLM Installation Script
+# SuperLLM 安装脚本
+# Usage: curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh | sudo bash -s -- install
 #
 
 set -e
@@ -31,22 +31,28 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-GITHUB_REPO="openrelayllm/sub2api-admin-plus"
-INSTALL_DIR="/opt/sub2api-admin-plus"
-SERVICE_NAME="sub2api-admin-plus"
-SERVICE_USER="sub2api"
-CONFIG_DIR="/etc/sub2api-admin-plus"
-BINARY_NAME="sub2api-admin-plus"
-ARCHIVE_BINARY_NAME="sub2api"
+GITHUB_REPO="openrelayllm/superllm"
+INSTALL_DIR="/opt/superllm"
+SERVICE_NAME="superllm"
+SERVICE_USER="superllm"
+CONFIG_DIR="/etc/superllm"
+BINARY_NAME="superllm"
+ARCHIVE_BINARY_NAME="superllm"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-LEGACY_INSTALL_DIR="/opt/sub2api"
-LEGACY_SERVICE_NAME="sub2api"
-LEGACY_BINARY_NAME="sub2api"
+LEGACY_INSTALL_DIR="/opt/sub2api-admin-plus"
+LEGACY_CONFIG_DIR="/etc/sub2api-admin-plus"
+LEGACY_SERVICE_NAME="sub2api-admin-plus"
+LEGACY_BINARY_NAME="sub2api-admin-plus"
 LEGACY_SERVICE_FILE="/etc/systemd/system/${LEGACY_SERVICE_NAME}.service"
-COMMAND_NAME="sub2apiplus"
+UPSTREAM_INSTALL_DIR="/opt/sub2api"
+UPSTREAM_CONFIG_DIR="/etc/sub2api"
+UPSTREAM_SERVICE_NAME="sub2api"
+UPSTREAM_BINARY_NAME="sub2api"
+UPSTREAM_SERVICE_FILE="/etc/systemd/system/${UPSTREAM_SERVICE_NAME}.service"
+COMMAND_NAME="superllm"
+COMMAND_SOURCE_NAME="superllmctl"
 COMMAND_PATH="/usr/local/bin/${COMMAND_NAME}"
-MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.27}"
-MIHOMO_BINARY_PATH="${INSTALL_DIR}/bin/mihomo"
+LEGACY_COMMAND_PATH="/usr/local/bin/sub2apiplus"
 MIGRATING_LEGACY=false
 
 # Server configuration (will be set by user)
@@ -75,7 +81,7 @@ declare -A MSG_ZH=(
     ["enter_choice"]="请输入选择 (默认: 1)"
 
     # Installation
-    ["install_title"]="Sub2API Admin Plus 安装脚本"
+    ["install_title"]="SuperLLM 安装脚本"
     ["run_as_root"]="请使用 root 权限运行 (使用 sudo)"
     ["detected_platform"]="检测到平台"
     ["unsupported_arch"]="不支持的架构"
@@ -93,8 +99,6 @@ declare -A MSG_ZH=(
     ["checksum_not_found"]="无法验证校验和（checksums.txt 未找到）"
     ["extracting"]="正在解压..."
     ["binary_installed"]="二进制文件已安装到"
-    ["installing_mihomo"]="正在安装 Mihomo core..."
-    ["mihomo_installed"]="Mihomo core 已安装到"
     ["user_exists"]="用户已存在"
     ["creating_user"]="正在创建系统用户"
     ["user_created"]="用户已创建"
@@ -107,18 +111,17 @@ declare -A MSG_ZH=(
     ["ready_for_setup"]="准备就绪，可以启动设置向导"
 
     # Completion
-    ["install_complete"]="Sub2API Admin Plus 安装完成！"
+    ["install_complete"]="SuperLLM 安装完成！"
     ["install_dir"]="安装目录"
     ["next_steps"]="后续步骤"
     ["step1_check_services"]="确保 PostgreSQL 和 Redis 正在运行："
-    ["step2_start_service"]="启动 Sub2API Admin Plus 服务："
+    ["step2_start_service"]="启动 SuperLLM 服务："
     ["step3_enable_autostart"]="设置开机自启："
     ["step4_open_wizard"]="在浏览器中打开设置向导："
     ["wizard_guide"]="设置向导将引导您完成："
     ["wizard_db"]="数据库配置"
     ["wizard_redis"]="Redis 配置"
-    ["wizard_sub2api"]="Sub2API 集成配置"
-    ["wizard_admin"]="管理员账号创建"
+    ["wizard_sub2api"]="Sub2API 身份与数据源配置（必填）"
     ["useful_commands"]="常用命令"
     ["cmd_status"]="查看状态"
     ["cmd_logs"]="查看日志"
@@ -127,7 +130,7 @@ declare -A MSG_ZH=(
     ["cmd_upgrade_command"]="命令升级"
 
     # Upgrade
-    ["upgrading"]="正在升级 Sub2API Admin Plus..."
+    ["upgrading"]="正在升级 SuperLLM..."
     ["current_version"]="当前版本"
     ["stopping_service"]="正在停止服务..."
     ["backup_created"]="备份已创建"
@@ -143,11 +146,11 @@ declare -A MSG_ZH=(
     ["validating_version"]="正在验证版本..."
     ["available_versions"]="可用版本列表"
     ["fetching_versions"]="正在获取可用版本..."
-    ["not_installed"]="Sub2API Admin Plus 尚未安装，请先执行全新安装"
+    ["not_installed"]="SuperLLM 尚未安装，请先执行全新安装"
     ["fresh_install_hint"]="用法"
 
     # Uninstall
-    ["uninstall_confirm"]="这将从系统中移除 Sub2API Admin Plus。"
+    ["uninstall_confirm"]="这将从系统中移除 SuperLLM。"
     ["are_you_sure"]="确定要继续吗？(y/N)"
     ["uninstall_cancelled"]="卸载已取消"
     ["removing_files"]="正在移除文件..."
@@ -159,22 +162,22 @@ declare -A MSG_ZH=(
     ["install_lock_removed"]="安装锁文件已移除，重新安装时将进入设置向导"
     ["purge_prompt"]="是否同时删除配置目录？这将清除所有配置和数据 [y/N]: "
     ["removing_config_dir"]="正在移除配置目录..."
-    ["uninstall_complete"]="Sub2API Admin Plus 已卸载"
+    ["uninstall_complete"]="SuperLLM 已卸载"
 
     # Help
     ["usage"]="用法"
     ["cmd_none"]="(无参数)"
-    ["cmd_install"]="安装 Sub2API Admin Plus"
+    ["cmd_install"]="安装 SuperLLM"
     ["cmd_upgrade"]="升级到最新版本"
-    ["cmd_uninstall"]="卸载 Sub2API Admin Plus"
+    ["cmd_uninstall"]="卸载 SuperLLM"
     ["cmd_install_version"]="安装/回退到指定版本"
     ["cmd_list_versions"]="列出可用版本"
-    ["cmd_install_command"]="仅安装/刷新 sub2apiplus 命令入口"
+    ["cmd_install_command"]="仅安装/刷新 superllm 命令入口"
     ["opt_version"]="指定要安装的版本号 (例如: v1.0.0)"
 
     # Server configuration
     ["server_config_title"]="服务器配置"
-    ["server_config_desc"]="配置 Sub2API Admin Plus 服务监听地址"
+    ["server_config_desc"]="配置 SuperLLM 服务监听地址"
     ["server_host_prompt"]="服务器监听地址"
     ["server_host_hint"]="0.0.0.0 表示监听所有网卡，127.0.0.1 仅本地访问"
     ["server_port_prompt"]="服务器端口"
@@ -207,7 +210,7 @@ declare -A MSG_EN=(
     ["enter_choice"]="Enter your choice (default: 1)"
 
     # Installation
-    ["install_title"]="Sub2API Admin Plus Installation Script"
+    ["install_title"]="SuperLLM Installation Script"
     ["run_as_root"]="Please run as root (use sudo)"
     ["detected_platform"]="Detected platform"
     ["unsupported_arch"]="Unsupported architecture"
@@ -225,8 +228,6 @@ declare -A MSG_EN=(
     ["checksum_not_found"]="Could not verify checksum (checksums.txt not found)"
     ["extracting"]="Extracting..."
     ["binary_installed"]="Binary installed to"
-    ["installing_mihomo"]="Installing Mihomo core..."
-    ["mihomo_installed"]="Mihomo core installed to"
     ["user_exists"]="User already exists"
     ["creating_user"]="Creating system user"
     ["user_created"]="User created"
@@ -239,18 +240,17 @@ declare -A MSG_EN=(
     ["ready_for_setup"]="Ready for Setup Wizard"
 
     # Completion
-    ["install_complete"]="Sub2API Admin Plus installation completed!"
+    ["install_complete"]="SuperLLM installation completed!"
     ["install_dir"]="Installation directory"
     ["next_steps"]="NEXT STEPS"
     ["step1_check_services"]="Make sure PostgreSQL and Redis are running:"
-    ["step2_start_service"]="Start Sub2API Admin Plus service:"
+    ["step2_start_service"]="Start SuperLLM service:"
     ["step3_enable_autostart"]="Enable auto-start on boot:"
     ["step4_open_wizard"]="Open the Setup Wizard in your browser:"
     ["wizard_guide"]="The Setup Wizard will guide you through:"
     ["wizard_db"]="Database configuration"
     ["wizard_redis"]="Redis configuration"
-    ["wizard_sub2api"]="Sub2API integration configuration"
-    ["wizard_admin"]="Admin account creation"
+    ["wizard_sub2api"]="Sub2API identity and data source (required)"
     ["useful_commands"]="USEFUL COMMANDS"
     ["cmd_status"]="Check status"
     ["cmd_logs"]="View logs"
@@ -259,7 +259,7 @@ declare -A MSG_EN=(
     ["cmd_upgrade_command"]="Command upgrade"
 
     # Upgrade
-    ["upgrading"]="Upgrading Sub2API Admin Plus..."
+    ["upgrading"]="Upgrading SuperLLM..."
     ["current_version"]="Current version"
     ["stopping_service"]="Stopping service..."
     ["backup_created"]="Backup created"
@@ -275,11 +275,11 @@ declare -A MSG_EN=(
     ["validating_version"]="Validating version..."
     ["available_versions"]="Available versions"
     ["fetching_versions"]="Fetching available versions..."
-    ["not_installed"]="Sub2API Admin Plus is not installed. Please run a fresh install first"
+    ["not_installed"]="SuperLLM is not installed. Please run a fresh install first"
     ["fresh_install_hint"]="Usage"
 
     # Uninstall
-    ["uninstall_confirm"]="This will remove Sub2API Admin Plus from your system."
+    ["uninstall_confirm"]="This will remove SuperLLM from your system."
     ["are_you_sure"]="Are you sure? (y/N)"
     ["uninstall_cancelled"]="Uninstall cancelled"
     ["removing_files"]="Removing files..."
@@ -291,22 +291,22 @@ declare -A MSG_EN=(
     ["install_lock_removed"]="Install lock removed. Setup wizard will appear on next install."
     ["purge_prompt"]="Also remove config directory? This will delete all config and data [y/N]: "
     ["removing_config_dir"]="Removing config directory..."
-    ["uninstall_complete"]="Sub2API Admin Plus has been uninstalled"
+    ["uninstall_complete"]="SuperLLM has been uninstalled"
 
     # Help
     ["usage"]="Usage"
     ["cmd_none"]="(none)"
-    ["cmd_install"]="Install Sub2API Admin Plus"
+    ["cmd_install"]="Install SuperLLM"
     ["cmd_upgrade"]="Upgrade to the latest version"
-    ["cmd_uninstall"]="Remove Sub2API Admin Plus"
+    ["cmd_uninstall"]="Remove SuperLLM"
     ["cmd_install_version"]="Install/rollback to a specific version"
     ["cmd_list_versions"]="List available versions"
-    ["cmd_install_command"]="Install/refresh the sub2apiplus command wrapper only"
+    ["cmd_install_command"]="Install/refresh the superllm command wrapper only"
     ["opt_version"]="Specify version to install (e.g., v1.0.0)"
 
     # Server configuration
     ["server_config_title"]="Server Configuration"
-    ["server_config_desc"]="Configure Sub2API Admin Plus server listen address"
+    ["server_config_desc"]="Configure SuperLLM server listen address"
     ["server_host_prompt"]="Server listen address"
     ["server_host_hint"]="0.0.0.0 listens on all interfaces, 127.0.0.1 for local only"
     ["server_port_prompt"]="Server port"
@@ -462,6 +462,11 @@ load_existing_server_config() {
             [ -f "$candidate" ] && service_paths+=("$candidate")
         done
     fi
+    if [ "${#service_paths[@]}" -eq 0 ]; then
+        for candidate in "$UPSTREAM_SERVICE_FILE" /etc/systemd/system/${UPSTREAM_SERVICE_NAME}.service.d/*.conf; do
+            [ -f "$candidate" ] && service_paths+=("$candidate")
+        done
+    fi
 
     if [ "${#service_paths[@]}" -gt 0 ]; then
         existing_host=$(grep -hE '^Environment=SERVER_HOST=' "${service_paths[@]}" | tail -1 | sed 's/^Environment=SERVER_HOST=//' || true)
@@ -535,6 +540,14 @@ check_dependencies() {
 
     if ! command -v gzip &> /dev/null; then
         missing+=("gzip")
+    fi
+
+    if ! command -v systemctl &> /dev/null; then
+        missing+=("systemctl")
+    fi
+
+    if ! command -v useradd &> /dev/null; then
+        missing+=("useradd")
     fi
 
     if [ ${#missing[@]} -gt 0 ]; then
@@ -628,6 +641,10 @@ current_binary_path() {
         echo "$LEGACY_INSTALL_DIR/$LEGACY_BINARY_NAME"
         return 0
     fi
+    if [ -f "$UPSTREAM_INSTALL_DIR/$UPSTREAM_BINARY_NAME" ]; then
+        echo "$UPSTREAM_INSTALL_DIR/$UPSTREAM_BINARY_NAME"
+        return 0
+    fi
     return 1
 }
 
@@ -635,12 +652,8 @@ is_installed() {
     current_binary_path >/dev/null 2>&1
 }
 
-is_legacy_only_install() {
-    [ ! -f "$INSTALL_DIR/$BINARY_NAME" ] && [ -f "$LEGACY_INSTALL_DIR/$LEGACY_BINARY_NAME" ]
-}
-
 detect_legacy_migration() {
-    if is_legacy_only_install; then
+    if [ ! -f "$INSTALL_DIR/$BINARY_NAME" ] && current_binary_path >/dev/null 2>&1; then
         MIGRATING_LEGACY=true
     else
         MIGRATING_LEGACY=false
@@ -661,7 +674,7 @@ get_current_version() {
 # Download and extract
 download_and_extract() {
     local version_num=${LATEST_VERSION#v}
-    local archive_name="sub2api-admin-plus_${version_num}_${OS}_${ARCH}.tar.gz"
+    local archive_name="superllm_${version_num}_${OS}_${ARCH}.tar.gz"
     local download_url="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_VERSION}/${archive_name}"
     local checksum_url="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_VERSION}/checksums.txt"
 
@@ -672,18 +685,20 @@ download_and_extract() {
     trap "rm -rf $TEMP_DIR" EXIT
 
     # Download archive
-    if ! curl -sL "$download_url" -o "$TEMP_DIR/$archive_name"; then
+    if ! curl -fsSL --retry 3 --connect-timeout 10 "$download_url" -o "$TEMP_DIR/$archive_name"; then
         print_error "$(msg 'download_failed')"
         exit 1
     fi
 
     # Download and verify checksum
     print_info "$(msg 'verifying_checksum')"
-    if curl -sL "$checksum_url" -o "$TEMP_DIR/checksums.txt" 2>/dev/null; then
-        local expected_checksum=$(grep "$archive_name" "$TEMP_DIR/checksums.txt" | awk '{print $1}')
-        local actual_checksum=$(sha256sum "$TEMP_DIR/$archive_name" | awk '{print $1}')
+    if curl -fsSL --retry 3 --connect-timeout 10 "$checksum_url" -o "$TEMP_DIR/checksums.txt" 2>/dev/null; then
+        local expected_checksum
+        local actual_checksum
+        expected_checksum=$(awk -v file="$archive_name" '$2 == file || $2 == "*" file { print $1; exit }' "$TEMP_DIR/checksums.txt")
+        actual_checksum=$(sha256sum "$TEMP_DIR/$archive_name" | awk '{print $1}')
 
-        if [ "$expected_checksum" != "$actual_checksum" ]; then
+        if [ -z "$expected_checksum" ] || [ "$expected_checksum" != "$actual_checksum" ]; then
             print_error "$(msg 'checksum_failed')"
             print_error "Expected: $expected_checksum"
             print_error "Actual: $actual_checksum"
@@ -712,7 +727,6 @@ download_and_extract() {
     fi
     cp "$extracted_dir/$ARCHIVE_BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
-    install_mihomo_core
 
     # Copy deploy files if they exist in the archive
     if [ -d "$extracted_dir/deploy" ]; then
@@ -722,55 +736,12 @@ download_and_extract() {
     print_success "$(msg 'binary_installed') $INSTALL_DIR/$BINARY_NAME"
 }
 
-mihomo_asset_name() {
-    case "${OS}_${ARCH}" in
-        linux_amd64)
-            echo "mihomo-linux-amd64-compatible-${MIHOMO_VERSION}.gz"
-            ;;
-        linux_arm64)
-            echo "mihomo-linux-arm64-${MIHOMO_VERSION}.gz"
-            ;;
-        *)
-            print_error "$(msg 'unsupported_os'): ${OS}_${ARCH}"
-            exit 1
-            ;;
-    esac
-}
-
-install_mihomo_core() {
-    local asset_name
-    local url
-    local mihomo_tmp_dir
-
-    print_info "$(msg 'installing_mihomo')"
-    asset_name="$(mihomo_asset_name)"
-    url="https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/${asset_name}"
-    mkdir -p "$INSTALL_DIR/bin"
-    mihomo_tmp_dir=$(mktemp -d)
-
-    if curl -fsSL "$url" -o "$mihomo_tmp_dir/mihomo.gz"; then
-        gzip -dc "$mihomo_tmp_dir/mihomo.gz" > "$mihomo_tmp_dir/mihomo"
-        chmod +x "$mihomo_tmp_dir/mihomo"
-        mv "$mihomo_tmp_dir/mihomo" "$MIHOMO_BINARY_PATH"
-        rm -rf "$mihomo_tmp_dir"
-        print_success "$(msg 'mihomo_installed') $MIHOMO_BINARY_PATH"
-        return 0
-    fi
-
-    rm -rf "$mihomo_tmp_dir"
-    if [ -x "$MIHOMO_BINARY_PATH" ]; then
-        print_warning "Mihomo core download failed; keeping existing binary: $MIHOMO_BINARY_PATH"
-        return 0
-    fi
-    print_error "$(msg 'download_failed'): $asset_name"
-    exit 1
-}
 
 install_command_wrapper() {
     print_info "$(msg 'installing_command')"
 
-    local source_path="$INSTALL_DIR/$COMMAND_NAME"
-    local remote_wrapper="https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy/${COMMAND_NAME}"
+    local source_path="$INSTALL_DIR/$COMMAND_SOURCE_NAME"
+    local remote_wrapper="https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy/${COMMAND_SOURCE_NAME}"
     local remote_installer="https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy/install.sh"
     if [ -f "$source_path" ]; then
         cp "$source_path" "$COMMAND_PATH"
@@ -800,6 +771,7 @@ EOF
     fi
 
     chmod 755 "$COMMAND_PATH"
+    rm -f "$LEGACY_COMMAND_PATH"
 
     if command -v curl >/dev/null 2>&1; then
         local installer_tmp
@@ -868,7 +840,10 @@ migrate_legacy_config() {
         for candidate in \
             "$LEGACY_INSTALL_DIR/config.yaml" \
             "$LEGACY_INSTALL_DIR/data/config.yaml" \
-            "/etc/sub2api/config.yaml"
+            "$LEGACY_CONFIG_DIR/config.yaml" \
+            "$UPSTREAM_INSTALL_DIR/config.yaml" \
+            "$UPSTREAM_INSTALL_DIR/data/config.yaml" \
+            "$UPSTREAM_CONFIG_DIR/config.yaml"
         do
             if [ -f "$candidate" ]; then
                 cp "$candidate" "$CONFIG_DIR/config.yaml"
@@ -884,7 +859,10 @@ migrate_legacy_config() {
         for candidate in \
             "$LEGACY_INSTALL_DIR/.installed" \
             "$LEGACY_INSTALL_DIR/data/.installed" \
-            "/etc/sub2api/.installed"
+            "$LEGACY_CONFIG_DIR/.installed" \
+            "$UPSTREAM_INSTALL_DIR/.installed" \
+            "$UPSTREAM_INSTALL_DIR/data/.installed" \
+            "$UPSTREAM_CONFIG_DIR/.installed"
         do
             if [ -f "$candidate" ]; then
                 cp "$candidate" "$CONFIG_DIR/.installed"
@@ -908,7 +886,7 @@ install_service() {
     # Create service file with configured host and port
     cat > "$SERVICE_FILE" << EOF
 [Unit]
-Description=Sub2API Admin Plus - operations automation extension
+Description=SuperLLM - operations automation extension
 Documentation=https://github.com/${GITHUB_REPO}
 After=network.target postgresql.service redis.service
 Wants=postgresql.service redis.service
@@ -938,7 +916,6 @@ Environment=GIN_MODE=release
 Environment=DATA_DIR=${CONFIG_DIR}
 Environment=SERVER_HOST=${SERVER_HOST}
 Environment=SERVER_PORT=${SERVER_PORT}
-Environment=ADMIN_PLUS_PROXY_MIHOMO_BINARY_PATH=${MIHOMO_BINARY_PATH}
 
 [Install]
 WantedBy=multi-user.target
@@ -960,6 +937,11 @@ stop_existing_services() {
         print_info "$(msg 'stopping_service') $LEGACY_SERVICE_NAME"
         systemctl stop "$LEGACY_SERVICE_NAME"
     fi
+
+    if [ "$MIGRATING_LEGACY" = true ] && systemctl is-active --quiet "$UPSTREAM_SERVICE_NAME"; then
+        print_info "$(msg 'stopping_service') $UPSTREAM_SERVICE_NAME"
+        systemctl stop "$UPSTREAM_SERVICE_NAME"
+    fi
 }
 
 disable_legacy_service() {
@@ -967,6 +949,11 @@ disable_legacy_service() {
         systemctl disable "$LEGACY_SERVICE_NAME" 2>/dev/null || true
         print_warning "Legacy service disabled: $LEGACY_SERVICE_NAME"
         print_warning "Legacy files kept for manual rollback: $LEGACY_INSTALL_DIR"
+    fi
+    if [ "$MIGRATING_LEGACY" = true ] && [ -f "$UPSTREAM_SERVICE_FILE" ]; then
+        systemctl disable "$UPSTREAM_SERVICE_NAME" 2>/dev/null || true
+        print_warning "Legacy service disabled: $UPSTREAM_SERVICE_NAME"
+        print_warning "Legacy files kept for manual rollback: $UPSTREAM_INSTALL_DIR"
     fi
 }
 
@@ -1052,7 +1039,6 @@ print_completion() {
     echo "     - $(msg 'wizard_db')"
     echo "     - $(msg 'wizard_redis')"
     echo "     - $(msg 'wizard_sub2api')"
-    echo "     - $(msg 'wizard_admin')"
     echo ""
     echo "=============================================="
     echo "  $(msg 'useful_commands')"
@@ -1220,6 +1206,7 @@ uninstall() {
 
     print_info "$(msg 'removing_files')"
     rm -f "$SERVICE_FILE"
+    rm -f "$COMMAND_PATH"
     systemctl daemon-reload
 
     print_info "$(msg 'removing_install_dir')"
@@ -1437,7 +1424,7 @@ main() {
             echo "  $0 upgrade -v vX.Y.Z      # Upgrade to specific version"
             echo "  $0 rollback vX.Y.Z        # Rollback to vX.Y.Z"
             echo "  $0 list-versions          # List available versions"
-            echo "  $0 install-command        # Install/refresh local sub2apiplus command only"
+            echo "  $0 install-command        # Install/refresh local superllm command only"
             echo ""
             exit 0
             ;;

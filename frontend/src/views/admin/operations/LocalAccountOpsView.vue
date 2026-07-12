@@ -596,7 +596,7 @@
               <div>
                 <h2 class="text-lg font-semibold text-gray-900 dark:text-white">原后台变更</h2>
                 <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-                  本地账号 #{{ driftAccountId || '-' }} 的 Sub2API 当前状态与 Admin Plus 已采纳基线不一致。
+                  本地账号 #{{ driftAccountId || '-' }} 的 Sub2API 当前状态与 SuperLLM 已采纳基线不一致。
                 </p>
               </div>
               <button type="button" class="btn btn-ghost btn-icon" :disabled="driftBusy || driftActionBusy" aria-label="关闭" @click="closeDriftDialog()">
@@ -615,7 +615,7 @@
                   <Icon name="exclamationTriangle" size="sm" class="mt-0.5 shrink-0" />
                   <div>
                     <p class="font-medium">确认后再恢复调度写回</p>
-                    <p class="mt-1">采纳会把 Sub2API 当前状态设为新基线；恢复会把 Admin Plus 基线写回 Sub2API，并刷新调度队列。</p>
+                    <p class="mt-1">采纳会把 Sub2API 当前状态设为新基线；恢复会把 SuperLLM 基线写回 Sub2API，并刷新调度队列。</p>
                   </div>
                 </div>
               </div>
@@ -624,7 +624,7 @@
                   <thead class="bg-gray-50 text-xs uppercase tracking-wider text-gray-500 dark:bg-dark-800 dark:text-dark-400">
                     <tr>
                       <th class="px-3 py-2 text-left font-medium">字段</th>
-                      <th class="px-3 py-2 text-left font-medium">Admin Plus 基线</th>
+                      <th class="px-3 py-2 text-left font-medium">SuperLLM 基线</th>
                       <th class="px-3 py-2 text-left font-medium">Sub2API 当前</th>
                       <th class="px-3 py-2 text-left font-medium">状态</th>
                     </tr>
@@ -1225,7 +1225,7 @@ async function restoreDrift() {
     closeDriftDialog(true)
     await loadRows()
   } catch (error) {
-    appStore.showError((error as { message?: string }).message || '恢复 Admin Plus 基线失败')
+    appStore.showError((error as { message?: string }).message || '恢复 SuperLLM 基线失败')
   } finally {
     driftActionBusy.value = false
   }

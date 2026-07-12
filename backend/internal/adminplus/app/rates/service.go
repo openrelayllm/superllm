@@ -225,7 +225,7 @@ func (s *Service) SyncFromSession(ctx context.Context, in SyncFromSessionInput) 
 }
 
 func (s *Service) notifyRateChange(_ context.Context, _ *adminplusdomain.RateChangeEvent, _ *adminplusdomain.RateSnapshot) {
-	// Rate events stay in Admin Plus history; Feishu push is intentionally balance-only.
+	// Rate events stay in SuperLLM history; Feishu push is intentionally balance-only.
 }
 
 type FeishuNotifier struct {
@@ -276,7 +276,7 @@ func buildFeishuRateText(event *adminplusdomain.RateChangeEvent, snapshot *admin
 		capturedAt = snapshot.CapturedAt
 	}
 	return fmt.Sprintf(
-		"【Sub2API Admin Plus 费率通知】\n供应商ID：%d\n模型：%s\n方向：%s\n价格项：%s/%s/%s\n旧价格：%s\n新价格：%d micros\n变化：%s\n超过阈值：%t\n来源：%s\n时间：%s",
+		"【SuperLLM 费率通知】\n供应商ID：%d\n模型：%s\n方向：%s\n价格项：%s/%s/%s\n旧价格：%s\n新价格：%d micros\n变化：%s\n超过阈值：%t\n来源：%s\n时间：%s",
 		event.SupplierID,
 		event.Model,
 		event.Direction,

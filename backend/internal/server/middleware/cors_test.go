@@ -149,22 +149,6 @@ func TestCORS_PreflightAllowedOrigin_ReturnsNoContent(t *testing.T) {
 		"允许的 origin 的 preflight 请求应返回 204")
 }
 
-func TestCORS_PublicProxyAIPreflightAllowedWithoutConfiguredOrigins(t *testing.T) {
-	middleware := CORS(config.CORSConfig{})
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodOptions, "/api/v1/public/proxyai/sites", nil)
-	c.Request.Header.Set("Origin", "https://proxyai.example.com")
-	c.Request.Header.Set("Access-Control-Request-Method", http.MethodGet)
-
-	middleware(c)
-
-	assert.Equal(t, http.StatusNoContent, w.Code)
-	assert.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
-	assert.Empty(t, w.Header().Get("Access-Control-Allow-Credentials"))
-}
-
 func TestCORS_WildcardOrigin_AllowsAny(t *testing.T) {
 	cfg := config.CORSConfig{
 		AllowedOrigins:   []string{"*"},

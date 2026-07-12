@@ -34,11 +34,6 @@ export interface RedisConfig {
   enable_tls: boolean
 }
 
-export interface AdminConfig {
-  email: string
-  password: string
-}
-
 export interface ServerConfig {
   host: string
   port: number
@@ -58,7 +53,6 @@ export interface InstallRequest {
   database: DatabaseConfig
   redis: RedisConfig
   sub2api: Sub2APIIntegrationConfig
-  admin: AdminConfig
   server: ServerConfig
 }
 

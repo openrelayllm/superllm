@@ -44,7 +44,7 @@ func buildCostReconcileAnomalyText(snapshot *adminplusdomain.SupplierCostSnapsho
 		delta = formatSignedCostCents(*snapshot.BalanceDeltaCents, snapshot.Currency)
 	}
 	return fmt.Sprintf(
-		"【Sub2API Admin Plus 对账异常】\n供应商ID：%d\n币种：%s\n预期余额：%s\n实际余额：%s\n余额差异：%s\n充值合计：%s\n兑换合计：%s\n使用成本：%s\n退款合计：%s\n调整合计：%s\n采集时间：%s",
+		"【SuperLLM 对账异常】\n供应商ID：%d\n币种：%s\n预期余额：%s\n实际余额：%s\n余额差异：%s\n充值合计：%s\n兑换合计：%s\n使用成本：%s\n退款合计：%s\n调整合计：%s\n采集时间：%s",
 		snapshot.SupplierID,
 		normalizeCurrency(snapshot.Currency),
 		formatCostCents(snapshot.ExpectedBalanceCents, snapshot.Currency),

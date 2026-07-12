@@ -17,8 +17,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
-	mailverificationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
-	proxyapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/proxy"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
@@ -45,10 +43,6 @@ type CredentialCipher interface {
 	Decrypt(ciphertext string) (string, error)
 }
 
-type RegistrationMailReader interface {
-	ReadVerificationCodeForEmail(ctx context.Context, in mailverificationapp.ReadVerificationCodeForEmailInput) (*mailverificationapp.ReadVerificationCodeResult, error)
-}
-
 type RegistrationLogReader interface {
 	ListSystemLogs(ctx context.Context, filter *opsservice.OpsSystemLogFilter) (*opsservice.OpsSystemLogList, error)
 }
@@ -63,7 +57,6 @@ type RunInput struct {
 	ProbeInterfaces bool
 	ProbeSites      bool
 	Limit           int
-	ProxyPolicyID   int64
 }
 
 type ClassifyInput struct {
@@ -76,7 +69,6 @@ type ClassifyInput struct {
 	ProbeInterfaces      bool
 	ProbeSites           bool
 	Limit                int
-	ProxyPolicyID        int64
 }
 
 type RunResult struct {
@@ -149,28 +141,12 @@ type RegistrationTaskLogsResult struct {
 	Items []*opsservice.OpsSystemLog `json:"items"`
 }
 
-type ReadRegistrationVerificationCodeInput struct {
-	TaskID              int64
-	DeviceID            string
-	LeaseToken          string
-	TriggeredAt         *time.Time
-	TimeoutSeconds      int
-	PollIntervalSeconds int
-}
-
 type RegisterItemInput struct {
-	ItemID        int64
-	ProxyPolicyID int64
+	ItemID int64
 }
 
 type RerunRegistrationInput struct {
 	RegistrationID int64
-	ProxyPolicyID  int64
-}
-
-type registrationProxyContext struct {
-	Assignment *adminplusdomain.ProxyAssignment
-	ProxyURL   string
 }
 
 type Repository interface {
@@ -199,21 +175,13 @@ type Service struct {
 	repo               Repository
 	suppliers          *suppliersapp.Service
 	extension          *extensionapp.Service
-	mail               RegistrationMailReader
 	directRegistration ports.DirectRegistrationAdapter
 	cipher             CredentialCipher
 	bizlog             *bizlogs.Recorder
 	logs               RegistrationLogReader
 	client             *http.Client
-	proxyManager       ProxyManager
 	now                func() time.Time
 	registrationLocks  keyedMutex
-}
-
-type ProxyManager interface {
-	RequestAssignment(ctx context.Context, input proxyapp.RequestAssignmentInput) (*adminplusdomain.ProxyAssignment, error)
-	ReleaseAssignment(ctx context.Context, id int64, failed bool, errorCode string, errorMessage string) (*adminplusdomain.ProxyAssignment, error)
-	ReportFailure(ctx context.Context, id int64, input proxyapp.ReportFailureInput) (*adminplusdomain.ProxyAssignment, error)
 }
 
 type keyedMutex struct {
@@ -236,7 +204,7 @@ func (m *keyedMutex) lock(key int64) func() {
 	return lock.Unlock
 }
 
-func NewService(repo Repository, suppliers *suppliersapp.Service, extension *extensionapp.Service, mail RegistrationMailReader, cipher CredentialCipher, client *http.Client) *Service {
+func NewService(repo Repository, suppliers *suppliersapp.Service, extension *extensionapp.Service, cipher CredentialCipher, client *http.Client) *Service {
 	if client == nil {
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
@@ -244,7 +212,6 @@ func NewService(repo Repository, suppliers *suppliersapp.Service, extension *ext
 		repo:      repo,
 		suppliers: suppliers,
 		extension: extension,
-		mail:      mail,
 		cipher:    cipher,
 		client:    client,
 		now:       time.Now,
@@ -268,13 +235,6 @@ func (s *Service) WithDiagnostics(recorder *bizlogs.Recorder) *Service {
 func (s *Service) WithRegistrationLogs(reader RegistrationLogReader) *Service {
 	if s != nil {
 		s.logs = reader
-	}
-	return s
-}
-
-func (s *Service) WithProxyManager(manager ProxyManager) *Service {
-	if s != nil {
-		s.proxyManager = manager
 	}
 	return s
 }
@@ -411,35 +371,12 @@ func (s *Service) run(ctx context.Context, in RunInput, emit RunProgressEmitter)
 		return nil, err
 	}
 	emitRunProgress(emit, RunProgressEvent{Type: "started", Level: "info", Message: "采集任务已创建", Run: run})
-	runClient := s.client
-	var proxyAssignment *adminplusdomain.ProxyAssignment
-	proxyReleased := false
-	releaseProxy := func(failed bool, code string, message string) {
-		if proxyAssignment == nil || proxyReleased || s.proxyManager == nil {
-			return
-		}
-		proxyReleased = true
-		_, _ = s.proxyManager.ReleaseAssignment(context.Background(), proxyAssignment.ID, failed, code, message)
-	}
-	if in.ProxyPolicyID > 0 {
-		assignment, client, err := s.acquireProxyForRun(ctx, in.ProxyPolicyID, run, sourceURL)
-		if err != nil {
-			return nil, s.failRunWithProgress(ctx, run, err, emit)
-		}
-		proxyAssignment = assignment
-		runClient = client
-		emitRunProgress(emit, RunProgressEvent{Type: "log", Level: "info", Message: "已绑定代理出口 assignment #" + stringFromInt64(assignment.ID), Run: run})
-		defer func() {
-			releaseProxy(false, "", "")
-		}()
-	}
 	emitRunProgress(emit, RunProgressEvent{Type: "log", Level: "info", Message: "正在读取采集源：" + sourceURL, Run: run})
-	body, err := s.fetchTextWithClient(ctx, runClient, sourceURL, defaultDiscoveryFetchLimit)
+	body, err := s.fetchTextWithClient(ctx, s.client, sourceURL, defaultDiscoveryFetchLimit)
 	if err != nil {
-		releaseProxy(true, "SITE_DISCOVERY_FETCH_FAILED", err.Error())
 		return nil, s.failRunWithProgress(ctx, run, err, emit)
 	}
-	candidates, err := s.parseSourceCandidates(ctx, runClient, sourceURL, body)
+	candidates, err := s.parseSourceCandidates(ctx, s.client, sourceURL, body)
 	if err != nil {
 		return nil, s.failRunWithProgress(ctx, run, err, emit)
 	}
@@ -447,7 +384,7 @@ func (s *Service) run(ctx context.Context, in RunInput, emit RunProgressEmitter)
 		candidates = candidates[:in.Limit]
 	}
 	emitRunProgress(emit, RunProgressEvent{Type: "log", Level: "info", Message: "采集源解析完成，发现 " + stringFromInt64(int64(len(candidates))) + " 个候选网址", Run: run, Total: len(candidates)})
-	monitor := s.fetchMonitorDataWithClient(ctx, runClient, sourceURL)
+	monitor := s.fetchMonitorDataWithClient(ctx, s.client, sourceURL)
 	if in.ProbeInterfaces {
 		emitRunProgress(emit, RunProgressEvent{Type: "log", Level: "info", Message: "正在通过公开接口进行二次分类并写入候选库", Run: run, Total: len(candidates)})
 	} else {
@@ -465,7 +402,7 @@ func (s *Service) run(ctx context.Context, in RunInput, emit RunProgressEmitter)
 			applyMonitor(item, m)
 		}
 	}
-	for item := range s.classifyCandidatesStreamWithClient(classifyCtx, candidates, in.ProbeInterfaces, in.ProbeSites, runClient) {
+	for item := range s.classifyCandidatesStreamWithClient(classifyCtx, candidates, in.ProbeInterfaces, in.ProbeSites, s.client) {
 		if item.ClassificationStatus == adminplusdomain.SiteDiscoveryClassificationSupported {
 			supported++
 		}
@@ -509,126 +446,6 @@ func (s *Service) run(ctx context.Context, in RunInput, emit RunProgressEmitter)
 		Result:  result,
 	})
 	return result, nil
-}
-
-func (s *Service) acquireProxyForRun(ctx context.Context, policyID int64, run *adminplusdomain.SiteDiscoveryRun, sourceURL string) (*adminplusdomain.ProxyAssignment, *http.Client, error) {
-	if s.proxyManager == nil {
-		return nil, nil, badRequest("SITE_DISCOVERY_PROXY_NOT_CONFIGURED", "proxy manager is not configured")
-	}
-	parsed, err := url.Parse(sourceURL)
-	if err != nil || parsed.Host == "" {
-		return nil, nil, badRequest("SITE_DISCOVERY_SOURCE_URL_INVALID", "source url must be a valid http or https url")
-	}
-	assignment, err := s.proxyManager.RequestAssignment(ctx, proxyapp.RequestAssignmentInput{
-		TaskType:   "site_discovery",
-		TaskID:     stringFromInt64(run.ID),
-		PolicyID:   policyID,
-		TargetHost: parsed.Host,
-		Purpose:    adminplusdomain.ProxyPurposeSiteDiscovery,
-		Method:     http.MethodGet,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	if assignment.MixedPort <= 0 {
-		_, _ = s.proxyManager.ReleaseAssignment(context.Background(), assignment.ID, true, "SITE_DISCOVERY_PROXY_PORT_MISSING", "proxy assignment does not include mixed port")
-		return nil, nil, badRequest("SITE_DISCOVERY_PROXY_PORT_MISSING", "proxy assignment does not include mixed port")
-	}
-	proxyURL, err := url.Parse("http://127.0.0.1:" + stringFromInt64(int64(assignment.MixedPort)))
-	if err != nil {
-		return nil, nil, err
-	}
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		Transport: &proxyAwareTransport{
-			base: &http.Transport{
-				Proxy: http.ProxyURL(proxyURL),
-			},
-			manager:      s.proxyManager,
-			assignmentID: assignment.ID,
-			errorCode:    "SITE_DISCOVERY_PROXY_NETWORK_FAILED",
-		},
-	}
-	return assignment, client, nil
-}
-
-type proxyAwareTransport struct {
-	base         *http.Transport
-	manager      ProxyManager
-	assignmentID int64
-	errorCode    string
-	mu           sync.Mutex
-}
-
-func (t *proxyAwareTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t == nil || t.base == nil {
-		return nil, infraerrors.New(http.StatusInternalServerError, "SITE_DISCOVERY_PROXY_TRANSPORT_NOT_CONFIGURED", "proxy transport is not configured")
-	}
-	resp, err := t.base.RoundTrip(req)
-	if err == nil || !t.shouldRetryAfterSwitch(req, err) {
-		return resp, err
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	_, switchErr := t.manager.ReportFailure(req.Context(), t.assignmentID, proxyapp.ReportFailureInput{
-		ErrorCode:    t.errorCode,
-		ErrorMessage: err.Error(),
-	})
-	if switchErr != nil {
-		return nil, err
-	}
-	t.base.CloseIdleConnections()
-	retryReq, cloneErr := cloneHTTPClientRequest(req)
-	if cloneErr != nil {
-		return nil, err
-	}
-	return t.base.RoundTrip(retryReq)
-}
-
-func (t *proxyAwareTransport) shouldRetryAfterSwitch(req *http.Request, err error) bool {
-	if t == nil || t.manager == nil || t.assignmentID <= 0 || req == nil || err == nil {
-		return false
-	}
-	if req.Context().Err() != nil {
-		return false
-	}
-	if !requestCanBeRetried(req) {
-		return false
-	}
-	return true
-}
-
-func cloneHTTPClientRequest(req *http.Request) (*http.Request, error) {
-	if req == nil {
-		return nil, infraerrors.New(http.StatusInternalServerError, "SITE_DISCOVERY_REQUEST_EMPTY", "request is empty")
-	}
-	clone := req.Clone(req.Context())
-	if req.Body != nil && req.GetBody != nil {
-		body, err := req.GetBody()
-		if err != nil {
-			return nil, err
-		}
-		clone.Body = body
-	}
-	return clone, nil
-}
-
-func requestCanBeRetried(req *http.Request) bool {
-	if req == nil {
-		return false
-	}
-	switch req.Method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return req.Body == nil || req.GetBody != nil
-	default:
-		return false
-	}
-}
-
-func (t *proxyAwareTransport) CloseIdleConnections() {
-	if t != nil && t.base != nil {
-		t.base.CloseIdleConnections()
-	}
 }
 
 func (s *Service) ListItems(ctx context.Context, filter ListFilter) ([]*adminplusdomain.SiteDiscoveryItem, error) {
@@ -750,7 +567,7 @@ func (s *Service) RegisterItemWithOptions(ctx context.Context, in RegisterItemIn
 	if err != nil {
 		return nil, nil, err
 	}
-	return s.runRegistrationWorkflow(ctx, item, credential, password, "start_registration", in.ProxyPolicyID)
+	return s.runRegistrationWorkflow(ctx, item, credential, password, "start_registration")
 }
 
 func (s *Service) ListRegistrationTasks(ctx context.Context, filter ListFilter) ([]*RegistrationTaskView, error) {
@@ -851,7 +668,7 @@ func (s *Service) RerunRegistrationWithOptions(ctx context.Context, in RerunRegi
 	if err != nil {
 		return nil, nil, err
 	}
-	return s.runRegistrationWorkflow(ctx, item, credential, password, "rerun_registration", in.ProxyPolicyID)
+	return s.runRegistrationWorkflow(ctx, item, credential, password, "rerun_registration")
 }
 
 func (s *Service) ListRegistrationLogs(ctx context.Context, registrationID int64, limit int) (*RegistrationTaskLogsResult, error) {
@@ -892,14 +709,6 @@ func (s *Service) ListRegistrationLogs(ctx context.Context, registrationID int64
 			}); err == nil {
 				out = append(out, list.Logs...)
 			}
-		}
-		if mailLogs, err := s.logs.ListSystemLogs(ctx, &opsservice.OpsSystemLogFilter{
-			Page:        1,
-			PageSize:    limit,
-			Component:   "admin_plus.mail",
-			ExtraEquals: map[string]string{"claim_key": registrationClaimKey(credential.ID)},
-		}); err == nil {
-			out = append(out, mailLogs.Logs...)
 		}
 	}
 	out = append(out, registrationWorkflowSnapshotLog(credential, item, task))
@@ -1021,48 +830,6 @@ func (s *Service) GetTaskRegistrationCredential(ctx context.Context, taskID int6
 	}, nil
 }
 
-func (s *Service) ReadTaskRegistrationVerificationCode(ctx context.Context, in ReadRegistrationVerificationCodeInput) (*mailverificationapp.ReadVerificationCodeResult, error) {
-	if s == nil || s.repo == nil || s.extension == nil || s.mail == nil {
-		return nil, internalError("site discovery registration mail dependencies are not configured")
-	}
-	task, err := s.extension.LeasedTask(ctx, in.TaskID, in.DeviceID, in.LeaseToken)
-	if err != nil {
-		return nil, err
-	}
-	if task.Type != adminplusdomain.ExtensionTaskTypeRegisterSupplier {
-		return nil, badRequest("SITE_DISCOVERY_REGISTRATION_TASK_REQUIRED", "extension task is not a registration task")
-	}
-	credential, item, err := s.repo.GetRegistrationCredentialByTaskID(ctx, task.ID)
-	if err != nil {
-		return nil, err
-	}
-	if credential == nil || item == nil {
-		return nil, infraerrors.New(http.StatusNotFound, "SITE_DISCOVERY_REGISTRATION_CREDENTIAL_NOT_FOUND", "registration credential not found")
-	}
-	triggeredAt := s.now().UTC().Add(-2 * time.Minute)
-	if in.TriggeredAt != nil && !in.TriggeredAt.IsZero() {
-		triggeredAt = in.TriggeredAt.UTC()
-	}
-	return s.mail.ReadVerificationCodeForEmail(ctx, mailverificationapp.ReadVerificationCodeForEmailInput{
-		Provider:            mailverificationapp.ProviderGmail,
-		Email:               credential.Email,
-		ClaimKey:            registrationClaimKey(credential.ID),
-		To:                  credential.Email,
-		Keywords:            []string{"验证码", "verification code", "security code", "login code", "code"},
-		SupplierType:        item.ProviderType,
-		ExpectedPurpose:     mailverificationapp.PurposeEmailVerification,
-		SiteName:            "",
-		TriggeredAt:         &triggeredAt,
-		TimeoutSeconds:      normalizeRegistrationCodeTimeout(in.TimeoutSeconds),
-		PollIntervalSeconds: normalizeRegistrationCodePollInterval(in.PollIntervalSeconds),
-		MaxResults:          10,
-	})
-}
-
-func registrationClaimKey(registrationID int64) string {
-	return "registration:" + stringFromInt64(registrationID)
-}
-
 func (s *Service) ListRecommendations(ctx context.Context, limit int) ([]*adminplusdomain.SiteDiscoveryRecommendation, error) {
 	settings, err := s.GetSettings(ctx)
 	if err != nil {
@@ -1074,43 +841,13 @@ func (s *Service) ListRecommendations(ctx context.Context, limit int) ([]*adminp
 	return s.repo.ListRecommendations(ctx, settings.LowRateThreshold, limit)
 }
 
-func normalizeRegistrationCodeTimeout(seconds int) int {
-	if seconds <= 0 {
-		return 90
-	}
-	if seconds > 120 {
-		return 120
-	}
-	return seconds
-}
-
-func normalizeRegistrationCodePollInterval(seconds int) int {
-	if seconds <= 0 {
-		return 5
-	}
-	if seconds < 2 {
-		return 2
-	}
-	if seconds > 30 {
-		return 30
-	}
-	return seconds
-}
-
-func (s *Service) runRegistrationWorkflow(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, password string, action string, proxyPolicyID int64) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.ExtensionTask, error) {
+func (s *Service) runRegistrationWorkflow(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, password string, action string) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.ExtensionTask, error) {
 	if item == nil || credential == nil {
 		return nil, nil, internalError("registration workflow requires discovery item and credential")
 	}
 	s.recordRegistrationEvent(ctx, action, bizlogs.OutcomeSucceeded, "site discovery direct registration started", item, credential, nil, "")
-	proxyCtx, err := s.acquireProxyForRegistration(ctx, proxyPolicyID, item, credential)
-	if err != nil {
-		return s.failDirectRegistration(ctx, item, credential, err)
-	}
-	releaseProxy := func(failed bool, code string, message string) {
-		s.releaseRegistrationProxy(context.Background(), proxyCtx, failed, code, message)
-	}
 	if s.directRegistration == nil {
-		return s.queueBrowserRegistrationFallback(ctx, item, credential, "DIRECT_REGISTRATION_ADAPTER_MISSING", "direct registration adapter is not configured", proxyCtx)
+		return s.queueBrowserRegistrationFallback(ctx, item, credential, "DIRECT_REGISTRATION_ADAPTER_MISSING", "direct registration adapter is not configured")
 	}
 	workflowCtx, cancel := context.WithTimeout(ctx, defaultDirectRegistrationTTL)
 	defer cancel()
@@ -1122,196 +859,43 @@ func (s *Service) runRegistrationWorkflow(ctx context.Context, item *adminplusdo
 		Email:               credential.Email,
 		Password:            password,
 		Username:            credential.Email,
-		ProxyURL:            registrationProxyURL(proxyCtx),
-		RegistrationContext: registrationContextPayload(item, credential, proxyCtx),
+		RegistrationContext: registrationContextPayload(item, credential),
 	})
 	if err != nil {
 		if registrationRequiresBrowserFallback(err) {
-			return s.queueBrowserRegistrationFallback(ctx, item, credential, infraerrors.Reason(err), safeRegistrationErrorMessage(err), proxyCtx)
+			return s.queueBrowserRegistrationFallback(ctx, item, credential, infraerrors.Reason(err), safeRegistrationErrorMessage(err))
 		}
-		releaseProxy(true, infraerrors.Reason(err), safeRegistrationErrorMessage(err))
 		return s.failDirectRegistration(ctx, item, credential, err)
 	}
 	if result == nil {
-		releaseProxy(true, "DIRECT_REGISTRATION_RESULT_EMPTY", "direct registration returned empty result")
 		return s.failDirectRegistration(ctx, item, credential, internalError("direct registration returned empty result"))
 	}
 	if result.Stage == ports.DirectRegistrationStageNeedEmailCode || result.EmailCodeRequired {
-		s.recordRegistrationEvent(ctx, "verification_code_requested", bizlogs.OutcomeSucceeded, "registration verification code requested", item, credential, nil, "")
-		code, readErr := s.readRegistrationVerificationCode(ctx, item, credential, registrationMailSiteName(item, result))
-		if readErr != nil {
-			releaseProxy(true, infraerrors.Reason(readErr), safeRegistrationErrorMessage(readErr))
-			return s.failDirectRegistration(ctx, item, credential, readErr)
-		}
-		s.recordRegistrationEvent(ctx, "verification_code_read", bizlogs.OutcomeSucceeded, "registration verification code read", item, credential, nil, "")
-		result, err = s.directRegistration.RegisterAccount(workflowCtx, ports.DirectRegistrationInput{
-			ProviderType:        item.ProviderType,
-			Origin:              firstNonEmpty(item.DashboardURL, item.RegisterURL, item.APIBaseURL),
-			APIBaseURL:          item.APIBaseURL,
-			RegisterURL:         item.RegisterURL,
-			Email:               credential.Email,
-			Password:            password,
-			Username:            credential.Email,
-			VerificationCode:    code,
-			ProxyURL:            registrationProxyURL(proxyCtx),
-			RegistrationContext: registrationContextPayload(item, credential, proxyCtx),
-		})
-		if err != nil {
-			if registrationRequiresBrowserFallback(err) {
-				return s.queueBrowserRegistrationFallback(ctx, item, credential, infraerrors.Reason(err), safeRegistrationErrorMessage(err), proxyCtx)
-			}
-			releaseProxy(true, infraerrors.Reason(err), safeRegistrationErrorMessage(err))
-			return s.failDirectRegistration(ctx, item, credential, err)
-		}
+		return s.queueBrowserRegistrationFallback(ctx, item, credential, "REGISTRATION_VERIFICATION_REQUIRED", "registration requires manual email verification")
 	}
-	if result == nil || !result.Submitted {
-		releaseProxy(true, "DIRECT_REGISTRATION_RESULT_INCOMPLETE", "direct registration result is incomplete")
+	if !result.Submitted {
 		return s.failDirectRegistration(ctx, item, credential, infraerrors.New(http.StatusBadGateway, "DIRECT_REGISTRATION_RESULT_INCOMPLETE", "direct registration result is incomplete"))
 	}
 	supplier, err := s.ensureRegisteredSupplier(ctx, item, credential.Email, password)
 	if err != nil {
-		releaseProxy(true, infraerrors.Reason(err), safeRegistrationErrorMessage(err))
 		return nil, nil, err
 	}
 	updated, err := s.repo.CompleteRegistration(ctx, credential.ID, supplier.ID, adminplusdomain.SupplierRegistrationStatusSucceeded, "", "", s.now().UTC())
 	if err != nil {
-		releaseProxy(true, infraerrors.Reason(err), safeRegistrationErrorMessage(err))
 		return nil, nil, err
 	}
-	releaseProxy(false, "", "")
 	s.recordRegistrationEvent(ctx, "direct_registration_succeeded", bizlogs.OutcomeSucceeded, "site discovery direct registration succeeded", item, updated, nil, "")
 	return updated, nil, nil
 }
 
-func (s *Service) readRegistrationVerificationCode(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, siteName string) (string, error) {
-	if s.mail == nil {
-		return "", infraerrors.New(http.StatusConflict, "MAIL_VERIFICATION_READER_NOT_CONFIGURED", "mail verification reader is not configured")
-	}
-	siteName = firstNonEmpty(siteName, item.Name, item.Host)
-	triggeredAt := s.now().UTC().Add(-2 * time.Minute)
-	result, err := s.mail.ReadVerificationCodeForEmail(ctx, mailverificationapp.ReadVerificationCodeForEmailInput{
-		Provider:            mailverificationapp.ProviderGmail,
-		Email:               credential.Email,
-		ClaimKey:            registrationClaimKey(credential.ID),
-		To:                  credential.Email,
-		Keywords:            []string{"验证码", "verification code", "security code", "login code", "code"},
-		SupplierType:        item.ProviderType,
-		ExpectedPurpose:     mailverificationapp.PurposeEmailVerification,
-		SiteName:            siteName,
-		TriggeredAt:         &triggeredAt,
-		TimeoutSeconds:      90,
-		PollIntervalSeconds: 5,
-		MaxResults:          10,
-	})
-	if err != nil {
-		return "", err
-	}
-	if result == nil || strings.TrimSpace(result.Code) == "" {
-		return "", infraerrors.NotFound("MAIL_VERIFICATION_CODE_NOT_FOUND", "mail verification code not found")
-	}
-	return strings.TrimSpace(result.Code), nil
-}
-
-func registrationMailSiteName(item *adminplusdomain.SiteDiscoveryItem, result *ports.DirectRegistrationResult) string {
-	if result != nil && result.Diagnostics != nil {
-		if name := firstNonEmpty(
-			stringFromAny(result.Diagnostics["system_name"]),
-			stringFromAny(result.Diagnostics["systemName"]),
-			stringFromAny(result.Diagnostics["site_name"]),
-			stringFromAny(result.Diagnostics["siteName"]),
-		); name != "" {
-			return name
-		}
-	}
-	if item == nil {
-		return ""
-	}
-	return firstNonEmpty(item.Name, item.Host)
-}
-
-func (s *Service) acquireProxyForRegistration(ctx context.Context, policyID int64, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential) (*registrationProxyContext, error) {
-	if policyID <= 0 {
-		return nil, nil
-	}
-	if s.proxyManager == nil {
-		return nil, badRequest("SITE_DISCOVERY_PROXY_NOT_CONFIGURED", "proxy manager is not configured")
-	}
-	targetHost := registrationTargetHost(item)
-	if targetHost == "" {
-		return nil, badRequest("SITE_DISCOVERY_REGISTRATION_TARGET_INVALID", "registration target host is invalid")
-	}
-	assignment, err := s.proxyManager.RequestAssignment(ctx, proxyapp.RequestAssignmentInput{
-		TaskType:   "registration",
-		TaskID:     stringFromInt64(credential.ID),
-		PolicyID:   policyID,
-		TargetHost: targetHost,
-		Purpose:    adminplusdomain.ProxyPurposeRegistration,
-		Method:     http.MethodPost,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if assignment.MixedPort <= 0 {
-		_, _ = s.proxyManager.ReleaseAssignment(context.Background(), assignment.ID, true, "REGISTRATION_PROXY_PORT_MISSING", "proxy assignment does not include mixed port")
-		return nil, badRequest("REGISTRATION_PROXY_PORT_MISSING", "proxy assignment does not include mixed port")
-	}
-	return &registrationProxyContext{
-		Assignment: assignment,
-		ProxyURL:   "http://127.0.0.1:" + stringFromInt64(int64(assignment.MixedPort)),
-	}, nil
-}
-
-func (s *Service) releaseRegistrationProxy(ctx context.Context, proxyCtx *registrationProxyContext, failed bool, code string, message string) {
-	if s == nil || s.proxyManager == nil || proxyCtx == nil || proxyCtx.Assignment == nil {
-		return
-	}
-	if proxyCtx.Assignment.Status != adminplusdomain.ProxyAssignmentActive {
-		return
-	}
-	_, _ = s.proxyManager.ReleaseAssignment(ctx, proxyCtx.Assignment.ID, failed, code, message)
-	proxyCtx.Assignment.Status = adminplusdomain.ProxyAssignmentReleased
-	if failed {
-		proxyCtx.Assignment.Status = adminplusdomain.ProxyAssignmentFailed
-	}
-}
-
-func registrationTargetHost(item *adminplusdomain.SiteDiscoveryItem) string {
-	if item == nil {
-		return ""
-	}
-	for _, rawURL := range []string{item.RegisterURL, item.DashboardURL, item.APIBaseURL} {
-		parsed, err := url.Parse(strings.TrimSpace(rawURL))
-		if err == nil && parsed.Host != "" {
-			return parsed.Host
-		}
-	}
-	return strings.TrimSpace(item.Host)
-}
-
-func registrationProxyURL(proxyCtx *registrationProxyContext) string {
-	if proxyCtx == nil {
-		return ""
-	}
-	return proxyCtx.ProxyURL
-}
-
-func registrationContextPayload(item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, proxyCtx *registrationProxyContext) map[string]any {
-	payload := map[string]any{
+func registrationContextPayload(item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential) map[string]any {
+	return map[string]any{
 		"discovery_id":     item.ID,
 		"registration_id":  credential.ID,
 		"provider_type":    string(item.ProviderType),
 		"source_site_id":   item.SourceSiteID,
 		"registration_src": "site_discovery",
 	}
-	if proxyCtx != nil && proxyCtx.Assignment != nil {
-		payload["proxy_assignment_id"] = proxyCtx.Assignment.ID
-		payload["proxy_policy_id"] = proxyCtx.Assignment.PolicyID
-		payload["proxy_slot_id"] = proxyCtx.Assignment.SlotID
-		payload["proxy_node_id"] = proxyCtx.Assignment.NodeID
-		payload["proxy_mixed_port"] = proxyCtx.Assignment.MixedPort
-		payload["proxy_required"] = true
-	}
-	return payload
 }
 
 func (s *Service) failDirectRegistration(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, err error) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.ExtensionTask, error) {
@@ -1325,10 +909,9 @@ func (s *Service) failDirectRegistration(ctx context.Context, item *adminplusdom
 	return updated, nil, err
 }
 
-func (s *Service) queueBrowserRegistrationFallback(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, reason string, message string, proxyCtx *registrationProxyContext) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.ExtensionTask, error) {
+func (s *Service) queueBrowserRegistrationFallback(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, reason string, message string) (*adminplusdomain.SupplierRegistrationCredential, *adminplusdomain.ExtensionTask, error) {
 	if s.extension == nil {
 		err := infraerrors.New(http.StatusConflict, "BROWSER_FALLBACK_UNAVAILABLE", "browser registration fallback is not configured")
-		s.releaseRegistrationProxy(context.Background(), proxyCtx, true, firstNonEmpty(reason, infraerrors.Reason(err)), firstNonEmpty(message, err.Error()))
 		updated, updateErr := s.repo.CompleteRegistration(ctx, credential.ID, credential.SupplierID, adminplusdomain.SupplierRegistrationStatusFailed, firstNonEmpty(reason, infraerrors.Reason(err)), firstNonEmpty(message, err.Error()), s.now().UTC())
 		if updateErr != nil {
 			return nil, nil, updateErr
@@ -1337,14 +920,12 @@ func (s *Service) queueBrowserRegistrationFallback(ctx context.Context, item *ad
 		return updated, nil, err
 	}
 	now := s.now().UTC()
-	task, err := s.createRegistrationAttempt(ctx, item, credential, now, proxyCtx)
+	task, err := s.createRegistrationAttempt(ctx, item, credential, now)
 	if err != nil {
-		s.releaseRegistrationProxy(context.Background(), proxyCtx, true, infraerrors.Reason(err), safeRegistrationErrorMessage(err))
 		return nil, nil, err
 	}
 	if task == nil {
 		err := internalError("site discovery registration task was not created")
-		s.releaseRegistrationProxy(context.Background(), proxyCtx, true, infraerrors.Reason(err), safeRegistrationErrorMessage(err))
 		return nil, nil, err
 	}
 	updated, err := s.repo.UpdateRegistrationTask(ctx, credential.ID, task.ID, adminplusdomain.SupplierRegistrationStatusQueued, now)
@@ -1444,11 +1025,11 @@ func safeRegistrationErrorMessage(err error) string {
 	return trimLimit(message, 500)
 }
 
-func (s *Service) createRegistrationAttempt(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, now time.Time, proxyCtx *registrationProxyContext) (*adminplusdomain.ExtensionTask, error) {
+func (s *Service) createRegistrationAttempt(ctx context.Context, item *adminplusdomain.SiteDiscoveryItem, credential *adminplusdomain.SupplierRegistrationCredential, now time.Time) (*adminplusdomain.ExtensionTask, error) {
 	if item == nil || credential == nil {
 		return nil, internalError("registration attempt requires discovery item and credential")
 	}
-	payload := registrationContextPayload(item, credential, proxyCtx)
+	payload := registrationContextPayload(item, credential)
 	payload["register_url"] = item.RegisterURL
 	payload["dashboard_url"] = item.DashboardURL
 	payload["api_base_url"] = item.APIBaseURL

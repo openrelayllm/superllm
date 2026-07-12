@@ -5,7 +5,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/app/bizlogs"
 	extensionapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/extension"
-	mailverificationapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/mailverification"
 	suppliersapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/suppliers"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -16,25 +15,20 @@ func UseCredentialCipher(encryptor service.SecretEncryptor) CredentialCipher {
 	return encryptor
 }
 
-func UseRegistrationMailReader(service *mailverificationapp.Service) RegistrationMailReader {
-	return service
-}
-
 func UseRegistrationLogReader(opsService *service.OpsService) RegistrationLogReader {
 	return opsService
 }
 
-func ProvideService(repo Repository, suppliers *suppliersapp.Service, extension *extensionapp.Service, mail RegistrationMailReader, directRegistration ports.DirectRegistrationAdapter, cipher CredentialCipher, client *http.Client, recorder *bizlogs.Recorder, logs RegistrationLogReader, proxyManager ProxyManager) *Service {
-	return NewService(repo, suppliers, extension, mail, cipher, client).WithDirectRegistration(directRegistration).WithDiagnostics(recorder).WithRegistrationLogs(logs).WithProxyManager(proxyManager)
+func ProvideService(repo Repository, suppliers *suppliersapp.Service, extension *extensionapp.Service, directRegistration ports.DirectRegistrationAdapter, cipher CredentialCipher, client *http.Client, recorder *bizlogs.Recorder, logs RegistrationLogReader) *Service {
+	return NewService(repo, suppliers, extension, cipher, client).WithDirectRegistration(directRegistration).WithDiagnostics(recorder).WithRegistrationLogs(logs)
 }
 
-func ProvideRegistrationProcessor(repo Repository, suppliers *suppliersapp.Service, cipher CredentialCipher, recorder *bizlogs.Recorder, proxyManager ProxyManager) *RegistrationProcessor {
-	return NewRegistrationProcessor(repo, suppliers, cipher).WithDiagnostics(recorder).WithProxyManager(proxyManager)
+func ProvideRegistrationProcessor(repo Repository, suppliers *suppliersapp.Service, cipher CredentialCipher, recorder *bizlogs.Recorder) *RegistrationProcessor {
+	return NewRegistrationProcessor(repo, suppliers, cipher).WithDiagnostics(recorder)
 }
 
 var ProviderSet = wire.NewSet(
 	UseCredentialCipher,
-	UseRegistrationMailReader,
 	UseRegistrationLogReader,
 	NewSQLRepository,
 	wire.Bind(new(Repository), new(*SQLRepository)),

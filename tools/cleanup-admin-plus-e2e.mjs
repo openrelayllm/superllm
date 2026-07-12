@@ -3,7 +3,7 @@
 import { execFileSync } from 'node:child_process'
 import process from 'node:process'
 
-const dbURL = process.env.ADMIN_PLUS_E2E_DB_URL || 'postgresql://root:root@127.0.0.1:5432/sub2api_admin_plus?sslmode=disable'
+const dbURL = process.env.ADMIN_PLUS_E2E_DB_URL || 'postgresql://root:root@127.0.0.1:5432/superllm?sslmode=disable'
 const redisURL = process.env.ADMIN_PLUS_E2E_REDIS_URL || 'redis://127.0.0.1:6379/0'
 const execute = process.env.ADMIN_PLUS_CLEAN_E2E_EXECUTE === '1'
 const allowNonLocal = process.env.ADMIN_PLUS_E2E_ALLOW_NON_LOCAL === '1'

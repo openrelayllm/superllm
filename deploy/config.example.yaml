@@ -1,10 +1,10 @@
-# Sub2API Admin Plus Configuration File
-# Sub2API Admin Plus 配置文件
+# SuperLLM Configuration File
+# SuperLLM 配置文件
 #
-# Copy this file to /etc/sub2api-admin-plus/config.yaml and modify as needed
-# 复制此文件到 /etc/sub2api-admin-plus/config.yaml 并根据需要修改
+# Copy this file to /etc/superllm/config.yaml and modify as needed
+# 复制此文件到 /etc/superllm/config.yaml 并根据需要修改
 #
-# Documentation / 文档: https://github.com/openrelayllm/sub2api-admin-plus
+# Documentation / 文档: https://github.com/openrelayllm/superllm
 
 # =============================================================================
 # Server Configuration
@@ -490,11 +490,11 @@ log:
     # 启用文件输出（默认路径自动推导）
     to_file: true
     # Empty means:
-    # - DATA_DIR set: {{DATA_DIR}}/logs/sub2api-admin-plus.log
-    # - otherwise: /app/data/logs/sub2api-admin-plus.log
+    # - DATA_DIR set: {{DATA_DIR}}/logs/superllm.log
+    # - otherwise: /app/data/logs/superllm.log
     # 留空时：
-    # - 设置 DATA_DIR：{{DATA_DIR}}/logs/sub2api-admin-plus.log
-    # - 否则：/app/data/logs/sub2api-admin-plus.log
+    # - 设置 DATA_DIR：{{DATA_DIR}}/logs/superllm.log
+    # - 否则：/app/data/logs/superllm.log
     file_path: ""
   rotation:
     # Max file size before rotation (MB)
@@ -784,7 +784,7 @@ database:
   password: "your_secure_password_here"
   # Database name
   # 数据库名称
-  dbname: "sub2api_admin_plus"
+  dbname: "superllm"
   # SSL mode: disable, prefer, require, verify-ca, verify-full
   # SSL 模式：disable（禁用）, prefer（优先加密，默认）, require（要求）, verify-ca（验证CA）, verify-full（完全验证）
   # 默认值为 "prefer"，数据库支持 SSL 时自动使用加密连接，不支持时回退明文
@@ -833,15 +833,15 @@ redis:
 # Sub2API Integration
 # Sub2API 集成配置
 # =============================================================================
-# Admin Plus must use its own primary database above. These optional settings
-# connect to an existing Sub2API instance for readonly account/usage/runtime
-# reads and for provisioning supplier keys through the Sub2API Admin API.
-# Admin Plus 必须使用上方独立主库。以下可选配置用于连接已有 Sub2API，
-# 以只读方式读取账号/用量/运行态，并通过 Sub2API Admin API 开通供应商 Key。
+# SuperLLM must use its own primary database above. The readonly database is
+# required because authentication and Sub2API data reads use the existing
+# Sub2API database. The Redis and Admin API settings remain optional.
+# SuperLLM 必须使用上方独立主库。只读数据库为必填，用于读取现有 Sub2API
+# 用户身份、账号和用量；Redis 与 Admin API 配置仍为可选。
 sub2api:
   # Use a dedicated readonly PostgreSQL user. Do not reuse the Sub2API read/write account.
   # 使用专用只读 PostgreSQL 用户，不要复用 Sub2API 读写账号。
-  readonly_database_url: ""
+  readonly_database_url: "postgresql://readonly:password@127.0.0.1:5432/sub2api?sslmode=disable"
   # Optional Redis URL for Sub2API runtime state. Example: redis://127.0.0.1:6379/1
   # Sub2API 运行态 Redis URL，可选。例如：redis://127.0.0.1:6379/1
   readonly_redis_url: ""
@@ -974,11 +974,6 @@ oidc_connect:
 # 默认设置
 # =============================================================================
 default:
-  # Initial admin account (created on first run)
-  # 初始管理员账户（首次运行时创建）
-  admin_email: "admin@example.com"
-  admin_password: "admin123"
-
   # Default settings for new users
   # 新用户默认设置
   # Max concurrent requests per user

@@ -1,16 +1,13 @@
 #!/bin/bash
-#
-# Sub2API Admin Plus command wrapper.
-# Installed by deploy/install.sh to /usr/local/bin/sub2apiplus.
-#
+# Installed by deploy/install.sh as /usr/local/bin/superllm.
 
 set -euo pipefail
 
-INSTALL_DIR="${SUB2APIPLUS_INSTALL_DIR:-/opt/sub2api-admin-plus}"
-SERVICE_NAME="${SUB2APIPLUS_SERVICE_NAME:-sub2api-admin-plus}"
-INSTALLER="${SUB2APIPLUS_INSTALLER:-${INSTALL_DIR}/install.sh}"
-REMOTE_INSTALLER="${SUB2APIPLUS_REMOTE_INSTALLER:-https://raw.githubusercontent.com/openrelayllm/sub2api-admin-plus/main/deploy/install.sh}"
-USE_LOCAL_INSTALLER="${SUB2APIPLUS_USE_LOCAL_INSTALLER:-0}"
+INSTALL_DIR="${SUPERLLM_INSTALL_DIR:-/opt/superllm}"
+SERVICE_NAME="${SUPERLLM_SERVICE_NAME:-superllm}"
+INSTALLER="${SUPERLLM_INSTALLER:-${INSTALL_DIR}/install.sh}"
+REMOTE_INSTALLER="${SUPERLLM_REMOTE_INSTALLER:-https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh}"
+USE_LOCAL_INSTALLER="${SUPERLLM_USE_LOCAL_INSTALLER:-0}"
 
 run_as_root() {
     if [ "$(id -u)" -eq 0 ]; then
@@ -45,8 +42,8 @@ run_installer() {
 }
 
 usage() {
-    cat <<EOF
-Usage: sub2apiplus <command> [options]
+    cat <<'EOF'
+Usage: superllm <command> [options]
 
 Install and update:
   install [-v VERSION]      Install the latest or a pinned GitHub Release
@@ -66,10 +63,10 @@ Service operations:
   stop                      Stop the service
 
 Examples:
-  sub2apiplus upgrade
-  sub2apiplus upgrade -v vX.Y.Z
-  sub2apiplus rollback vX.Y.Z
-  sub2apiplus logs -n 200
+  superllm upgrade
+  superllm upgrade -v vX.Y.Z
+  superllm rollback vX.Y.Z
+  superllm logs -n 200
 EOF
 }
 

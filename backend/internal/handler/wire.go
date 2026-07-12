@@ -25,7 +25,7 @@ func ProvideAdminHandlers(
 	}
 }
 
-// ProvideAdminPlusHandlers creates the Admin Plus business handler collection.
+// ProvideAdminPlusHandlers creates the SuperLLM business handler collection.
 func ProvideAdminPlusHandlers(
 	supplierHandler *adminplushandler.SupplierHandler,
 	supplierGroupHandler *adminplushandler.SupplierGroupHandler,
@@ -34,7 +34,6 @@ func ProvideAdminPlusHandlers(
 	rateHandler *adminplushandler.RateHandler,
 	balanceHandler *adminplushandler.BalanceHandler,
 	healthHandler *adminplushandler.HealthHandler,
-	kanbanHandler *adminplushandler.KanbanHandler,
 	notificationHandler *adminplushandler.NotificationHandler,
 	usageCostHandler *adminplushandler.UsageCostHandler,
 	costHandler *adminplushandler.CostHandler,
@@ -42,45 +41,36 @@ func ProvideAdminPlusHandlers(
 	accountRateSyncHandler *adminplushandler.AccountRateSyncHandler,
 	extensionHandler *adminplushandler.ExtensionHandler,
 	siteDiscoveryHandler *adminplushandler.SiteDiscoveryHandler,
-	siteCatalogHandler *adminplushandler.SiteCatalogHandler,
-	publicProxyAIHandler *adminplushandler.PublicProxyAIHandler,
 	purityHandler *adminplushandler.PurityHandler,
-	mailVerificationHandler *adminplushandler.MailVerificationHandler,
 	sessionHandler *adminplushandler.SessionHandler,
 	schedulerHandler *adminplushandler.SchedulerHandler,
 	actionHandler *adminplushandler.ActionHandler,
 	sub2apiHandler *adminplushandler.Sub2APIHandler,
-	proxyHandler *adminplushandler.ProxyHandler,
 	backupHandler *adminplushandler.BackupHandler,
 	importExportHandler *adminplushandler.ImportExportHandler,
 ) *AdminPlusHandlers {
 	return &AdminPlusHandlers{
-		Supplier:         supplierHandler,
-		SupplierGroup:    supplierGroupHandler,
-		SupplierKey:      supplierKeyHandler,
-		ProvisionJob:     provisionJobHandler,
-		Rate:             rateHandler,
-		Balance:          balanceHandler,
-		Health:           healthHandler,
-		Kanban:           kanbanHandler,
-		Notification:     notificationHandler,
-		UsageCost:        usageCostHandler,
-		Cost:             costHandler,
-		ChannelCheck:     channelCheckHandler,
-		AccountRateSync:  accountRateSyncHandler,
-		Extension:        extensionHandler,
-		SiteDiscovery:    siteDiscoveryHandler,
-		SiteCatalog:      siteCatalogHandler,
-		PublicProxyAI:    publicProxyAIHandler,
-		Purity:           purityHandler,
-		MailVerification: mailVerificationHandler,
-		Session:          sessionHandler,
-		Scheduler:        schedulerHandler,
-		Action:           actionHandler,
-		Sub2API:          sub2apiHandler,
-		Proxy:            proxyHandler,
-		Backup:           backupHandler,
-		ImportExport:     importExportHandler,
+		Supplier:        supplierHandler,
+		SupplierGroup:   supplierGroupHandler,
+		SupplierKey:     supplierKeyHandler,
+		ProvisionJob:    provisionJobHandler,
+		Rate:            rateHandler,
+		Balance:         balanceHandler,
+		Health:          healthHandler,
+		Notification:    notificationHandler,
+		UsageCost:       usageCostHandler,
+		Cost:            costHandler,
+		ChannelCheck:    channelCheckHandler,
+		AccountRateSync: accountRateSyncHandler,
+		Extension:       extensionHandler,
+		SiteDiscovery:   siteDiscoveryHandler,
+		Purity:          purityHandler,
+		Session:         sessionHandler,
+		Scheduler:       schedulerHandler,
+		Action:          actionHandler,
+		Sub2API:         sub2apiHandler,
+		Backup:          backupHandler,
+		ImportExport:    importExportHandler,
 	}
 }
 
@@ -96,12 +86,12 @@ func ProvideSettingHandler(settingService *service.SettingService, buildInfo Bui
 	return h
 }
 
-// ProvideAdminSettingHandler creates the Admin Plus settings handler.
+// ProvideAdminSettingHandler creates the SuperLLM settings handler.
 func ProvideAdminSettingHandler(settingService *service.SettingService, opsService *service.OpsService, turnstileService *service.TurnstileService) *admin.SettingHandler {
 	return admin.NewSettingHandler(settingService, opsService, turnstileService)
 }
 
-// ProvideAdminGroupHandler creates the Admin Plus read-only group handler.
+// ProvideAdminGroupHandler creates the SuperLLM read-only group handler.
 func ProvideAdminGroupHandler(groupService *service.GroupService) *admin.GroupHandler {
 	return admin.NewGroupHandler(groupService)
 }
@@ -140,7 +130,6 @@ var ProviderSet = wire.NewSet(
 	adminplushandler.NewRateHandler,
 	adminplushandler.NewBalanceHandler,
 	adminplushandler.NewHealthHandler,
-	adminplushandler.NewKanbanHandler,
 	adminplushandler.NewNotificationHandler,
 	adminplushandler.NewUsageCostHandler,
 	adminplushandler.NewCostHandlerWithProvisionJobsSchedulerAndActions,
@@ -148,15 +137,11 @@ var ProviderSet = wire.NewSet(
 	adminplushandler.NewAccountRateSyncHandler,
 	adminplushandler.NewExtensionHandler,
 	adminplushandler.NewSiteDiscoveryHandler,
-	adminplushandler.NewSiteCatalogHandler,
-	adminplushandler.NewPublicProxyAIHandler,
 	adminplushandler.NewPurityHandler,
-	adminplushandler.NewMailVerificationHandler,
 	adminplushandler.NewSessionHandler,
 	adminplushandler.NewSchedulerHandler,
 	adminplushandler.NewActionHandler,
 	adminplushandler.NewSub2APIHandlerWithAccountTestAndActions,
-	adminplushandler.NewProxyHandler,
 	adminplushandler.NewBackupHandler,
 	adminplushandler.NewImportExportHandler,
 

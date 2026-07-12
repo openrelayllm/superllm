@@ -26,7 +26,6 @@ type generateActionsRequest struct {
 	LocalAccountSchedule []localAccountScheduleDTO               `json:"local_account_schedule"`
 	BalanceEvents        []*adminplusdomain.BalanceEvent         `json:"balance_events"`
 	HealthEvents         []*adminplusdomain.HealthEvent          `json:"health_events"`
-	KanbanEvents         []*adminplusdomain.KanbanEvent          `json:"kanban_events"`
 	CostSnapshots        []*adminplusdomain.SupplierCostSnapshot `json:"cost_snapshots"`
 	MinProfitMargin      float64                                 `json:"min_profit_margin"`
 }
@@ -191,7 +190,6 @@ func (h *ActionHandler) Generate(c *gin.Context) {
 		LocalAccountSchedule: localAccountSchedule,
 		BalanceEvents:        req.BalanceEvents,
 		HealthEvents:         req.HealthEvents,
-		KanbanEvents:         req.KanbanEvents,
 		CostSnapshots:        req.CostSnapshots,
 		MinProfitMargin:      req.MinProfitMargin,
 	})

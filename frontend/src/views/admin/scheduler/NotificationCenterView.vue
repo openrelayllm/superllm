@@ -235,7 +235,7 @@
                     v-model.trim="testText"
                     type="text"
                     class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-dark-600 dark:bg-dark-800 dark:text-white"
-                    placeholder="Sub2API Admin Plus 飞书通知测试"
+                    placeholder="SuperLLM 飞书通知测试"
                   />
                   <button type="button" class="btn btn-secondary shrink-0" :disabled="testing || saving || !settingsForm.feishu.enabled" @click="sendTest">
                     <Icon name="play" size="sm" />

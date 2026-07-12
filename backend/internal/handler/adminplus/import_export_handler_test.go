@@ -22,7 +22,7 @@ func TestImportExportHandlerScope(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"product":"sub2api-admin-plus"`)
+	require.Contains(t, rec.Body.String(), `"product":"superllm"`)
 	require.Contains(t, rec.Body.String(), `"included_tables"`)
 	require.Contains(t, rec.Body.String(), `"excluded_tables"`)
 }
