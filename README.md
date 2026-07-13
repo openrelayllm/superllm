@@ -112,8 +112,10 @@ postgresql://superllm_readonly:password@127.0.0.1:5432/sub2api?sslmode=require
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh \
-  | sudo bash -s -- install -v v0.42.0
+  | sudo bash -s -- install -v v0.42.1 --host 127.0.0.1 --port 8081
 ```
+
+同机运行 Sub2API 时，建议显式监听 `127.0.0.1:8081` 并由 Nginx/Caddy 反向代理。未指定端口且默认 `8080` 已被占用时，安装器会自动选择下一个可用端口；显式指定的端口被占用时会直接报错，不会覆盖现有服务。
 
 查看可安装版本：
 
@@ -166,9 +168,10 @@ curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/i
 安装器可识别以下旧布局：
 
 - `/opt/sub2api-admin-plus/sub2api-admin-plus` + `sub2api-admin-plus.service`
-- `/opt/sub2api/sub2api` + `sub2api.service`
 
-升级时会把旧配置和安装锁迁移到 `/etc/superllm`，安装新的 `superllm.service`，并停用旧服务。旧目录不会自动删除，可用于人工回退或确认数据完整性。迁移完成并验证无误后，再手动清理旧目录和旧 systemd unit。
+升级时会把旧 Admin Plus 配置和安装锁迁移到 `/etc/superllm`，安装新的 `superllm.service`，并停用 `sub2api-admin-plus.service`。旧目录不会自动删除，可用于人工回退或确认数据完整性。迁移完成并验证无误后，再手动清理旧目录和旧 systemd unit。
+
+现有 `/opt/sub2api/sub2api` 与 `sub2api.service` 是 SuperLLM 的身份和数据来源，不属于旧版 SuperLLM。安装器会保留该服务，支持 Sub2API 与 SuperLLM 在同一台服务器并行运行。
 
 #### 回滚
 
