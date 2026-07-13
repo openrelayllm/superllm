@@ -308,6 +308,213 @@ func TestSQLRepositoryListLocalAccountOpsReadsBindingsAndHealth(t *testing.T) {
 	require.Equal(t, "fresh", items[0].PurityFreshness)
 }
 
+func TestSQLRepositoryListLocalAccountOpsReadsSplitDatabases(t *testing.T) {
+	readDB, readMock := newSub2APISQLMock(t)
+	primaryDB, primaryMock := newSub2APISQLMock(t)
+	repo := NewSQLRepository(ReadDB{DB: readDB, PrimaryDB: primaryDB, Configured: true})
+	now := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC)
+	checkAt := now.Add(-30 * time.Minute)
+	schedulable := true
+
+	readMock.ExpectQuery(`WITH local_groups AS \([\s\S]*FROM accounts a[\s\S]*LEFT JOIN proxies p ON p\.id = a\.proxy_id[\s\S]*WHERE a\.deleted_at IS NULL[\s\S]*ORDER BY a\.id DESC`).
+		WillReturnRows(newLocalAccountOpsBaseRows().AddRow(
+			int64(42),
+			"Lime gpt-4o",
+			"openai",
+			"api_key",
+			"active",
+			"",
+			true,
+			6,
+			10,
+			0.3,
+			nil,
+			nil,
+			nil,
+			nil,
+			"",
+			now,
+			pq.Int64Array{1001},
+			pq.StringArray{"Lime"},
+			int64(9),
+			"Lime proxy",
+			"active",
+			nil,
+		))
+	primaryMock.ExpectQuery(`WITH supplier_key_counts AS \([\s\S]*FROM admin_plus_supplier_accounts asa[\s\S]*WHERE asa\.local_sub2api_account_id = ANY\(\$1\)[\s\S]*ORDER BY asa\.local_sub2api_account_id DESC, asa\.id DESC`).
+		WithArgs(pq.Array([]int64{42})).
+		WillReturnRows(newLocalAccountOpsProjectionRows().AddRow(
+			int64(42),
+			int64(88),
+			int64(7),
+			"Lime Supplier",
+			"new_api",
+			"active",
+			"normal",
+			"active",
+			"normal",
+			int64(100),
+			int64(2000),
+			"USD",
+			true,
+			int64(77),
+			"grp-lime",
+			"Lime",
+			"openai",
+			"OpenAI",
+			"GPT-4o",
+			"active",
+			0.2,
+			int64(66),
+			"key-Lime",
+			"abcd",
+			"bound",
+			"available",
+			"available",
+			"available",
+			true,
+			200,
+			"",
+			"",
+			checkAt,
+			"usable",
+			"synced",
+			"Lime gpt-4o",
+			"openai",
+			"api_key",
+			int64(42),
+			now,
+			"pass",
+			"official_openai",
+			"purity-report-1",
+			"manual-purity-account-42",
+			int64(501),
+			"gpt-4o",
+			91,
+			checkAt,
+			"fresh",
+		))
+
+	items, err := repo.ListLocalAccountOps(context.Background(), LocalAccountOpsFilter{
+		Query:              "Lime",
+		SupplierID:         7,
+		SupplierGroupID:    77,
+		LocalGroupID:       1001,
+		MaxRateMultiplier:  0.2,
+		BalanceStatus:      "usable",
+		ChannelCheckStatus: "available",
+		Schedulable:        &schedulable,
+		Limit:              50,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, int64(42), items[0].LocalSub2APIAccountID)
+	require.Equal(t, []int64{1001}, items[0].LocalAccountGroupIDs)
+	require.Equal(t, int64(9), items[0].LocalAccountProxyID)
+	require.Equal(t, int64(7), items[0].SupplierID)
+	require.Equal(t, int64(77), items[0].SupplierGroupID)
+	require.Equal(t, int64(66), items[0].SupplierKeyID)
+	require.Equal(t, 0.2, items[0].EffectiveRateMultiplier)
+	require.Equal(t, "available", items[0].ChannelCheckStatus)
+	require.Equal(t, "synced", items[0].DriftStatus)
+	require.Equal(t, "pass", items[0].PurityStatus)
+}
+
+func TestSQLRepositoryListLocalAccountOpsReturnsUnboundSplitDatabaseAccount(t *testing.T) {
+	readDB, readMock := newSub2APISQLMock(t)
+	primaryDB, primaryMock := newSub2APISQLMock(t)
+	repo := NewSQLRepository(ReadDB{DB: readDB, PrimaryDB: primaryDB, Configured: true})
+	now := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC)
+
+	readMock.ExpectQuery(`WITH local_groups AS \([\s\S]*FROM accounts a[\s\S]*LEFT JOIN proxies p ON p\.id = a\.proxy_id[\s\S]*WHERE a\.deleted_at IS NULL[\s\S]*ORDER BY a\.id DESC`).
+		WillReturnRows(newLocalAccountOpsBaseRows().AddRow(
+			int64(42),
+			"Unbound OpenAI",
+			"openai",
+			"api_key",
+			"active",
+			"",
+			true,
+			2,
+			5,
+			0.3,
+			nil,
+			nil,
+			nil,
+			nil,
+			"",
+			now,
+			pq.Int64Array{1001},
+			pq.StringArray{"OpenAI"},
+			int64(0),
+			"",
+			"unbound",
+			nil,
+		))
+	primaryMock.ExpectQuery(`WITH supplier_key_counts AS \([\s\S]*FROM admin_plus_supplier_accounts asa[\s\S]*WHERE asa\.local_sub2api_account_id = ANY\(\$1\)`).
+		WithArgs(pq.Array([]int64{42})).
+		WillReturnRows(newLocalAccountOpsProjectionRows())
+
+	items, err := repo.ListLocalAccountOps(context.Background(), LocalAccountOpsFilter{Limit: 50})
+
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, int64(42), items[0].LocalSub2APIAccountID)
+	require.Equal(t, "unbound", items[0].BalanceStatus)
+	require.Equal(t, "unbound", items[0].DriftStatus)
+	require.Equal(t, "untested", items[0].ChannelCheckStatus)
+	require.Equal(t, "unknown", items[0].PurityStatus)
+	require.Equal(t, 0.3, items[0].EffectiveRateMultiplier)
+}
+
+func TestMatchesLocalAccountOpsFilter(t *testing.T) {
+	schedulable := true
+	unschedulable := false
+	item := &adminplusdomain.LocalAccountOpsRow{
+		LocalSub2APIAccountID:   42,
+		LocalAccountName:        "Lime gpt-4o",
+		LocalAccountPlatform:    "openai",
+		LocalAccountType:        "api_key",
+		LocalAccountStatus:      "active",
+		LocalAccountSchedulable: true,
+		LocalAccountGroupIDs:    []int64{1001},
+		LocalAccountGroupNames:  []string{"Premium"},
+		SupplierID:              7,
+		SupplierName:            "Lime Supplier",
+		SupplierGroupID:         77,
+		SupplierGroupName:       "GPT-4o",
+		SupplierKeyName:         "key-Lime",
+		EffectiveRateMultiplier: 0.2,
+		BalanceStatus:           "usable",
+		ChannelCheckStatus:      "available",
+	}
+
+	tests := []struct {
+		name   string
+		filter LocalAccountOpsFilter
+		want   bool
+	}{
+		{name: "all filters match", filter: LocalAccountOpsFilter{Query: "lime supplier", SupplierID: 7, SupplierGroupID: 77, LocalGroupID: 1001, MaxRateMultiplier: 0.2, BalanceStatus: "usable", ChannelCheckStatus: "available", Schedulable: &schedulable}, want: true},
+		{name: "account id query matches", filter: LocalAccountOpsFilter{Query: "42"}, want: true},
+		{name: "local group query matches", filter: LocalAccountOpsFilter{Query: "premium"}, want: true},
+		{name: "supplier differs", filter: LocalAccountOpsFilter{SupplierID: 8}, want: false},
+		{name: "supplier group differs", filter: LocalAccountOpsFilter{SupplierGroupID: 78}, want: false},
+		{name: "local group differs", filter: LocalAccountOpsFilter{LocalGroupID: 1002}, want: false},
+		{name: "rate exceeds maximum", filter: LocalAccountOpsFilter{MaxRateMultiplier: 0.1}, want: false},
+		{name: "balance differs", filter: LocalAccountOpsFilter{BalanceStatus: "insufficient"}, want: false},
+		{name: "channel differs", filter: LocalAccountOpsFilter{ChannelCheckStatus: "request_error"}, want: false},
+		{name: "schedulable differs", filter: LocalAccountOpsFilter{Schedulable: &unschedulable}, want: false},
+		{name: "query differs", filter: LocalAccountOpsFilter{Query: "claude"}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, matchesLocalAccountOpsFilter(item, tt.filter))
+		})
+	}
+}
+
 func TestSQLRepositoryPreviewLocalAccountOpsActionBlocksEmptyPool(t *testing.T) {
 	db, mock := newSub2APISQLMock(t)
 	repo := NewSQLRepository(ReadDB{DB: db})
@@ -1221,6 +1428,87 @@ func newLocalAccountOpsRows() *sqlmock.Rows {
 		"last_channel_check_at",
 		"balance_status",
 		"drift_status",
+		"last_local_sync_at",
+		"purity_status",
+		"purity_verdict",
+		"purity_report_id",
+		"purity_scheduler_run_id",
+		"purity_scheduler_step_id",
+		"purity_model",
+		"purity_score",
+		"purity_checked_at",
+		"purity_freshness_status",
+	})
+}
+
+func newLocalAccountOpsBaseRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{
+		"local_sub2api_account_id",
+		"local_account_name",
+		"local_account_platform",
+		"local_account_type",
+		"local_account_status",
+		"local_account_error_message",
+		"local_account_schedulable",
+		"local_account_concurrency",
+		"local_account_priority",
+		"local_account_rate_multiplier",
+		"local_account_rate_limited_at",
+		"local_account_rate_limit_reset_at",
+		"local_account_overload_until",
+		"local_account_temp_unschedulable_until",
+		"local_account_temp_unschedulable_reason",
+		"local_account_updated_at",
+		"local_account_group_ids",
+		"local_account_group_names",
+		"local_account_proxy_id",
+		"local_account_proxy_name",
+		"local_account_proxy_status",
+		"local_account_proxy_expires_at",
+	})
+}
+
+func newLocalAccountOpsProjectionRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{
+		"local_sub2api_account_id",
+		"supplier_account_id",
+		"supplier_id",
+		"supplier_name",
+		"supplier_type",
+		"supplier_runtime_status",
+		"supplier_health_status",
+		"supplier_account_runtime_status",
+		"supplier_account_health_status",
+		"balance_threshold_cents",
+		"balance_cents",
+		"balance_currency",
+		"has_usable_balance",
+		"supplier_group_id",
+		"supplier_external_group_id",
+		"supplier_group_name",
+		"supplier_group_provider",
+		"supplier_group_model_family",
+		"supplier_group_model_spec",
+		"supplier_group_status",
+		"effective_rate_multiplier",
+		"supplier_key_id",
+		"supplier_key_name",
+		"supplier_key_last4",
+		"supplier_key_status",
+		"key_capacity_status",
+		"channel_check_status",
+		"channel_remote_status",
+		"channel_recommended",
+		"channel_status_code",
+		"channel_error_class",
+		"channel_error_message",
+		"last_channel_check_at",
+		"balance_status",
+		"local_state_drift_status",
+		"stored_local_account_name",
+		"stored_local_account_platform",
+		"stored_local_account_type",
+		"supplier_key_local_account_id",
 		"last_local_sync_at",
 		"purity_status",
 		"purity_verdict",

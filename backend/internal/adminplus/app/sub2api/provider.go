@@ -46,22 +46,23 @@ func ProvideRoutingPort(local *SQLRepository, cfg *config.Config, client *http.C
 
 type ReadDB struct {
 	DB         *sql.DB
+	PrimaryDB  *sql.DB
 	Configured bool
 }
 
 func ProvideReadSQLDB(defaultDB *sql.DB, cfg *config.Config) ReadDB {
 	dsn := sub2APIReadonlyDatabaseURL(cfg)
 	if dsn == "" {
-		return ReadDB{DB: defaultDB}
+		return ReadDB{DB: defaultDB, PrimaryDB: defaultDB}
 	}
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
-		return ReadDB{DB: defaultDB}
+		return ReadDB{DB: defaultDB, PrimaryDB: defaultDB}
 	}
 	db.SetMaxOpenConns(16)
 	db.SetMaxIdleConns(4)
 	db.SetConnMaxLifetime(30 * time.Minute)
-	return ReadDB{DB: db, Configured: true}
+	return ReadDB{DB: db, PrimaryDB: defaultDB, Configured: true}
 }
 
 type Sub2APIRedis struct {
