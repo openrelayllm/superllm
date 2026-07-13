@@ -22,6 +22,21 @@ func TestSub2APIReadonlyDatabaseURLUsesConfig(t *testing.T) {
 	require.Equal(t, "postgres://config", got)
 }
 
+func TestProvideReadSQLDBKeepsPrimaryDatabaseWhenReadonlyDatabaseConfigured(t *testing.T) {
+	primaryDB, _ := newSub2APISQLMock(t)
+
+	got := ProvideReadSQLDB(primaryDB, &config.Config{
+		Sub2API: config.Sub2APIIntegrationConfig{
+			ReadonlyDatabaseURL: "postgres://localhost/sub2api",
+		},
+	})
+	t.Cleanup(func() { _ = got.DB.Close() })
+
+	require.True(t, got.Configured)
+	require.NotSame(t, primaryDB, got.DB)
+	require.Same(t, primaryDB, got.PrimaryDB)
+}
+
 func TestSub2APIReadonlyRedisDBUsesConfig(t *testing.T) {
 	t.Setenv("SUB2API_READONLY_REDIS_DB", "3")
 

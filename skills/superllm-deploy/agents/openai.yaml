@@ -1,0 +1,4 @@
+interface:
+  display_name: "SuperLLM Deploy"
+  short_description: "Deploy and verify SuperLLM on Linux servers"
+  default_prompt: "Use $superllm-deploy to deploy and verify SuperLLM on a new Linux server."

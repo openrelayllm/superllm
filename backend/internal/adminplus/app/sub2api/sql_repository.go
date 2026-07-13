@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,7 +20,8 @@ import (
 )
 
 type SQLRepository struct {
-	db *sql.DB
+	db        *sql.DB
+	primaryDB *sql.DB
 }
 
 const routingImpactRecentWindow = 24 * time.Hour
@@ -47,7 +49,11 @@ type localAccountOpsExec interface {
 }
 
 func NewSQLRepository(db ReadDB) *SQLRepository {
-	return &SQLRepository{db: db.DB}
+	primaryDB := db.PrimaryDB
+	if primaryDB == nil {
+		primaryDB = db.DB
+	}
+	return &SQLRepository{db: db.DB, primaryDB: primaryDB}
 }
 
 func (r *SQLRepository) ListLocalUsageLines(ctx context.Context, filter UsageFilter) ([]*adminplusdomain.LocalUsageLine, error) {
@@ -247,6 +253,9 @@ func (r *SQLRepository) ListLocalAccountUsageSummaries(ctx context.Context, filt
 func (r *SQLRepository) ListLocalAccountOps(ctx context.Context, filter LocalAccountOpsFilter) ([]*adminplusdomain.LocalAccountOpsRow, error) {
 	if r == nil || r.db == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "SUB2API_READ_DB_NOT_CONFIGURED", "sub2api read database is not configured")
+	}
+	if r.primaryDB != nil && r.primaryDB != r.db {
+		return r.listLocalAccountOpsSplitDB(ctx, filter)
 	}
 	where, args := buildLocalAccountOpsWhere(filter)
 	limitRef := addSQLArg(&args, filter.Limit)
@@ -485,6 +494,288 @@ func (r *SQLRepository) ListLocalAccountOps(ctx context.Context, filter LocalAcc
 			return nil, err
 		}
 		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+type localAccountOpsProjection struct {
+	row                        adminplusdomain.LocalAccountOpsRow
+	effectiveRateMultiplier    sql.NullFloat64
+	localStateDriftStatus      string
+	storedLocalAccountName     string
+	storedLocalAccountPlatform string
+	storedLocalAccountType     string
+	supplierKeyLocalAccountID  int64
+}
+
+func (r *SQLRepository) listLocalAccountOpsSplitDB(ctx context.Context, filter LocalAccountOpsFilter) ([]*adminplusdomain.LocalAccountOpsRow, error) {
+	localAccounts, err := r.listLocalAccountOpsBaseRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(localAccounts) == 0 {
+		return []*adminplusdomain.LocalAccountOpsRow{}, nil
+	}
+
+	accountIDs := make([]int64, 0, len(localAccounts))
+	for _, account := range localAccounts {
+		accountIDs = append(accountIDs, account.LocalSub2APIAccountID)
+	}
+	projections, err := r.listLocalAccountOpsProjections(ctx, accountIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	capacity := len(localAccounts)
+	if filter.Limit > 0 && filter.Limit < capacity {
+		capacity = filter.Limit
+	}
+	items := make([]*adminplusdomain.LocalAccountOpsRow, 0, capacity)
+	for _, localAccount := range localAccounts {
+		accountProjections := projections[localAccount.LocalSub2APIAccountID]
+		if len(accountProjections) == 0 {
+			if matchesLocalAccountOpsFilter(localAccount, filter) {
+				items = append(items, localAccount)
+			}
+		} else {
+			for _, projection := range accountProjections {
+				item := mergeLocalAccountOpsRow(localAccount, projection)
+				if matchesLocalAccountOpsFilter(item, filter) {
+					items = append(items, item)
+				}
+				if filter.Limit > 0 && len(items) >= filter.Limit {
+					return items, nil
+				}
+			}
+		}
+		if filter.Limit > 0 && len(items) >= filter.Limit {
+			return items, nil
+		}
+	}
+	return items, nil
+}
+
+func (r *SQLRepository) listLocalAccountOpsBaseRows(ctx context.Context) ([]*adminplusdomain.LocalAccountOpsRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		WITH local_groups AS (
+			SELECT
+				ag.account_id,
+				COALESCE(array_agg(g.id ORDER BY ag.priority, g.id) FILTER (WHERE g.id IS NOT NULL), ARRAY[]::BIGINT[]) AS group_ids,
+				COALESCE(array_agg(g.name ORDER BY ag.priority, ag.group_id) FILTER (WHERE g.name IS NOT NULL), ARRAY[]::TEXT[]) AS group_names
+			FROM account_groups ag
+			INNER JOIN groups g ON g.id = ag.group_id AND g.deleted_at IS NULL
+			GROUP BY ag.account_id
+		)
+		SELECT
+			a.id,
+			COALESCE(a.name, ''),
+			COALESCE(a.platform, ''),
+			COALESCE(a.type, ''),
+			COALESCE(a.status, ''),
+			COALESCE(a.error_message, ''),
+			COALESCE(a.schedulable, false),
+			COALESCE(a.concurrency, 0),
+			COALESCE(a.priority, 0),
+			COALESCE(a.rate_multiplier, 1),
+			a.rate_limited_at,
+			a.rate_limit_reset_at,
+			a.overload_until,
+			a.temp_unschedulable_until,
+			COALESCE(a.temp_unschedulable_reason, ''),
+			a.updated_at,
+			COALESCE(lg.group_ids, ARRAY[]::BIGINT[]),
+			COALESCE(lg.group_names, ARRAY[]::TEXT[]),
+			COALESCE(a.proxy_id, 0),
+			COALESCE(p.name, ''),
+			CASE
+				WHEN a.proxy_id IS NULL THEN 'unbound'
+				WHEN p.id IS NULL OR p.deleted_at IS NOT NULL THEN 'deleted'
+				WHEN p.expires_at IS NOT NULL AND p.expires_at <= NOW() THEN 'expired'
+				ELSE COALESCE(p.status, 'unknown')
+			END,
+			p.expires_at
+		FROM accounts a
+		LEFT JOIN local_groups lg ON lg.account_id = a.id
+		LEFT JOIN proxies p ON p.id = a.proxy_id
+		WHERE a.deleted_at IS NULL
+		ORDER BY a.id DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	items := make([]*adminplusdomain.LocalAccountOpsRow, 0)
+	for rows.Next() {
+		item, err := scanLocalAccountOpsBaseRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *SQLRepository) listLocalAccountOpsProjections(ctx context.Context, accountIDs []int64) (map[int64][]localAccountOpsProjection, error) {
+	rows, err := r.primaryDB.QueryContext(ctx, `
+		WITH supplier_key_counts AS (
+			SELECT supplier_id, COUNT(*)::INT AS active_key_count
+			FROM admin_plus_supplier_keys
+			WHERE status IN ('provisioning', 'bound', 'manual_secret_required')
+			GROUP BY supplier_id
+		)
+		SELECT
+			asa.local_sub2api_account_id,
+			asa.id,
+			COALESCE(s.id, 0),
+			COALESCE(s.name, ''),
+			COALESCE(s.type, ''),
+			COALESCE(s.runtime_status, ''),
+			COALESCE(s.health_status, ''),
+			COALESCE(asa.runtime_status, ''),
+			COALESCE(asa.health_status, ''),
+			COALESCE(asa.balance_threshold_cents, 0),
+			COALESCE(asa.balance_cents, 0),
+			COALESCE(asa.balance_currency, ''),
+			COALESCE(asa.has_usable_balance, false),
+			COALESCE(sg.id, 0),
+			COALESCE(sg.external_group_id, ''),
+			COALESCE(sg.name, ''),
+			COALESCE(sg.provider_family, ''),
+			COALESCE(sg.model_family, ''),
+			COALESCE(sg.model_spec, ''),
+			COALESCE(sg.status, ''),
+			sg.effective_rate_multiplier,
+			COALESCE(sk.id, 0),
+			COALESCE(sk.name, ''),
+			COALESCE(sk.key_last4, ''),
+			COALESCE(sk.status, ''),
+			CASE
+				WHEN s.id IS NULL THEN 'unknown'
+				WHEN COALESCE(s.key_limit_policy, 'unknown') = 'unlimited' THEN 'available'
+				WHEN COALESCE(s.key_limit_policy, 'unknown') = 'unsupported' THEN 'unsupported'
+				WHEN COALESCE(s.key_limit_policy, 'unknown') = 'limited'
+					AND COALESCE(s.key_limit_value, 0) > 0
+					AND COALESCE(skc.active_key_count, 0) >= COALESCE(s.key_limit_value, 0) THEN 'exhausted'
+				WHEN COALESCE(s.key_limit_policy, 'unknown') = 'limited'
+					AND COALESCE(s.key_limit_value, 0) > 0
+					AND COALESCE(skc.active_key_count, 0) >= COALESCE(s.key_limit_value, 0) - 1 THEN 'limited'
+				WHEN COALESCE(s.key_limit_policy, 'unknown') = 'limited'
+					AND COALESCE(s.key_limit_value, 0) > 0 THEN 'available'
+				ELSE 'unknown'
+			END,
+			COALESCE(lc.probe_status, 'untested'),
+			COALESCE(lc.remote_status, ''),
+			COALESCE(lc.recommended, false),
+			COALESCE(lc.status_code, 0),
+			COALESCE(lc.error_class, ''),
+			COALESCE(lc.error_message, ''),
+			lc.captured_at,
+			CASE
+				WHEN COALESCE(asa.has_usable_balance, false) THEN 'usable'
+				WHEN COALESCE(asa.balance_cents, 0) <= COALESCE(asa.balance_threshold_cents, 0) THEN 'insufficient'
+				ELSE 'unknown'
+			END,
+			COALESCE(lss.drift_status, 'synced'),
+			COALESCE(asa.local_account_name, ''),
+			COALESCE(asa.local_account_platform, ''),
+			COALESCE(asa.local_account_type, ''),
+			COALESCE(sk.local_sub2api_account_id, 0),
+			GREATEST(
+				COALESCE(asa.updated_at, 'epoch'::TIMESTAMPTZ),
+				COALESCE(sk.updated_at, 'epoch'::TIMESTAMPTZ),
+				COALESCE(sg.updated_at, 'epoch'::TIMESTAMPTZ),
+				COALESCE(lss.last_checked_at, 'epoch'::TIMESTAMPTZ)
+			),
+			CASE
+				WHEN purity.id IS NULL THEN 'unknown'
+				WHEN COALESCE(purity.result_snapshot->>'status', '') = 'error'
+					OR COALESCE(purity.result_snapshot->>'verdict', '') = 'invalid_or_unavailable'
+					OR COALESCE(purity.result_snapshot->>'model_identity_status', '') IN (
+						'family_mismatch', 'cross_vendor_alias', 'protocol_model_vendor_mismatch', 'wrapper_vendor_signal_mismatch'
+					)
+					OR (COALESCE(purity.result_snapshot->>'score', '') ~ '^[0-9]+$' AND (purity.result_snapshot->>'score')::INT < 50) THEN 'fail'
+				WHEN COALESCE(purity.result_snapshot->>'verdict', '') = 'partial_compatible'
+					OR COALESCE(purity.result_snapshot->>'token_audit_status', '') = 'fail'
+					OR COALESCE(purity.result_snapshot->>'model_identity_status', '') IN (
+						'response_model_missing', 'probe_model_fallback', 'version_downgrade', 'tier_downgrade', 'reasoning_tokens_mismatch'
+					)
+					OR (COALESCE(purity.result_snapshot->>'score', '') ~ '^[0-9]+$' AND (purity.result_snapshot->>'score')::INT >= 50 AND (purity.result_snapshot->>'score')::INT < 70) THEN 'warn'
+				WHEN COALESCE(purity.result_snapshot->>'verdict', '') IN (
+					'official_openai', 'openai_compatible', 'official_claude', 'claude_compatible', 'official_gemini', 'gemini_compatible'
+				) THEN 'pass'
+				ELSE 'unknown'
+			END,
+			COALESCE(purity.result_snapshot->>'verdict', ''),
+			COALESCE(purity.result_snapshot->>'report_id', ''),
+			COALESCE(purity.run_id, ''),
+			COALESCE(purity.id, 0),
+			COALESCE(purity.result_snapshot->>'model', ''),
+			CASE WHEN COALESCE(purity.result_snapshot->>'score', '') ~ '^[0-9]+$' THEN (purity.result_snapshot->>'score')::INT ELSE 0 END,
+			COALESCE(purity.finished_at, purity.started_at, purity.created_at),
+			CASE
+				WHEN purity.id IS NULL THEN 'unknown'
+				WHEN COALESCE(purity.finished_at, purity.started_at, purity.created_at) < NOW() - INTERVAL '7 days' THEN 'stale'
+				ELSE 'fresh'
+			END
+		FROM admin_plus_supplier_accounts asa
+		LEFT JOIN admin_plus_suppliers s ON s.id = asa.supplier_id
+		LEFT JOIN supplier_key_counts skc ON skc.supplier_id = s.id
+		LEFT JOIN admin_plus_supplier_keys sk ON sk.id = asa.supplier_key_id AND sk.supplier_id = asa.supplier_id
+		LEFT JOIN admin_plus_supplier_groups sg ON sg.id = sk.supplier_group_id AND sg.supplier_id = asa.supplier_id
+		LEFT JOIN admin_plus_local_account_state_snapshots lss ON lss.local_sub2api_account_id = asa.local_sub2api_account_id
+		LEFT JOIN LATERAL (
+			SELECT c.*
+			FROM admin_plus_supplier_channel_check_snapshots c
+			WHERE c.supplier_id = asa.supplier_id
+				AND (
+					c.supplier_account_id = asa.id
+					OR (c.local_sub2api_account_id = asa.local_sub2api_account_id AND (sg.id IS NULL OR c.supplier_group_id = sg.id))
+					OR (sg.id IS NOT NULL AND c.supplier_group_id = sg.id)
+				)
+			ORDER BY
+				CASE
+					WHEN c.supplier_account_id = asa.id THEN 0
+					WHEN sg.id IS NOT NULL AND c.local_sub2api_account_id = asa.local_sub2api_account_id AND c.supplier_group_id = sg.id THEN 1
+					WHEN c.local_sub2api_account_id = asa.local_sub2api_account_id THEN 2
+					ELSE 3
+				END,
+				c.captured_at DESC,
+				c.id DESC
+			LIMIT 1
+		) lc ON TRUE
+		LEFT JOIN LATERAL (
+			SELECT step.*
+			FROM admin_plus_scheduler_steps step
+			WHERE step.supplier_id = asa.supplier_id
+				AND step.task_type = 'run_purity_check'
+				AND COALESCE(step.result_snapshot->>'local_sub2api_account_id', '') ~ '^[0-9]+$'
+				AND (step.result_snapshot->>'local_sub2api_account_id')::BIGINT = asa.local_sub2api_account_id
+			ORDER BY COALESCE(step.finished_at, step.started_at, step.created_at) DESC, step.id DESC
+			LIMIT 1
+		) purity ON TRUE
+		WHERE asa.local_sub2api_account_id = ANY($1)
+		ORDER BY asa.local_sub2api_account_id DESC, asa.id DESC
+	`, pq.Array(accountIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	items := make(map[int64][]localAccountOpsProjection)
+	for rows.Next() {
+		projection, err := scanLocalAccountOpsProjection(rows)
+		if err != nil {
+			return nil, err
+		}
+		accountID := projection.row.LocalSub2APIAccountID
+		items[accountID] = append(items[accountID], projection)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -2316,6 +2607,250 @@ func scanInt64Rows(rows *sql.Rows) ([]int64, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out, nil
+}
+
+func scanLocalAccountOpsBaseRow(scanner interface{ Scan(dest ...any) error }) (*adminplusdomain.LocalAccountOpsRow, error) {
+	var item adminplusdomain.LocalAccountOpsRow
+	var groupIDs pq.Int64Array
+	var groupNames pq.StringArray
+	var rateLimitedAt sql.NullTime
+	var rateLimitResetAt sql.NullTime
+	var overloadUntil sql.NullTime
+	var tempUnschedulableUntil sql.NullTime
+	var proxyExpiresAt sql.NullTime
+	if err := scanner.Scan(
+		&item.LocalSub2APIAccountID,
+		&item.LocalAccountName,
+		&item.LocalAccountPlatform,
+		&item.LocalAccountType,
+		&item.LocalAccountStatus,
+		&item.LocalAccountErrorMessage,
+		&item.LocalAccountSchedulable,
+		&item.LocalAccountConcurrency,
+		&item.LocalAccountPriority,
+		&item.LocalAccountRateMultiplier,
+		&rateLimitedAt,
+		&rateLimitResetAt,
+		&overloadUntil,
+		&tempUnschedulableUntil,
+		&item.LocalAccountTempUnschedReason,
+		&item.LocalAccountUpdatedAt,
+		&groupIDs,
+		&groupNames,
+		&item.LocalAccountProxyID,
+		&item.LocalAccountProxyName,
+		&item.LocalAccountProxyStatus,
+		&proxyExpiresAt,
+	); err != nil {
+		return nil, err
+	}
+	item.LocalAccountGroupIDs = append([]int64(nil), groupIDs...)
+	item.LocalAccountGroupNames = append([]string(nil), groupNames...)
+	if rateLimitedAt.Valid {
+		item.LocalAccountRateLimitedAt = &rateLimitedAt.Time
+	}
+	if rateLimitResetAt.Valid {
+		item.LocalAccountRateLimitResetAt = &rateLimitResetAt.Time
+	}
+	if overloadUntil.Valid {
+		item.LocalAccountOverloadUntil = &overloadUntil.Time
+	}
+	if tempUnschedulableUntil.Valid {
+		item.LocalAccountTempUnschedAt = &tempUnschedulableUntil.Time
+	}
+	if proxyExpiresAt.Valid {
+		item.LocalAccountProxyExpiresAt = &proxyExpiresAt.Time
+	}
+	item.EffectiveRateMultiplier = item.LocalAccountRateMultiplier
+	item.BalanceCurrency = "USD"
+	item.BalanceStatus = "unbound"
+	item.ChannelCheckStatus = "untested"
+	item.DriftStatus = "unbound"
+	item.KeyCapacityStatus = "unknown"
+	item.PurityStatus = "unknown"
+	item.PurityFreshness = "unknown"
+	return &item, nil
+}
+
+func scanLocalAccountOpsProjection(scanner interface{ Scan(dest ...any) error }) (localAccountOpsProjection, error) {
+	var projection localAccountOpsProjection
+	var lastChannelCheckAt sql.NullTime
+	var lastLocalSyncAt sql.NullTime
+	var purityCheckedAt sql.NullTime
+	item := &projection.row
+	if err := scanner.Scan(
+		&item.LocalSub2APIAccountID,
+		&item.SupplierAccountID,
+		&item.SupplierID,
+		&item.SupplierName,
+		&item.SupplierType,
+		&item.SupplierRuntimeStatus,
+		&item.SupplierHealthStatus,
+		&item.SupplierAccountRuntimeStatus,
+		&item.SupplierAccountHealthStatus,
+		&item.BalanceThresholdCents,
+		&item.BalanceCents,
+		&item.BalanceCurrency,
+		&item.HasUsableBalance,
+		&item.SupplierGroupID,
+		&item.SupplierExternalGroupID,
+		&item.SupplierGroupName,
+		&item.SupplierGroupProvider,
+		&item.SupplierGroupModelFamily,
+		&item.SupplierGroupModelSpec,
+		&item.SupplierGroupStatus,
+		&projection.effectiveRateMultiplier,
+		&item.SupplierKeyID,
+		&item.SupplierKeyName,
+		&item.SupplierKeyLast4,
+		&item.SupplierKeyStatus,
+		&item.KeyCapacityStatus,
+		&item.ChannelCheckStatus,
+		&item.ChannelRemoteStatus,
+		&item.ChannelRecommended,
+		&item.ChannelStatusCode,
+		&item.ChannelErrorClass,
+		&item.ChannelErrorMessage,
+		&lastChannelCheckAt,
+		&item.BalanceStatus,
+		&projection.localStateDriftStatus,
+		&projection.storedLocalAccountName,
+		&projection.storedLocalAccountPlatform,
+		&projection.storedLocalAccountType,
+		&projection.supplierKeyLocalAccountID,
+		&lastLocalSyncAt,
+		&item.PurityStatus,
+		&item.PurityVerdict,
+		&item.PurityReportID,
+		&item.PuritySchedulerRunID,
+		&item.PuritySchedulerStepID,
+		&item.PurityModel,
+		&item.PurityScore,
+		&purityCheckedAt,
+		&item.PurityFreshness,
+	); err != nil {
+		return localAccountOpsProjection{}, err
+	}
+	if lastChannelCheckAt.Valid {
+		item.LastChannelCheckAt = &lastChannelCheckAt.Time
+	}
+	if lastLocalSyncAt.Valid {
+		item.LastLocalSyncAt = &lastLocalSyncAt.Time
+	}
+	if purityCheckedAt.Valid {
+		item.PurityCheckedAt = &purityCheckedAt.Time
+	}
+	if item.BalanceCurrency == "" {
+		item.BalanceCurrency = "USD"
+	}
+	return projection, nil
+}
+
+func mergeLocalAccountOpsRow(localAccount *adminplusdomain.LocalAccountOpsRow, projection localAccountOpsProjection) *adminplusdomain.LocalAccountOpsRow {
+	item := projection.row
+	item.LocalSub2APIAccountID = localAccount.LocalSub2APIAccountID
+	item.LocalAccountName = localAccount.LocalAccountName
+	item.LocalAccountPlatform = localAccount.LocalAccountPlatform
+	item.LocalAccountType = localAccount.LocalAccountType
+	item.LocalAccountStatus = localAccount.LocalAccountStatus
+	item.LocalAccountErrorMessage = localAccount.LocalAccountErrorMessage
+	item.LocalAccountSchedulable = localAccount.LocalAccountSchedulable
+	item.LocalAccountConcurrency = localAccount.LocalAccountConcurrency
+	item.LocalAccountPriority = localAccount.LocalAccountPriority
+	item.LocalAccountRateMultiplier = localAccount.LocalAccountRateMultiplier
+	item.LocalAccountRateLimitedAt = localAccount.LocalAccountRateLimitedAt
+	item.LocalAccountRateLimitResetAt = localAccount.LocalAccountRateLimitResetAt
+	item.LocalAccountOverloadUntil = localAccount.LocalAccountOverloadUntil
+	item.LocalAccountTempUnschedAt = localAccount.LocalAccountTempUnschedAt
+	item.LocalAccountTempUnschedReason = localAccount.LocalAccountTempUnschedReason
+	item.LocalAccountUpdatedAt = localAccount.LocalAccountUpdatedAt
+	item.LocalAccountGroupIDs = append([]int64(nil), localAccount.LocalAccountGroupIDs...)
+	item.LocalAccountGroupNames = append([]string(nil), localAccount.LocalAccountGroupNames...)
+	item.LocalAccountProxyID = localAccount.LocalAccountProxyID
+	item.LocalAccountProxyName = localAccount.LocalAccountProxyName
+	item.LocalAccountProxyStatus = localAccount.LocalAccountProxyStatus
+	item.LocalAccountProxyExpiresAt = localAccount.LocalAccountProxyExpiresAt
+	item.EffectiveRateMultiplier = localAccount.LocalAccountRateMultiplier
+	if projection.effectiveRateMultiplier.Valid {
+		item.EffectiveRateMultiplier = projection.effectiveRateMultiplier.Float64
+	}
+	item.DriftStatus = localAccountOpsDriftStatus(localAccount, projection)
+	return &item
+}
+
+func localAccountOpsDriftStatus(localAccount *adminplusdomain.LocalAccountOpsRow, projection localAccountOpsProjection) string {
+	item := projection.row
+	switch {
+	case projection.localStateDriftStatus == "pending":
+		return "local_account_state_drift"
+	case item.SupplierRuntimeStatus == "disabled":
+		return "supplier_disabled"
+	case item.SupplierAccountRuntimeStatus == "disabled":
+		return "binding_disabled"
+	case item.SupplierKeyID == 0:
+		return "missing_key"
+	case projection.supplierKeyLocalAccountID > 0 && projection.supplierKeyLocalAccountID != localAccount.LocalSub2APIAccountID:
+		return "key_local_account_mismatch"
+	case item.SupplierGroupID == 0:
+		return "missing_group"
+	case item.SupplierGroupStatus == "missing":
+		return "group_missing"
+	case item.SupplierGroupStatus == "disabled":
+		return "group_disabled"
+	case projection.storedLocalAccountName != localAccount.LocalAccountName ||
+		projection.storedLocalAccountPlatform != localAccount.LocalAccountPlatform ||
+		projection.storedLocalAccountType != localAccount.LocalAccountType:
+		return "local_account_metadata_drift"
+	default:
+		return "synced"
+	}
+}
+
+func matchesLocalAccountOpsFilter(item *adminplusdomain.LocalAccountOpsRow, filter LocalAccountOpsFilter) bool {
+	if filter.SupplierID > 0 && item.SupplierID != filter.SupplierID {
+		return false
+	}
+	if filter.SupplierGroupID > 0 && item.SupplierGroupID != filter.SupplierGroupID {
+		return false
+	}
+	if filter.LocalGroupID > 0 && !containsInt64(item.LocalAccountGroupIDs, filter.LocalGroupID) {
+		return false
+	}
+	if filter.MaxRateMultiplier > 0 && item.EffectiveRateMultiplier > filter.MaxRateMultiplier {
+		return false
+	}
+	if filter.BalanceStatus != "" && item.BalanceStatus != filter.BalanceStatus {
+		return false
+	}
+	if filter.ChannelCheckStatus != "" && item.ChannelCheckStatus != filter.ChannelCheckStatus {
+		return false
+	}
+	if filter.Schedulable != nil && item.LocalAccountSchedulable != *filter.Schedulable {
+		return false
+	}
+	query := strings.ToLower(strings.TrimSpace(filter.Query))
+	if query == "" {
+		return true
+	}
+	if strconv.FormatInt(item.LocalSub2APIAccountID, 10) == strings.TrimSpace(filter.Query) {
+		return true
+	}
+	values := []string{
+		item.LocalAccountName,
+		item.LocalAccountPlatform,
+		item.LocalAccountType,
+		item.LocalAccountStatus,
+		item.SupplierName,
+		item.SupplierGroupName,
+		item.SupplierKeyName,
+	}
+	values = append(values, item.LocalAccountGroupNames...)
+	for _, value := range values {
+		if strings.Contains(strings.ToLower(value), query) {
+			return true
+		}
+	}
+	return false
 }
 
 func scanLocalAccountOpsRow(scanner interface{ Scan(dest ...any) error }) (*adminplusdomain.LocalAccountOpsRow, error) {

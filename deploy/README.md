@@ -189,7 +189,18 @@ curl -sSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/in
 curl -sSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh | sudo bash -s -- upgrade -v vX.Y.Z
 ```
 
-The upgrader recognizes both `/opt/sub2api-admin-plus/sub2api-admin-plus` + `sub2api-admin-plus.service` and the older `/opt/sub2api/sub2api` + `sub2api.service`. It migrates configuration into `/etc/superllm`, backs up the old binary, installs `/opt/superllm/superllm`, and disables legacy services without deleting their directories.
+For a fresh co-located installation, select a loopback listener that does not conflict with Sub2API:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh \
+  | sudo bash -s -- install -v vX.Y.Z --host 127.0.0.1 --port 8081
+```
+
+When the default port is occupied and no port was supplied, the installer selects the next available port. An explicitly selected occupied port fails instead of taking over the existing listener.
+
+The upgrader recognizes `/opt/sub2api-admin-plus/sub2api-admin-plus` with `sub2api-admin-plus.service` as the legacy Admin Plus layout. It migrates that configuration into `/etc/superllm`, backs up the old binary, installs `/opt/superllm/superllm`, and disables only `sub2api-admin-plus.service` without deleting its directory.
+
+An existing `/opt/sub2api/sub2api` with `sub2api.service` is the authoritative identity and data source, not a legacy SuperLLM installation. The installer preserves it so Sub2API and SuperLLM can run side by side on the same server.
 
 For the local-directory deployment:
 

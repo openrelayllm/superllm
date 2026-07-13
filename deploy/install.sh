@@ -44,11 +44,6 @@ LEGACY_CONFIG_DIR="/etc/sub2api-admin-plus"
 LEGACY_SERVICE_NAME="sub2api-admin-plus"
 LEGACY_BINARY_NAME="sub2api-admin-plus"
 LEGACY_SERVICE_FILE="/etc/systemd/system/${LEGACY_SERVICE_NAME}.service"
-UPSTREAM_INSTALL_DIR="/opt/sub2api"
-UPSTREAM_CONFIG_DIR="/etc/sub2api"
-UPSTREAM_SERVICE_NAME="sub2api"
-UPSTREAM_BINARY_NAME="sub2api"
-UPSTREAM_SERVICE_FILE="/etc/systemd/system/${UPSTREAM_SERVICE_NAME}.service"
 COMMAND_NAME="superllm"
 COMMAND_SOURCE_NAME="superllmctl"
 COMMAND_PATH="/usr/local/bin/${COMMAND_NAME}"
@@ -58,6 +53,8 @@ MIGRATING_LEGACY=false
 # Server configuration (will be set by user)
 SERVER_HOST="0.0.0.0"
 SERVER_PORT="8080"
+SERVER_HOST_EXPLICIT=false
+SERVER_PORT_EXPLICIT=false
 
 # Language (default: zh = Chinese)
 LANG_CHOICE="zh"
@@ -403,10 +400,64 @@ validate_port() {
     return 1
 }
 
+validate_host() {
+    local host="$1"
+    [ -n "$host" ] && [[ "$host" =~ ^[a-zA-Z0-9.:-]+$ ]]
+}
+
+port_is_listening() {
+    local port="$1"
+
+    if command -v ss >/dev/null 2>&1; then
+        [ -n "$(ss -H -ltn "sport = :$port" 2>/dev/null)" ]
+        return
+    fi
+
+    if command -v netstat >/dev/null 2>&1; then
+        netstat -ltn 2>/dev/null | awk -v suffix=":$port" '$4 ~ suffix "$" { found=1 } END { exit !found }'
+        return
+    fi
+
+    return 1
+}
+
+ensure_available_server_port() {
+    if ! port_is_listening "$SERVER_PORT"; then
+        return 0
+    fi
+
+    if [ "$SERVER_PORT_EXPLICIT" = true ]; then
+        print_error "Server port is already in use: $SERVER_PORT"
+        return 1
+    fi
+
+    local candidate=$((SERVER_PORT + 1))
+    while [ "$candidate" -le 65535 ] && port_is_listening "$candidate"; do
+        candidate=$((candidate + 1))
+    done
+    if [ "$candidate" -gt 65535 ]; then
+        print_error "No available server port found after $SERVER_PORT"
+        return 1
+    fi
+
+    print_warning "Server port $SERVER_PORT is in use; using $candidate instead."
+    SERVER_PORT="$candidate"
+}
+
 # Configure server settings
 configure_server() {
+    if ! validate_host "$SERVER_HOST"; then
+        print_error "Invalid server host: $SERVER_HOST"
+        return 1
+    fi
+    if ! validate_port "$SERVER_PORT"; then
+        print_error "$(msg 'invalid_port')"
+        return 1
+    fi
+
     # If not interactive (piped), use default settings
     if ! is_interactive; then
+        ensure_available_server_port || return 1
         print_info "$(msg 'server_config_summary'): ${SERVER_HOST}:${SERVER_PORT} (default)"
         return
     fi
@@ -420,28 +471,39 @@ configure_server() {
     echo ""
 
     # Server host
-    echo -e "${YELLOW}$(msg 'server_host_hint')${NC}"
-    read -p "$(msg 'server_host_prompt') [${SERVER_HOST}]: " input_host < /dev/tty
-    if [ -n "$input_host" ]; then
-        SERVER_HOST="$input_host"
+    if [ "$SERVER_HOST_EXPLICIT" != true ]; then
+        echo -e "${YELLOW}$(msg 'server_host_hint')${NC}"
+        read -p "$(msg 'server_host_prompt') [${SERVER_HOST}]: " input_host < /dev/tty
+        if [ -n "$input_host" ]; then
+            if ! validate_host "$input_host"; then
+                print_error "Invalid server host: $input_host"
+                return 1
+            fi
+            SERVER_HOST="$input_host"
+        fi
     fi
 
     echo ""
 
     # Server port
-    echo -e "${YELLOW}$(msg 'server_port_hint')${NC}"
-    while true; do
-        read -p "$(msg 'server_port_prompt') [${SERVER_PORT}]: " input_port < /dev/tty
-        if [ -z "$input_port" ]; then
-            # Use default
-            break
-        elif validate_port "$input_port"; then
-            SERVER_PORT="$input_port"
-            break
-        else
-            print_error "$(msg 'invalid_port')"
-        fi
-    done
+    if [ "$SERVER_PORT_EXPLICIT" != true ]; then
+        echo -e "${YELLOW}$(msg 'server_port_hint')${NC}"
+        while true; do
+            read -p "$(msg 'server_port_prompt') [${SERVER_PORT}]: " input_port < /dev/tty
+            if [ -z "$input_port" ]; then
+                # Use default
+                break
+            elif validate_port "$input_port"; then
+                SERVER_PORT="$input_port"
+                SERVER_PORT_EXPLICIT=true
+                break
+            else
+                print_error "$(msg 'invalid_port')"
+            fi
+        done
+    fi
+
+    ensure_available_server_port || return 1
 
     echo ""
     print_info "$(msg 'server_config_summary'): ${SERVER_HOST}:${SERVER_PORT}"
@@ -462,12 +524,6 @@ load_existing_server_config() {
             [ -f "$candidate" ] && service_paths+=("$candidate")
         done
     fi
-    if [ "${#service_paths[@]}" -eq 0 ]; then
-        for candidate in "$UPSTREAM_SERVICE_FILE" /etc/systemd/system/${UPSTREAM_SERVICE_NAME}.service.d/*.conf; do
-            [ -f "$candidate" ] && service_paths+=("$candidate")
-        done
-    fi
-
     if [ "${#service_paths[@]}" -gt 0 ]; then
         existing_host=$(grep -hE '^Environment=SERVER_HOST=' "${service_paths[@]}" | tail -1 | sed 's/^Environment=SERVER_HOST=//' || true)
         existing_port=$(grep -hE '^Environment=SERVER_PORT=' "${service_paths[@]}" | tail -1 | sed 's/^Environment=SERVER_PORT=//' || true)
@@ -639,10 +695,6 @@ current_binary_path() {
     fi
     if [ -f "$LEGACY_INSTALL_DIR/$LEGACY_BINARY_NAME" ]; then
         echo "$LEGACY_INSTALL_DIR/$LEGACY_BINARY_NAME"
-        return 0
-    fi
-    if [ -f "$UPSTREAM_INSTALL_DIR/$UPSTREAM_BINARY_NAME" ]; then
-        echo "$UPSTREAM_INSTALL_DIR/$UPSTREAM_BINARY_NAME"
         return 0
     fi
     return 1
@@ -840,10 +892,7 @@ migrate_legacy_config() {
         for candidate in \
             "$LEGACY_INSTALL_DIR/config.yaml" \
             "$LEGACY_INSTALL_DIR/data/config.yaml" \
-            "$LEGACY_CONFIG_DIR/config.yaml" \
-            "$UPSTREAM_INSTALL_DIR/config.yaml" \
-            "$UPSTREAM_INSTALL_DIR/data/config.yaml" \
-            "$UPSTREAM_CONFIG_DIR/config.yaml"
+            "$LEGACY_CONFIG_DIR/config.yaml"
         do
             if [ -f "$candidate" ]; then
                 cp "$candidate" "$CONFIG_DIR/config.yaml"
@@ -859,10 +908,7 @@ migrate_legacy_config() {
         for candidate in \
             "$LEGACY_INSTALL_DIR/.installed" \
             "$LEGACY_INSTALL_DIR/data/.installed" \
-            "$LEGACY_CONFIG_DIR/.installed" \
-            "$UPSTREAM_INSTALL_DIR/.installed" \
-            "$UPSTREAM_INSTALL_DIR/data/.installed" \
-            "$UPSTREAM_CONFIG_DIR/.installed"
+            "$LEGACY_CONFIG_DIR/.installed"
         do
             if [ -f "$candidate" ]; then
                 cp "$candidate" "$CONFIG_DIR/.installed"
@@ -938,10 +984,6 @@ stop_existing_services() {
         systemctl stop "$LEGACY_SERVICE_NAME"
     fi
 
-    if [ "$MIGRATING_LEGACY" = true ] && systemctl is-active --quiet "$UPSTREAM_SERVICE_NAME"; then
-        print_info "$(msg 'stopping_service') $UPSTREAM_SERVICE_NAME"
-        systemctl stop "$UPSTREAM_SERVICE_NAME"
-    fi
 }
 
 disable_legacy_service() {
@@ -949,11 +991,6 @@ disable_legacy_service() {
         systemctl disable "$LEGACY_SERVICE_NAME" 2>/dev/null || true
         print_warning "Legacy service disabled: $LEGACY_SERVICE_NAME"
         print_warning "Legacy files kept for manual rollback: $LEGACY_INSTALL_DIR"
-    fi
-    if [ "$MIGRATING_LEGACY" = true ] && [ -f "$UPSTREAM_SERVICE_FILE" ]; then
-        systemctl disable "$UPSTREAM_SERVICE_NAME" 2>/dev/null || true
-        print_warning "Legacy service disabled: $UPSTREAM_SERVICE_NAME"
-        print_warning "Legacy files kept for manual rollback: $UPSTREAM_INSTALL_DIR"
     fi
 }
 
@@ -1055,7 +1092,7 @@ print_completion() {
 
 # Upgrade function
 upgrade() {
-    # Check if Sub2API is installed
+    # Check if SuperLLM is installed
     if ! is_installed; then
         print_error "$(msg 'not_installed')"
         print_info "$(msg 'fresh_install_hint'): $0 install"
@@ -1104,7 +1141,7 @@ upgrade() {
 install_version() {
     local target_version="$1"
 
-    # Check if Sub2API is installed
+    # Check if SuperLLM is installed
     if ! is_installed; then
         print_error "$(msg 'not_installed')"
         print_info "$(msg 'fresh_install_hint'): $0 install -v $target_version"
@@ -1277,6 +1314,36 @@ main() {
                 fi
                 shift
                 ;;
+            --host)
+                if [ -n "${2:-}" ] && [[ ! "$2" =~ ^- ]]; then
+                    SERVER_HOST="$2"
+                    SERVER_HOST_EXPLICIT=true
+                    shift 2
+                else
+                    echo "Error: --host requires a value"
+                    exit 1
+                fi
+                ;;
+            --host=*)
+                SERVER_HOST="${1#*=}"
+                SERVER_HOST_EXPLICIT=true
+                shift
+                ;;
+            -p|--port)
+                if [ -n "${2:-}" ] && [[ ! "$2" =~ ^- ]]; then
+                    SERVER_PORT="$2"
+                    SERVER_PORT_EXPLICIT=true
+                    shift 2
+                else
+                    echo "Error: --port requires a value"
+                    exit 1
+                fi
+                ;;
+            --port=*)
+                SERVER_PORT="${1#*=}"
+                SERVER_PORT_EXPLICIT=true
+                shift
+                ;;
             *)
                 positional_args+=("$1")
                 shift
@@ -1415,11 +1482,13 @@ main() {
             echo ""
             echo "Options:"
             echo "  -v, --version <ver>  $(msg 'opt_version')"
+            echo "  --host <address>     Server listen address"
+            echo "  -p, --port <port>    Server listen port"
             echo "  -y, --yes            Skip confirmation prompts (for uninstall)"
             echo ""
             echo "Examples:"
             echo "  $0                        # Install latest version"
-            echo "  $0 install -v vX.Y.Z      # Install specific version"
+            echo "  $0 install -v vX.Y.Z --host 127.0.0.1 --port 8081"
             echo "  $0 upgrade                # Upgrade to latest"
             echo "  $0 upgrade -v vX.Y.Z      # Upgrade to specific version"
             echo "  $0 rollback vX.Y.Z        # Rollback to vX.Y.Z"
@@ -1474,4 +1543,6 @@ main() {
     fi
 }
 
-main "$@"
+if [ "${SUPERLLM_INSTALLER_LIB_ONLY:-0}" != "1" ]; then
+    main "$@"
+fi
