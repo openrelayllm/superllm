@@ -4,24 +4,90 @@ SuperLLM is an operations automation extension built from the Sub2API codebase.
 
 MVP 0 keeps the Sub2API frontend/backend architecture, UI conventions, build scripts, and deployment layout as a runnable baseline. The current business layer already includes real operations APIs, pages, scheduler task generation, Chrome-extension result ingestion, and a minimal Chrome MV3 executor. Supplier-specific browser page adapters are still being built.
 
-## 安装与升级
+## 部署方式
 
-### 支持范围
+### 方式一：脚本安装（推荐）
 
-一键安装脚本仅支持使用 systemd 的 Linux 服务器：
+一键安装脚本会从 [GitHub Releases](https://github.com/openrelayllm/superllm/releases) 下载预编译二进制文件，适合直接部署到 Linux 服务器。
 
-- `linux/amd64` 或 `linux/arm64`
+#### 前置条件
+
+- Linux 服务器（`amd64` 或 `arm64`）
 - Bash 4+
-- PostgreSQL 15+，已安装并运行
-- Redis 7+，已安装并运行
+- PostgreSQL 15+（已安装并运行）
+- Redis 7+（已安装并运行）
+- 已运行的 Sub2API 及其 PostgreSQL 只读连接
 - `curl`、`tar`、`gzip`、`sha256sum`、`systemctl`、`useradd`
 - root 权限或可用的 `sudo`
 
-脚本从 [GitHub Releases](https://github.com/openrelayllm/superllm/releases) 下载预编译包，严格校验 `checksums.txt`，然后创建独立系统用户、安装目录和 systemd 服务。脚本不会安装 PostgreSQL 或 Redis，也不会删除已有数据库。
+#### 安装步骤
 
-### 准备 Sub2API 只读账号
+```bash
+curl -sSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh | sudo bash
+```
 
-SuperLLM 不维护用户账号，登录时直接读取现有 Sub2API 的 `users` 表。建议在 Sub2API PostgreSQL 中创建专用只读角色：
+脚本会自动：
+
+1. 检测 Linux 系统架构（`amd64` 或 `arm64`）。
+2. 获取并下载最新稳定 Release。
+3. 使用 `checksums.txt` 校验 SHA-256。
+4. 把二进制安装到 `/opt/superllm/superllm`。
+5. 创建 `superllm` 系统用户、配置目录、systemd 服务和管理命令。
+6. 启动服务并设置开机自启。
+
+#### 安装后配置
+
+```bash
+# 1. 启动服务（安装脚本已自动执行，重复执行是安全的）
+sudo systemctl start superllm
+
+# 2. 设置开机自启（安装脚本已自动执行）
+sudo systemctl enable superllm
+
+# 3. 查看服务状态
+sudo systemctl status superllm --no-pager
+
+# 4. 在浏览器中打开安装向导
+# http://你的服务器IP:8080
+```
+
+安装向导将引导你完成：
+
+- SuperLLM PostgreSQL 配置，数据库名使用 `superllm`
+- Redis 配置
+- Sub2API 只读数据库 URL 配置
+
+SuperLLM 不创建管理员账号。完成向导后，请使用 Sub2API 中 `role = 'admin'`、`status = 'active'` 的管理员账号登录。
+
+安装完成后会创建：
+
+| 项目 | 路径或名称 |
+|------|------------|
+| 二进制 | `/opt/superllm/superllm` |
+| 配置与运行数据 | `/etc/superllm` |
+| systemd 服务 | `superllm.service` |
+| 管理命令 | `/usr/local/bin/superllm` |
+| 系统用户 | `superllm` |
+
+确认健康状态和日志：
+
+```bash
+superllm status
+superllm logs -n 200
+curl -fsS http://127.0.0.1:8080/health
+```
+
+Web 地址：
+
+```text
+http://服务器IP:8080
+```
+
+生产环境应使用独立的 `superllm` 数据库，不要把 SuperLLM 的读写连接指向现有 Sub2API 生产主库。
+
+#### 准备 Sub2API 只读账号
+
+SuperLLM 登录时直接读取现有 Sub2API 的 `users` 表。建议在 Sub2API PostgreSQL 中创建专用只读角色：
 
 ```sql
 CREATE ROLE superllm_readonly LOGIN PASSWORD 'replace-with-a-strong-password';
@@ -40,46 +106,13 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 postgresql://superllm_readonly:password@127.0.0.1:5432/sub2api?sslmode=require
 ```
 
-该账号不需要且不应拥有 `INSERT`、`UPDATE`、`DELETE` 或 DDL 权限。安装检查会确认 `users` 表可读且至少存在一个 `role = 'admin'`、`status = 'active'` 的用户。
+该账号不需要且不应拥有 `INSERT`、`UPDATE`、`DELETE` 或 DDL 权限。安装检查会确认 `users` 表可读且至少存在一个有效管理员。
 
-### 一键安装
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh \
-  | sudo bash -s -- install
-```
-
-非交互执行时默认监听 `0.0.0.0:8080`。交互式执行可选择监听地址和端口。安装完成后会创建：
-
-| 项目 | 路径或名称 |
-|------|------------|
-| 二进制 | `/opt/superllm/superllm` |
-| 配置与运行数据 | `/etc/superllm` |
-| systemd 服务 | `superllm.service` |
-| 管理命令 | `/usr/local/bin/superllm` |
-| 系统用户 | `superllm` |
-
-安装器会自动启动服务并设置开机自启。确认状态：
-
-```bash
-superllm status
-superllm logs -n 200
-curl -fsS http://127.0.0.1:8080/health
-```
-
-然后访问：
-
-```text
-http://服务器IP:8080
-```
-
-首次访问按安装向导配置 SuperLLM 自身使用的 PostgreSQL、Redis，以及现有 Sub2API 的只读数据库 URL。SuperLLM 不创建管理员，请使用 Sub2API 中状态正常的管理员账号登录。生产环境应使用独立数据库，不要把 SuperLLM 的写连接指向现有 Sub2API 生产主库。
-
-### 安装指定版本
+#### 安装指定版本
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh \
-  | sudo bash -s -- install -v v0.41.0
+  | sudo bash -s -- install -v v0.42.0
 ```
 
 查看可安装版本：
@@ -89,7 +122,7 @@ curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/i
   | bash -s -- list-versions
 ```
 
-### 升级
+#### 升级
 
 从旧版升级前，先在 `/etc/superllm/config.yaml` 中配置 Sub2API 身份源：
 
@@ -128,7 +161,7 @@ curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/i
 
 升级前仍建议单独备份 PostgreSQL 和 `/etc/superllm`。二进制备份不能替代数据库备份。
 
-### 从旧名称升级
+#### 从旧名称升级
 
 安装器可识别以下旧布局：
 
@@ -137,7 +170,7 @@ curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/i
 
 升级时会把旧配置和安装锁迁移到 `/etc/superllm`，安装新的 `superllm.service`，并停用旧服务。旧目录不会自动删除，可用于人工回退或确认数据完整性。迁移完成并验证无误后，再手动清理旧目录和旧 systemd unit。
 
-### 回滚
+#### 回滚
 
 ```bash
 sudo superllm rollback vX.Y.Z
@@ -145,7 +178,7 @@ sudo superllm rollback vX.Y.Z
 
 回滚同样从 GitHub Release 下载指定版本并校验文件，不会回滚数据库结构或业务数据。跨多个数据库迁移版本回滚前，应先阅读对应 Release Notes 并准备数据库备份。
 
-### 服务管理
+#### 服务管理
 
 ```bash
 superllm status
@@ -163,7 +196,7 @@ curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/i
   | sudo bash -s -- install-command
 ```
 
-### 卸载
+#### 卸载
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh \
@@ -179,7 +212,7 @@ curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/i
 
 卸载脚本不会删除外部 PostgreSQL 数据库或 Redis 数据。
 
-### Docker Compose
+### 方式二：Docker Compose
 
 需要由容器同时运行 SuperLLM、PostgreSQL 和 Redis 时：
 

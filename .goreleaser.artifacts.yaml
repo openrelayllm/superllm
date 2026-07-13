@@ -1,16 +1,16 @@
 version: 2
 
-project_name: sub2api-admin-plus
+project_name: superllm
 
 before:
   hooks:
     - go mod tidy -C backend
 
 builds:
-  - id: sub2api-admin-plus
+  - id: superllm
     dir: backend
     main: ./cmd/server
-    binary: sub2api
+    binary: superllm
     flags:
       - -tags=embed
     env:

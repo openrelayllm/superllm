@@ -2,7 +2,7 @@
 #
 # SuperLLM Installation Script
 # SuperLLM 安装脚本
-# Usage: curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh | sudo bash -s -- install
+# Usage: curl -sSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh | sudo bash
 #
 
 set -e

@@ -28,6 +28,48 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO superllm_readonly;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO superllm_readonly;
 ```
 
+## Method 1: Script Installation (Recommended)
+
+The one-click installer downloads pre-built Linux binaries from GitHub Releases.
+
+### Prerequisites
+
+- Linux server (`amd64` or `arm64`)
+- Bash 4+
+- PostgreSQL 15+ and Redis 7+, installed and running
+- A readonly PostgreSQL connection to an existing Sub2API instance
+- Root privileges
+
+### Installation Steps
+
+```bash
+curl -sSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh | sudo bash
+```
+
+The script will:
+
+1. Detect the system architecture.
+2. Download the latest GitHub Release.
+3. Verify the archive against `checksums.txt`.
+4. Install the binary to `/opt/superllm/superllm`.
+5. Create the `superllm` system user, configuration directory, systemd service, and management command.
+6. Start the service and enable auto-start on boot.
+
+### Post-Installation
+
+```bash
+# Check the service
+sudo systemctl status superllm --no-pager
+
+# Follow logs
+sudo journalctl -u superllm -f
+
+# Open the Setup Wizard
+# http://YOUR_SERVER_IP:8080
+```
+
+The Setup Wizard configures the dedicated `superllm` PostgreSQL database, Redis, and the required Sub2API readonly database URL. It does not create an administrator; sign in with an active Sub2API administrator.
+
 ## Files
 
 | File | Description |
@@ -56,7 +98,7 @@ Release publishing is tag-driven. A `v*` tag is the single version fact for GitH
 
 Systemd script deployment consumes GitHub Release assets through `install.sh`. Docker deployment consumes `wutongci/superllm:<version>` or `latest`.
 
-## Recommended Docker Deployment
+## Method 2: Docker Compose
 
 ```bash
 export SUB2API_READONLY_DATABASE_URL='postgresql://readonly:password@sub2api-db:5432/sub2api?sslmode=require'
@@ -123,7 +165,7 @@ Prerequisites are Linux `amd64` or `arm64`, Bash 4+, systemd, PostgreSQL 15+, Re
 
 ```bash
 # Fresh install
-curl -sSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh | sudo bash -s -- install
+curl -sSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh | sudo bash
 
 # Existing installation: bootstrap the command wrapper only.
 # This detects the installed binary and does not download, overwrite, or restart the app.
