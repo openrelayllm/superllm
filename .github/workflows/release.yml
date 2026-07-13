@@ -10,15 +10,9 @@ on:
         description: 'Annotated tag to publish, for example v0.42.0'
         required: true
         type: string
-      deploy_railway:
-        description: 'Deploy the released DockerHub image to Railway after publishing'
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: write
-  packages: write
 
 jobs:
   release:
@@ -26,7 +20,6 @@ jobs:
     outputs:
       tag_name: ${{ steps.release_meta.outputs.tag_name }}
       version: ${{ steps.release_meta.outputs.version }}
-      docker_image: ${{ steps.release_meta.outputs.docker_image }}
     steps:
       - name: Checkout tag
         uses: actions/checkout@v6
@@ -47,7 +40,6 @@ jobs:
           echo "$VERSION" > backend/cmd/server/VERSION
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "docker_image=wutongci/superllm:$VERSION" >> "$GITHUB_OUTPUT"
           echo "Publishing SuperLLM $VERSION"
 
       - name: Setup pnpm
@@ -80,25 +72,6 @@ jobs:
       - name: Verify Go version
         run: go version | grep -q 'go1.26.5'
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Fetch tags with annotations
         run: git fetch --tags --force
 
@@ -119,103 +92,16 @@ jobs:
           echo "owner_lower=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
           echo "name=${{ github.event.repository.name }}" >> "$GITHUB_OUTPUT"
 
-      - name: Publish Linux release and container images
+      - name: Publish Linux release assets
         uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'
-          args: release --clean --skip=validate
+          args: release --clean --skip=validate --skip=docker
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_MESSAGE: ${{ steps.tag_message.outputs.message }}
           GITHUB_REPO_OWNER: ${{ github.repository_owner }}
-          GITHUB_REPO_OWNER_LOWER: ${{ steps.repo.outputs.owner_lower }}
           GITHUB_REPO_NAME: ${{ steps.repo.outputs.name }}
-          DOCKERHUB_USERNAME: wutongci
-
-      - name: Update DockerHub description
-        uses: peter-evans/dockerhub-description@v5
-        continue-on-error: true
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: wutongci/superllm
-          short-description: 'SuperLLM - operations automation extension'
-          readme-filepath: ./deploy/DOCKER.md
-
-  deploy-railway:
-    needs: release
-    if: ${{ vars.RAILWAY_AUTO_DEPLOY == 'true' || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_railway == 'true') }}
-    runs-on: ubuntu-latest
-    env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-      IMAGE: ${{ needs.release.outputs.docker_image }}
-      SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
-      ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
-    steps:
-      - name: Deploy DockerHub image to Railway
-        run: |
-          set -euo pipefail
-
-          if [ -z "${RAILWAY_TOKEN}" ]; then
-            echo "RAILWAY_TOKEN secret is required"
-            exit 1
-          fi
-          if [ -z "${SERVICE_ID}" ] || [ -z "${ENVIRONMENT_ID}" ]; then
-            echo "Railway service and environment variables are required"
-            exit 1
-          fi
-
-          update_payload="$(jq -n \
-            --arg serviceId "$SERVICE_ID" \
-            --arg environmentId "$ENVIRONMENT_ID" \
-            --arg image "$IMAGE" \
-            '{query:"mutation UpdateSource($serviceId:String!,$environmentId:String!,$input:ServiceInstanceUpdateInput!){ serviceInstanceUpdate(serviceId:$serviceId, environmentId:$environmentId, input:$input) }", variables:{serviceId:$serviceId,environmentId:$environmentId,input:{source:{image:$image}}}}')"
-
-          update_response="$(curl -fsS "https://backboard.railway.com/graphql/v2" \
-            -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data-binary "$update_payload")"
-          echo "$update_response" | jq -e 'if .errors then .errors | halt_error(1) else .data.serviceInstanceUpdate end' >/dev/null
-
-          deploy_payload="$(jq -n \
-            --arg serviceId "$SERVICE_ID" \
-            --arg environmentId "$ENVIRONMENT_ID" \
-            '{query:"mutation Deploy($serviceId:String!,$environmentId:String!){ serviceInstanceDeployV2(serviceId:$serviceId, environmentId:$environmentId) }", variables:{serviceId:$serviceId,environmentId:$environmentId}}')"
-
-          deploy_response="$(curl -fsS "https://backboard.railway.com/graphql/v2" \
-            -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data-binary "$deploy_payload")"
-          echo "$deploy_response" | jq -e 'if .errors then .errors | halt_error(1) else .data.serviceInstanceDeployV2 end' >/dev/null
-          DEPLOYMENT_ID="$(echo "$deploy_response" | jq -r '.data.serviceInstanceDeployV2')"
-
-          echo "Railway deployment started: ${DEPLOYMENT_ID}"
-
-          for attempt in $(seq 1 60); do
-            status_payload="$(jq -n --arg id "$DEPLOYMENT_ID" \
-              '{query:"query Deployment($id:String!){ deployment(id:$id){ id status meta updatedAt } }", variables:{id:$id}}')"
-            status_response="$(curl -fsS "https://backboard.railway.com/graphql/v2" \
-              -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
-              -H "Content-Type: application/json" \
-              --data-binary "$status_payload")"
-            STATUS="$(echo "$status_response" | jq -r '.data.deployment.status')"
-            DEPLOYED_IMAGE="$(echo "$status_response" | jq -r '.data.deployment.meta.image // empty')"
-            echo "Railway status: ${STATUS} image=${DEPLOYED_IMAGE}"
-
-            case "$STATUS" in
-              SUCCESS)
-                exit 0
-                ;;
-              FAILED|CRASHED|REMOVED)
-                exit 1
-                ;;
-            esac
-
-            sleep 10
-          done
-
-          echo "Railway deployment did not finish before timeout"
-          exit 1
 
   sync-version-file:
     needs: release

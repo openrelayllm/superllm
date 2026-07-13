@@ -87,14 +87,14 @@ The Setup Wizard configures the dedicated `superllm` PostgreSQL database, Redis,
 
 ## Build, Release, And Deployment Channels
 
-Release publishing is tag-driven. A `v*` tag is the single version fact for GitHub Release assets, DockerHub images, GHCR images, and optional Railway deployment.
+Release publishing is tag-driven. A `v*` tag is the single version fact for GitHub Release assets. Container images and Railway deployment use separate, explicit workflows so a registry credential issue cannot block Linux binary releases.
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `Build Artifacts` | push, pull request, tag, or manual dispatch | Compile Linux `amd64` and `arm64` binary archives and upload CI artifacts. It does not publish a GitHub Release, Docker image, or deployment. |
-| `GitHub Release` | `v*` tag push or manual dispatch | Publish Linux Release assets, `checksums.txt`, DockerHub multi-arch images, and GHCR multi-arch images. It can deploy the released DockerHub image to Railway when `RAILWAY_AUTO_DEPLOY=true` or the manual `deploy_railway` input is enabled. |
-| `DockerHub` | manual dispatch only | Rebuild and push DockerHub images from a selected git ref when an image-only repair is needed. Normal releases should use `GitHub Release`. |
-| `Deploy Railway` | manual dispatch only | Deploy a selected container image to Railway when a deployment-only retry is needed. Normal release deployment can run from `GitHub Release`. |
+| `GitHub Release` | `v*` tag push or manual dispatch | Publish Linux `amd64` and `arm64` release assets plus `checksums.txt`. It never waits for container registry credentials. |
+| `DockerHub` | manual dispatch only | Build and push the multi-architecture DockerHub image from a selected git ref. Run it after a GitHub Release when container images are required. |
+| `Deploy Railway` | manual dispatch only | Deploy a selected existing container image to Railway. |
 
 Systemd script deployment consumes GitHub Release assets through `install.sh`. Docker deployment consumes `wutongci/superllm:<version>` or `latest`.
 
