@@ -46,10 +46,10 @@ backend/
 
   internal/
     adminplus/
-      auth/                         # 复用 Sub2API 管理员身份的登录代理和 token 校验
       config/                       # Admin Plus 自有配置解析
       domain/                       # Admin Plus 领域模型、枚举、业务错误
       app/
+        sub2api/                    # Sub2API 只读身份、账号、用量和运行态适配
         suppliers/                  # 供应商父级台账、供应商下挂账号/Key 子级绑定
         suppliergroups/             # 供应商分组事实表，Provider Adapter 同步后落库
         supplierkeys/               # 第三方 Key 元数据、本地账号创建和绑定编排
@@ -457,7 +457,7 @@ frontend/src/
 
 - 不做 iframe。
 - 不做独立权限系统。
-- 登录页可以存在于 Admin Plus，但登录、2FA、刷新和登出都代理到本地 Sub2API 认证接口。
+- 登录页可以存在于 Admin Plus，但用户、密码哈希、角色、状态和 TOTP 均从 Sub2API 只读数据库读取。
 - 页面视觉、表格、弹窗、表单、布局复用 Sub2API 现有风格。
 - MVP 1 优先做运营后台页面，不做营销页。
 
@@ -497,36 +497,33 @@ extension/
 
 ## 6. 认证复用
 
-建议后端包：
+当前后端身份边界：
 
 ```text
-backend/internal/adminplus/auth/
-  login_proxy.go
-  refresh_proxy.go
-  logout_proxy.go
-  verifier.go
-  principal.go
+backend/internal/adminplus/app/sub2api/identity_repository.go
+backend/internal/service/auth_service.go
+backend/internal/server/middleware/admin_auth.go
 ```
 
-建议路由：
+现有路由：
 
 ```text
-POST /api/admin-plus/auth/login
-POST /api/admin-plus/auth/login/2fa
-POST /api/admin-plus/auth/refresh
-POST /api/admin-plus/auth/logout
-GET  /api/admin-plus/auth/me
+POST /api/v1/auth/login
+POST /api/v1/auth/login/2fa
+POST /api/v1/auth/refresh
+POST /api/v1/auth/logout
+GET  /api/v1/auth/me
 ```
 
 实现规则：
 
 - Admin Plus 可以有自己的登录页。
-- 登录请求由 Admin Plus 后端代理到本地 Sub2API `/api/auth/login` 等现有认证接口。
-- 登录成功后必须校验用户是 Sub2API 管理员。
-- Admin Plus 不签发自己的用户 token。
+- 登录请求由 SuperLLM 使用 `SUB2API_READONLY_DATABASE_URL` 直接读取并验证 Sub2API 用户。
+- 只允许 Sub2API 中 `role=admin`、`status=active` 且未删除的用户登录。
+- SuperLLM 签发自己的 access/refresh token，并在鉴权时重新读取 Sub2API 身份和密码派生版本。
 - Admin Plus 不保存管理员密码。
 - Admin Plus 不维护用户表、角色表和权限表。
-- Admin Plus 前端可以把 Sub2API token 存在自己的域名下，不要求与 Sub2API 后台同时登录。
+- 缺少只读身份源时认证失败关闭，不回退到 SuperLLM 主库的 `users` 表。
 
 ## 7. 数据库与 Redis
 
@@ -789,7 +786,7 @@ Chrome 插件 -> Sub2API 管理员 token
 ## 13. 最小落地顺序
 
 1. 在 `backend/internal/adminplus/config` 增加 Admin Plus 配置。
-2. 在 `backend/internal/adminplus/auth` 完成 Sub2API 登录代理和管理员校验。
+2. 在 `backend/internal/adminplus/app/sub2api` 通过只读数据库完成 Sub2API 管理员身份读取和校验。
 3. 在 `backend/internal/server/routes/adminplus.go` 注册 `/api/admin-plus/*`。
 4. 在 `backend/internal/handler/adminplus` 增加 `auth/me` 和健康检查接口。
 5. 建立 Admin Plus 独立 DB 连接和迁移目录。

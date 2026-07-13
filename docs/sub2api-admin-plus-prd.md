@@ -92,9 +92,9 @@
 认证来源：
 
 - Admin Plus 独立访问，不依赖 iframe、跨子域共享 cookie 或同时登录状态。
-- Admin Plus 可以提供自己的登录页，但登录、2FA、刷新 token 和登出动作都代理到本地 Sub2API 认证接口。
-- Admin Plus 前端保存的是 Sub2API 签发的 access token 和 refresh token，存储位置在 Admin Plus 自己域名下。
-- Admin Plus 后端校验请求时，复用 Sub2API JWT/管理员判断逻辑，或调用本地 Sub2API `/api/v1/auth/me` 校验当前 token。
+- Admin Plus 可以提供自己的登录页，用户、密码哈希、角色、状态和 TOTP 均从 Sub2API 只读数据库读取。
+- Admin Plus 前端保存 SuperLLM 签发的 access token 和 refresh token，存储位置在 Admin Plus 自己域名下。
+- Admin Plus 后端校验请求时重新读取 Sub2API 用户，并校验 active 管理员状态和密码派生 token 版本。
 - 服务端执行写操作调用本地 Sub2API 时，使用经校验后的管理员 JWT 或本地 Sub2API 允许的 Admin API Key，具体按 Sub2API 现有接口要求选择。
 - Chrome 插件与 admin-plus 通信时，使用 admin-plus 生成的短期设备 token，设备 token 只代表插件任务执行权限，不代表用户体系。
 - Chrome 插件不提供管理员登录 UI，不接收 Sub2API 管理员账号、密码、2FA 或 OAuth 输入；未连接时只打开 sub2apiplus Web 登录/授权页，登录和授权都在 Web 页面完成。
@@ -111,10 +111,10 @@
 
 - Admin Plus 有独立登录入口。
 - 登录表单提交给 Admin Plus 后端。
-- Admin Plus 后端代理调用本地 Sub2API `/api/v1/auth/login`、`/api/v1/auth/login/2fa`、`/api/v1/auth/refresh` 和 `/api/v1/auth/logout`。
-- Sub2API 负责密码校验、2FA 校验、refresh token 管理、用户状态和管理员角色判断。
+- Admin Plus 后端通过 `SUB2API_READONLY_DATABASE_URL` 读取并验证 Sub2API 用户、密码、2FA、状态和管理员角色。
+- Admin Plus 负责签发和刷新自己的 token，但每次鉴权都以 Sub2API 当前身份状态为准。
 - Admin Plus 只接受 `role=admin` 的 Sub2API 用户。
-- Admin Plus 不签发自己的用户 token，不保存用户密码，不维护用户表。
+- Admin Plus 不保存用户密码，不创建、更新或维护用户表。
 
 这样可以支持：
 
@@ -132,7 +132,7 @@ Admin Plus: https://sub2api-plus.demo.com
 - 在 Chrome 插件内实现 Admin Plus 登录表单。
 - 给 Sub2API 增加 SSO 或 token handoff PR。
 
-复制 Sub2API 后端代码的价值在于复用 DTO、JWT 校验、管理员判断、响应结构和只读查询模型；MVP 登录链路优先走 Sub2API 现有认证 API 代理，避免在 admin-plus 中复制一套会写 Sub2API DB/Redis 的认证服务。
+复制 Sub2API 后端代码的价值在于复用 DTO、密码和 TOTP 校验、管理员判断、响应结构和只读查询模型；登录链路通过只读身份端口完成，不写 Sub2API DB/Redis。
 
 ## 6. 上游供应商支持策略
 
@@ -1016,23 +1016,22 @@ sequenceDiagram
   participant A as 管理员
   participant P as Admin Plus 前端
   participant B as Admin Plus 后端
-  participant S as 本地 Sub2API Auth API
-  participant API as Sub2API Admin API
+  participant S as Sub2API 只读身份库
 
   A->>P: 打开 Admin Plus 独立地址
   alt 未登录
     P-->>A: 显示 Admin Plus 登录页
     A->>P: 输入 Sub2API 管理员账号、密码、2FA
     P->>B: POST /auth/login
-    B->>S: 代理调用 /api/v1/auth/login 或 /login/2fa
-    S-->>B: 返回 Sub2API token 和用户信息
-    B->>B: 校验 role=admin
+    B->>S: 读取用户、密码哈希、角色、状态和 TOTP
+    S-->>B: 返回权威用户身份
+    B->>B: 校验 active admin 并签发 SuperLLM token
     B-->>P: 返回 token 和管理员信息
     P->>P: 在 Admin Plus 域名下保存 token
   end
-  P->>B: Authorization: Bearer Sub2API JWT
-  B->>API: 校验 token / 查询管理员身份
-  API-->>B: 返回管理员信息或 401/403
+  P->>B: Authorization: Bearer SuperLLM JWT
+  B->>S: 重新读取用户状态和 token 版本
+  S-->>B: 返回管理员信息或 401/403
   B-->>P: 返回 Admin Plus 页面数据或登录状态
 ```
 
@@ -2018,7 +2017,7 @@ MVP 必须满足：
 
 ## 26. 待确认问题
 
-1. Admin Plus 登录代理是否只支持本地 Sub2API 管理员账号密码登录，还是也需要代理 Sub2API 已启用的 OAuth 登录入口。
+1. 后续是否需要在只读身份模式之外支持 Sub2API 已启用的 OAuth 登录信任链。
 2. 首批供应商是否能提供只读数据库连接；不能提供时是否只能依赖 Chrome 插件账号密码或临时 token 采集。
 3. 供应商账单是否包含 request_id；如果没有，需要确认弱匹配容忍度。
 4. 费率来源以供应商渠道定价为准，还是以供应商网页展示价格为准。

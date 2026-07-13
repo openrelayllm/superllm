@@ -318,14 +318,15 @@ Local dev stack:
 make dev
 ```
 
-The local script uses native PostgreSQL/Redis binaries only; it does not install or start Docker. During local debug startup the default admin account is reset/created so stale local data cannot break login.
+The local script uses native PostgreSQL/Redis binaries only; it does not install or start Docker. It does not create or reset administrators. Set `SUB2API_READONLY_DATABASE_URL` to a Sub2API database that contains an active administrator before logging in.
 
 Defaults:
 
 - Frontend: `http://127.0.0.1:3000`
 - Backend: `http://127.0.0.1:8080`
-- Admin: `admin@superllm.local` / `AdminPlus@123456`
-- PostgreSQL: `root:root@127.0.0.1:5432/superllm`
+- Identity: an active administrator from the configured Sub2API database
+- SuperLLM PostgreSQL: `root:root@127.0.0.1:5432/superllm`
+- Sub2API PostgreSQL: configured through `SUB2API_READONLY_DATABASE_URL`
 - Redis: `127.0.0.1:6379/0`
 
 You can override ports and local infrastructure through environment variables:
@@ -453,3 +454,5 @@ If neither variable is set, SuperLLM reuses the current Redis client. The runtim
 - Product requirements: `docs/sub2api-admin-plus-prd.md`
 - Code structure plan: `docs/code-structure.md`
 - MVP baseline/progress: `docs/mvp0-baseline.md`
+- Deployment guide: `deploy/README.md`
+- Linux deployment and rollback runbook: `skills/superllm-deploy/references/deploy-runbook.md`

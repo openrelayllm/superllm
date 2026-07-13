@@ -66,10 +66,10 @@ make test-backend
 make test-frontend
 ```
 
-本地启动默认账号：
+本地登录身份：
 
 ```text
-admin@superllm.local / AdminPlus@123456
+使用 SUB2API_READONLY_DATABASE_URL 指向的 Sub2API 数据库中的 active 管理员
 ```
 
 默认连接：
@@ -78,10 +78,11 @@ admin@superllm.local / AdminPlus@123456
 Backend  http://127.0.0.1:8080
 Frontend http://127.0.0.1:3000
 PostgreSQL root:root@127.0.0.1:5432/superllm
+Sub2API 通过 SUB2API_READONLY_DATABASE_URL 连接
 Redis 127.0.0.1:6379/0
 ```
 
-`./scripts/start-dev.sh` 只使用本机 PostgreSQL/Redis 命令行工具，不安装、不启动 Docker；本地 debug 启动会确保默认管理员账号可登录。
+`./scripts/start-dev.sh` 只使用本机 PostgreSQL/Redis 命令行工具，不安装、不启动 Docker，也不会创建或重置管理员。启动前必须准备可读的 Sub2API 数据库和 active 管理员。
 
 如需换端口：
 
@@ -91,7 +92,7 @@ SERVER_PORT=8081 FRONTEND_PORT=3001 make dev
 
 ## 当前注意事项
 
-- `backend/go.mod` 要求 Go `1.26.4`。本机如果是 Go `1.24.3`，默认 Go toolchain 可自动下载并使用 `1.26.4`；如果环境禁用了 toolchain，则需要手动安装或切换 Go 版本。
+- `backend/go.mod` 要求 Go `1.26.5`。本机 Go 版本较低时，默认 Go toolchain 可自动下载并使用 `1.26.5`；如果环境禁用了 toolchain，则需要手动安装或切换 Go 版本。
 - 前端依赖使用 pnpm，不要用 npm 生成 lockfile。
 - `docs/sub2api-admin-plus-prd.md` 是产品边界来源。
 - `docs/code-structure.md` 是后续代码拆分和模块落地来源。

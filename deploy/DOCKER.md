@@ -35,13 +35,13 @@ docker compose -f docker-compose.local.yml logs -f superllm
 
 To pin a release image, set `ADMIN_PLUS_IMAGE=wutongci/superllm:X.Y.Z` in `.env`.
 
-## v0.2 Data Boundary
+## Data Boundary
 
-The current v0.2 runtime uses one application database connection. SuperLLM tables use the `admin_plus_*` naming convention, but the runtime does not yet support a separate `ADMIN_PLUS_DATABASE_URL`.
+SuperLLM uses its configured `DATABASE_*` connection for its own read/write database and `SUB2API_READONLY_DATABASE_URL` for authoritative Sub2API identities and linked account data. Cross-database views are merged in the application instead of joining tables across PostgreSQL databases.
 
 For production, deploy SuperLLM with its own independent PostgreSQL database named `superllm`. Do not point it at an existing production Sub2API database.
 
-Strict sidecar deployment with both a Sub2API readonly database and an SuperLLM write database requires a backend connection split before it can be expressed safely in Compose.
+`ADMIN_PLUS_DATABASE_URL` is not required or supported; configure the primary database through `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_USER`, `DATABASE_PASSWORD`, and `DATABASE_DBNAME`.
 
 ## Environment Variables
 
