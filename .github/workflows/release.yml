@@ -18,7 +18,6 @@ jobs:
   release:
     runs-on: ubuntu-latest
     outputs:
-      tag_name: ${{ steps.release_meta.outputs.tag_name }}
       version: ${{ steps.release_meta.outputs.version }}
     steps:
       - name: Checkout tag
@@ -38,7 +37,6 @@ jobs:
           fi
           VERSION="${TAG_NAME#v}"
           echo "$VERSION" > backend/cmd/server/VERSION
-          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Publishing SuperLLM $VERSION"
 
@@ -72,36 +70,13 @@ jobs:
       - name: Verify Go version
         run: go version | grep -q 'go1.26.5'
 
-      - name: Fetch tags with annotations
-        run: git fetch --tags --force
-
-      - name: Get tag message
-        id: tag_message
-        run: |
-          set -euo pipefail
-          TAG_NAME="${{ steps.release_meta.outputs.tag_name }}"
-          TAG_MESSAGE="$(git tag -l --format='%(contents:body)' "$TAG_NAME")"
-
-          echo "message<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$TAG_MESSAGE" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
-
-      - name: Set repository metadata
-        id: repo
-        run: |
-          echo "owner_lower=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
-          echo "name=${{ github.event.repository.name }}" >> "$GITHUB_OUTPUT"
-
       - name: Publish Linux release assets
         uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'
-          args: release --clean --skip=validate --skip=docker
+          args: release --clean --skip=validate --config=.goreleaser.artifacts.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_MESSAGE: ${{ steps.tag_message.outputs.message }}
-          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
-          GITHUB_REPO_NAME: ${{ steps.repo.outputs.name }}
 
   sync-version-file:
     needs: release
