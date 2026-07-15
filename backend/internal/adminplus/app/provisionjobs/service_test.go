@@ -275,6 +275,38 @@ func TestServiceProvisionAllRetriesOnlyFailedSupplierGroup(t *testing.T) {
 	require.Equal(t, []int64{10, 20, 20}, keyProvisioner.ensureGroupIDs())
 }
 
+func TestServiceProvisionAllStopsAfterProviderKeyLimitReached(t *testing.T) {
+	repo := newProvisionJobsMemoryRepository()
+	now := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	keyProvisioner := &stubKeyProvisioner{
+		plan: &supplierkeys.EnsureAllPlan{Items: []supplierkeys.ProvisionGroupPlan{
+			{SupplierGroupID: 10, ExternalGroupID: "g10", GroupName: "First", ProviderFamily: "openai", Action: "create"},
+			{SupplierGroupID: 20, ExternalGroupID: "g20", GroupName: "Second", ProviderFamily: "openai", Action: "create"},
+			{SupplierGroupID: 30, ExternalGroupID: "g30", GroupName: "Third", ProviderFamily: "openai", Action: "create"},
+		}},
+		failGroupID: 20,
+		failCode:    "SUPPLIER_KEY_LIMIT_REACHED",
+	}
+	service := NewService(repo, nil, nil, keyProvisioner)
+	service.now = func() time.Time { return now }
+
+	submitted, err := service.Submit(context.Background(), SubmitInput{
+		JobType: adminplusdomain.SupplierProvisionJobTypeProvisionAllGroupKeys, SupplierID: 7, IdempotencyKey: "supplier-7-limit",
+		Request: map[string]any{"local_account_base_url": "https://relay.example.com/v1", "runtime_status": string(adminplusdomain.SupplierRuntimeStatusMonitorOnly), "health_status": string(adminplusdomain.SupplierHealthStatusNormal)},
+	})
+	require.NoError(t, err)
+
+	_, err = service.RunOnce(context.Background(), "worker-1")
+	require.NoError(t, err)
+	stored, err := service.Get(context.Background(), submitted.JobID)
+	require.NoError(t, err)
+	require.Equal(t, adminplusdomain.SupplierProvisionStatusPartialSucceeded, stored.Status)
+	require.Equal(t, []int64{10, 20}, keyProvisioner.ensureGroupIDs())
+	require.Equal(t, adminplusdomain.SupplierProvisionStatusDead, stored.Steps[1].Status)
+	require.Equal(t, adminplusdomain.SupplierProvisionStatusSkipped, stored.Steps[2].Status)
+	require.Equal(t, "SUPPLIER_KEY_LIMIT_REACHED", stored.Steps[2].ErrorCode)
+}
+
 func TestProvisionJobErrorMessagePreservesNonSensitiveCause(t *testing.T) {
 	err := infraerrors.New(500, "ADMIN_PLUS_INTERNAL_ERROR", infraerrors.UnknownMessage).
 		WithCause(errors.New("decrypt: message authentication failed"))
@@ -304,6 +336,7 @@ type stubKeyProvisioner struct {
 	plan        *supplierkeys.EnsureAllPlan
 	ensureCalls []supplierkeys.EnsureGroupInput
 	failGroupID int64
+	failCode    string
 }
 
 func (s *stubKeyProvisioner) Provision(context.Context, supplierkeys.ProvisionKeyInput) (*supplierkeys.ProvisionKeyResult, error) {
@@ -323,12 +356,16 @@ func (s *stubKeyProvisioner) PlanEnsureAll(_ context.Context, in supplierkeys.En
 func (s *stubKeyProvisioner) EnsureGroup(_ context.Context, in supplierkeys.EnsureGroupInput) (*supplierkeys.EnsureAllResultItem, error) {
 	s.ensureCalls = append(s.ensureCalls, in)
 	if s.failGroupID == in.SupplierGroupID {
+		code := s.failCode
+		if code == "" {
+			code = "TEST_GROUP_FAILED"
+		}
 		return &supplierkeys.EnsureAllResultItem{
 			SupplierGroupID: in.SupplierGroupID,
 			Action:          "failed",
-			ErrorCode:       "TEST_GROUP_FAILED",
+			ErrorCode:       code,
 			ErrorMessage:    "group failed",
-		}, infraerrors.New(502, "TEST_GROUP_FAILED", "group failed")
+		}, infraerrors.New(409, code, "group failed")
 	}
 	return &supplierkeys.EnsureAllResultItem{
 		SupplierGroupID:        in.SupplierGroupID,
@@ -519,6 +556,24 @@ func (r *provisionJobsMemoryRepository) MarkStepFailed(_ context.Context, stepID
 	step.ErrorMessage = errorMessage
 	step.NextRunAt = nextRunAt
 	step.UpdatedAt = now
+	return nil
+}
+
+func (r *provisionJobsMemoryRepository) SkipPendingSteps(_ context.Context, jobID int64, errorCode string, errorMessage string, now time.Time) error {
+	for _, stepID := range r.jobSteps[jobID] {
+		step := r.steps[stepID]
+		if step == nil {
+			continue
+		}
+		if step.Status != adminplusdomain.SupplierProvisionStatusQueued && step.Status != adminplusdomain.SupplierProvisionStatusRetryableFailed {
+			continue
+		}
+		step.Status = adminplusdomain.SupplierProvisionStatusSkipped
+		step.ErrorCode = errorCode
+		step.ErrorMessage = errorMessage
+		step.UpdatedAt = now
+		step.FinishedAt = &now
+	}
 	return nil
 }
 

@@ -15,6 +15,7 @@
 </template>
 
 <script setup lang="ts">
+import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SupplierTableSection from './suppliers/SupplierTableSection.vue'
 import SupplierRowActionsMenu from './suppliers/SupplierRowActionsMenu.vue'
@@ -30,4 +31,12 @@ import SupplierRepairDeleteDialogs from './suppliers/SupplierRepairDeleteDialogs
 import { useSuppliersViewModel } from './suppliers/useSuppliersViewModel'
 
 const vm = useSuppliersViewModel()
+const route = useRoute()
+const router = useRouter()
+
+const legacySupplierID = route.query.open === 'groups' ? Number(route.query.supplier_id || 0) : 0
+if (legacySupplierID > 0) {
+  const query = route.query.tool === 'key-plan' ? { create_keys: '1' } : undefined
+  void router.replace({ path: `/admin/suppliers/${legacySupplierID}`, query })
+}
 </script>

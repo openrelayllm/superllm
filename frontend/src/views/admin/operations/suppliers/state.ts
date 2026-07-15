@@ -1,5 +1,5 @@
 import { computed, reactive, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { useAppStore } from '@/stores/app'
@@ -12,6 +12,7 @@ import type { ChannelStatusWindow, ScheduleListStatusFilter, ScheduleListLocalGr
 export function createSuppliersState() {
   const appStore = useAppStore()
   const route = useRoute()
+  const router = useRouter()
   const handledDeepLinkKey = ref('')
 
   const loading = ref(false)
@@ -293,6 +294,7 @@ export function createSuppliersState() {
   return {
     appStore,
     route,
+    router,
     handledDeepLinkKey,
     loading,
     submitting,

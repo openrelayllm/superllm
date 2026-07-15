@@ -1807,6 +1807,10 @@ func (r *operationsProvisionRepository) MarkStepFailed(context.Context, int64, a
 	return nil
 }
 
+func (r *operationsProvisionRepository) SkipPendingSteps(context.Context, int64, string, string, time.Time) error {
+	return nil
+}
+
 func (r *operationsProvisionRepository) RecordAttempt(context.Context, provisionjobsapp.Attempt) error {
 	return nil
 }

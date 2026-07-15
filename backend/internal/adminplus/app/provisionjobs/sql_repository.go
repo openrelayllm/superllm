@@ -517,6 +517,21 @@ func (r *SQLRepository) MarkStepFailed(ctx context.Context, stepID int64, status
 	`, now, string(status), nextRunAt, errorCode, errorMessage, stepID)
 }
 
+func (r *SQLRepository) SkipPendingSteps(ctx context.Context, jobID int64, errorCode string, errorMessage string, now time.Time) error {
+	return r.exec(ctx, `
+		UPDATE supplier_provision_steps
+		SET status = 'skipped',
+			locked_by = '',
+			locked_until = NULL,
+			error_code = $3,
+			error_message = $4,
+			finished_at = $1,
+			updated_at = $1
+		WHERE job_id = $2
+			AND status IN ('queued', 'retryable_failed')
+	`, now, jobID, errorCode, errorMessage)
+}
+
 func (r *SQLRepository) RecordAttempt(ctx context.Context, attempt Attempt) error {
 	if r == nil || r.db == nil {
 		return dbNotConfigured()

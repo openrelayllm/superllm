@@ -24,6 +24,7 @@ describe('adminPlusRoutes', () => {
       '/admin/dashboard',
       '/admin/ops',
       '/admin/suppliers',
+      '/admin/suppliers/:supplierId',
       '/admin/supplier-bindings',
       '/admin/local-account-ops',
       '/admin/supplier-rate-checks',

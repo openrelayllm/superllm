@@ -62,6 +62,12 @@ export const adminPlusRoutes: RouteRecordRaw[] = [
     meta: adminMeta('供应商管理')
   },
   {
+    path: '/admin/suppliers/:supplierId',
+    name: 'AdminPlusSupplierDetail',
+    component: () => import('@/views/admin/operations/SupplierDetailView.vue'),
+    meta: adminMeta('供应商详情')
+  },
+  {
     path: '/admin/supplier-bindings',
     name: 'AdminPlusSupplierBindings',
     component: () => import('@/views/admin/operations/SupplierAccountsView.vue'),

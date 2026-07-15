@@ -3,6 +3,8 @@ import type { Supplier } from '@/api/admin/adminPlus'
 import { ctxFn, ctxValue } from './ctxProxy'
 export function attachSupplierDialogs(ctx: any) {
   const appStore = ctxValue(ctx, 'appStore')
+  const route = ctxValue(ctx, 'route')
+  const router = ctxValue(ctx, 'router')
   const submitting = ctxValue(ctx, 'submitting')
   const editorOpen = ctxValue(ctx, 'editorOpen')
   const statusDialogOpen = ctxValue(ctx, 'statusDialogOpen')
@@ -250,7 +252,7 @@ export function attachSupplierDialogs(ctx: any) {
     }
   }
 
-  function openGroupsDialog(supplier: Supplier) {
+  function initializeGroupsWorkspace(supplier: Supplier) {
     closeRowActionsMenu()
     stopProvisionJobPolling()
     groupsSupplier.value = supplier
@@ -270,6 +272,14 @@ export function attachSupplierDialogs(ctx: any) {
     groupFilters.status = ''
     groupsDialogOpen.value = true
     void Promise.all([reloadGroupSession(), loadCurrentGroups()])
+  }
+
+  function openGroupsDialog(supplier: Supplier) {
+    if (route.name !== 'AdminPlusSupplierDetail') {
+      void router.push({ path: `/admin/suppliers/${supplier.id}` })
+      return
+    }
+    initializeGroupsWorkspace(supplier)
   }
 
   function closeGroupsDialog() {
@@ -386,6 +396,7 @@ export function attachSupplierDialogs(ctx: any) {
     startChannelStatusAutoRefresh,
     stopChannelStatusAutoRefresh,
     openGroupsDialog,
+    initializeGroupsWorkspace,
     closeGroupsDialog,
     probeCurrentSession,
     loginCurrentSession,

@@ -79,6 +79,7 @@ type ProvisionGroupPlan struct {
 	GroupActiveKeyCount           int                               `json:"group_active_key_count,omitempty"`
 	GroupRemainingKeySlots        int                               `json:"group_remaining_key_slots,omitempty"`
 	BlockedReason                 string                            `json:"blocked_reason,omitempty"`
+	Warnings                      []string                          `json:"warnings,omitempty"`
 }
 
 type EnsureAllPlan struct {
@@ -92,6 +93,7 @@ type EnsureAllPlan struct {
 	ToReuse           int                  `json:"to_reuse"`
 	AlreadySatisfied  int                  `json:"already_satisfied"`
 	Blocked           int                  `json:"blocked"`
+	Warnings          []string             `json:"warnings,omitempty"`
 	Items             []ProvisionGroupPlan `json:"items"`
 }
 
@@ -666,11 +668,8 @@ func (s *Service) planEnsureAll(ctx context.Context, normalized EnsureAllInput, 
 			}
 		}
 		if hasProviderSnapshot && providerSnapshot.Incomplete {
-			item.Action = "blocked"
-			item.BlockedReason = "provider_key_capacity_incomplete"
-			plan.Blocked++
-			plan.Items = append(plan.Items, item)
-			continue
+			item.Warnings = append(item.Warnings, "provider_key_capacity_incomplete")
+			plan.Warnings = appendUniqueString(plan.Warnings, "provider_key_capacity_incomplete")
 		}
 		groupActiveCount := activeKeyCountsByGroup[group.ID]
 		if hasProviderSnapshot {
@@ -698,10 +697,11 @@ func (s *Service) planEnsureAll(ctx context.Context, normalized EnsureAllInput, 
 			plan.Blocked++
 			plan.Items = append(plan.Items, item)
 		default:
-			item.Action = "blocked"
-			item.BlockedReason = "key_capacity_unknown"
-			plan.Blocked++
-			plan.Items = append(plan.Items, item)
+			item.Action = "create"
+			item.Warnings = append(item.Warnings, "key_capacity_unknown")
+			plan.Warnings = appendUniqueString(plan.Warnings, "key_capacity_unknown")
+			createCandidates = append(createCandidates, item)
+			continue
 		}
 	}
 	sortProvisionGroupPlansByPriority(createCandidates, normalized.SupplierGroupPriorityIDs)
@@ -785,7 +785,18 @@ func planHasOnlyPartialProvisionSkippableBlocks(plan *EnsureAllPlan) bool {
 func IsPartialProvisionSkippableBlockReason(reason string) bool {
 	return reason == "key_capacity_exhausted" ||
 		reason == "group_key_capacity_exhausted" ||
+		reason == "group_key_capacity_unknown" ||
+		reason == "group_key_provisioning_unsupported" ||
 		reason == "provider_key_exists_unbound"
+}
+
+func appendUniqueString(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func planHasActionableItems(plan *EnsureAllPlan) bool {
@@ -1068,9 +1079,6 @@ func (s *Service) ensureSupplierKeyCapacityForCreate(ctx context.Context, suppli
 	}
 	if hasProviderSnapshot && group != nil && snapshot.hasActiveExternalGroup(group.ExternalGroupID) {
 		return infraerrors.New(http.StatusConflict, "SUPPLIER_PROVIDER_KEY_UNBOUND", "third-party provider already has an active key for this group; import or release it before provisioning")
-	}
-	if hasProviderSnapshot && snapshot.Incomplete {
-		return infraerrors.New(http.StatusConflict, "SUPPLIER_PROVIDER_KEY_CAPACITY_INCOMPLETE", "third-party provider key list was not fully read; retry sync before provisioning")
 	}
 	blockReason, err := s.groupKeyCapacityBlockReasonForCreate(ctx, supplier, group, snapshot, hasProviderSnapshot)
 	if err != nil {

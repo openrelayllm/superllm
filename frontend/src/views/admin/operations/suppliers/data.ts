@@ -7,6 +7,7 @@ import { ctxFn, ctxValue } from './ctxProxy'
 export function attachSuppliersData(ctx: any) {
   const appStore = ctxValue(ctx, 'appStore')
   const route = ctxValue(ctx, 'route')
+  const router = ctxValue(ctx, 'router')
   const handledDeepLinkKey = ctxValue(ctx, 'handledDeepLinkKey')
   const loading = ctxValue(ctx, 'loading')
   const scheduleListDialogOpen = ctxValue(ctx, 'scheduleListDialogOpen')
@@ -46,7 +47,6 @@ export function attachSuppliersData(ctx: any) {
   const scheduleChannelKey = ctxFn(ctx, 'scheduleChannelKey')
   const channelStatusErrorMessage = ctxFn(ctx, 'channelStatusErrorMessage')
   const openGroupsDialog = ctxFn(ctx, 'openGroupsDialog')
-  const previewEnsureCurrentKeys = ctxFn(ctx, 'previewEnsureCurrentKeys')
   const loadCurrentGroups = ctxFn(ctx, 'loadCurrentGroups')
   const mergeChannelCheckSnapshots = ctxFn(ctx, 'mergeChannelCheckSnapshots')
   async function loadSuppliers() {
@@ -267,12 +267,8 @@ export function attachSuppliersData(ctx: any) {
     const supplier = suppliers.value.find((item) => item.id === supplierID)
     if (!supplier) return
     handledDeepLinkKey.value = deepLinkKey
-    openGroupsDialog(supplier)
-    if (tool === 'key-plan') {
-      window.setTimeout(() => {
-        void previewEnsureCurrentKeys()
-      }, 0)
-    }
+    const query = tool === 'key-plan' ? { create_keys: '1' } : undefined
+    void router.replace({ path: `/admin/suppliers/${supplier.id}`, query })
   }
 
   async function reloadCurrentSession() {

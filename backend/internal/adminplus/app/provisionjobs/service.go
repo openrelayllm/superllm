@@ -58,6 +58,7 @@ type Repository interface {
 	MarkStepRunning(ctx context.Context, stepID int64, workerID string, now time.Time) error
 	MarkStepSucceeded(ctx context.Context, stepID int64, result map[string]any, now time.Time) error
 	MarkStepFailed(ctx context.Context, stepID int64, status adminplusdomain.SupplierProvisionStatus, errorCode string, errorMessage string, nextRunAt time.Time, now time.Time) error
+	SkipPendingSteps(ctx context.Context, jobID int64, errorCode string, errorMessage string, now time.Time) error
 	RecordAttempt(ctx context.Context, attempt Attempt) error
 	ListPendingOutboxEvents(ctx context.Context, limit int, now time.Time) ([]OutboxEvent, error)
 	MarkOutboxPublished(ctx context.Context, eventID string, now time.Time) error
@@ -411,8 +412,11 @@ func (s *Service) executeJob(ctx context.Context, workerID string, job *adminplu
 			code := firstNonEmpty(infraerrors.Reason(execErr), "SUPPLIER_PROVISION_JOB_FAILED")
 			message := provisionJobErrorMessage(execErr)
 			next := retryAt(now, step.Attempts+1)
-			status := adminplusdomain.SupplierProvisionStatusRetryableFailed
-			if step.Attempts+1 >= step.MaxAttempts {
+			status := terminalProvisionFailureStatus(code)
+			if status == "" {
+				status = adminplusdomain.SupplierProvisionStatusRetryableFailed
+			}
+			if status == adminplusdomain.SupplierProvisionStatusRetryableFailed && step.Attempts+1 >= step.MaxAttempts {
 				status = adminplusdomain.SupplierProvisionStatusDead
 			}
 			_ = s.repo.MarkStepFailed(ctx, step.ID, status, code, message, next, now)
@@ -421,6 +425,10 @@ func (s *Service) executeJob(ctx context.Context, workerID string, job *adminplu
 				Operation: string(step.StepType), Status: string(status), RequestSnapshot: step.RequestSnapshot,
 				ErrorCode: code, ErrorMessage: message, DurationMS: durationMS,
 			})
+			if shouldStopRemainingProvisionSteps(job.JobType, code) {
+				_ = s.repo.SkipPendingSteps(ctx, job.ID, code, skippedProvisionMessage(code), now)
+				break
+			}
 			continue
 		}
 		if err := s.repo.MarkStepSucceeded(ctx, step.ID, result, now); err != nil {
@@ -569,6 +577,7 @@ func jobStatusFromSteps(steps []*adminplusdomain.SupplierProvisionStep, fallback
 	retryable := 0
 	dead := 0
 	manual := 0
+	skipped := 0
 	next := time.Time{}
 	var firstFailed *adminplusdomain.SupplierProvisionStep
 	for _, step := range steps {
@@ -596,6 +605,11 @@ func jobStatusFromSteps(steps []*adminplusdomain.SupplierProvisionStep, fallback
 			if next.IsZero() || step.NextRunAt.Before(next) {
 				next = step.NextRunAt
 			}
+		case adminplusdomain.SupplierProvisionStatusSkipped:
+			skipped++
+			if firstFailed == nil {
+				firstFailed = step
+			}
 		default:
 			retryable++
 			if firstFailed == nil {
@@ -616,13 +630,43 @@ func jobStatusFromSteps(steps []*adminplusdomain.SupplierProvisionStep, fallback
 	if retryable > 0 {
 		return adminplusdomain.SupplierProvisionStatusRetryableFailed, code, message, next
 	}
-	if succeeded > 0 && (dead > 0 || manual > 0) {
+	if succeeded > 0 && (dead > 0 || manual > 0 || skipped > 0) {
 		return adminplusdomain.SupplierProvisionStatusPartialSucceeded, code, message, now
 	}
 	if manual > 0 {
 		return adminplusdomain.SupplierProvisionStatusManualRequired, code, message, now
 	}
 	return adminplusdomain.SupplierProvisionStatusDead, code, message, now
+}
+
+func terminalProvisionFailureStatus(code string) adminplusdomain.SupplierProvisionStatus {
+	switch strings.TrimSpace(code) {
+	case "SUPPLIER_SESSION_EXPIRED", "SUPPLIER_SESSION_PERMISSION_DENIED", "BROWSER_CHALLENGE_REQUIRED", "LOGIN_MFA_REQUIRED":
+		return adminplusdomain.SupplierProvisionStatusManualRequired
+	case "SUPPLIER_KEY_LIMIT_REACHED", "SUPPLIER_KEY_QUOTA_INVALID", "SUPPLIER_KEY_PROVIDER_UNSUPPORTED", "SUPPLIER_GROUP_KEY_PROVISIONING_UNSUPPORTED":
+		return adminplusdomain.SupplierProvisionStatusDead
+	default:
+		return ""
+	}
+}
+
+func shouldStopRemainingProvisionSteps(jobType adminplusdomain.SupplierProvisionJobType, code string) bool {
+	if jobType != adminplusdomain.SupplierProvisionJobTypeProvisionAllGroupKeys {
+		return false
+	}
+	switch strings.TrimSpace(code) {
+	case "SUPPLIER_KEY_LIMIT_REACHED", "SUPPLIER_KEY_QUOTA_INVALID", "SUPPLIER_SESSION_EXPIRED", "SUPPLIER_SESSION_PERMISSION_DENIED", "BROWSER_CHALLENGE_REQUIRED", "LOGIN_MFA_REQUIRED":
+		return true
+	default:
+		return false
+	}
+}
+
+func skippedProvisionMessage(code string) string {
+	if code == "SUPPLIER_KEY_LIMIT_REACHED" {
+		return "第三方 Key 数量已达上限，剩余分组未执行"
+	}
+	return "供应商会话需要重新验证，剩余分组未执行"
 }
 
 func failedStepError(step *adminplusdomain.SupplierProvisionStep, fallbackErr error) (string, string) {

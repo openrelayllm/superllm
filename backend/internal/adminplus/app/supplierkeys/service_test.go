@@ -206,6 +206,38 @@ func TestServicePlanEnsureAllUsesKnownProviderCapacityWhenSupplierPolicyUnknown(
 	require.Zero(t, plan.Blocked)
 }
 
+func TestServicePlanEnsureAllTreatsUnknownProviderCapacityAsAdvisory(t *testing.T) {
+	repo := NewMemoryRepository()
+	repo.PutSupplier(&adminplusdomain.Supplier{
+		ID:              7,
+		Name:            "Relay",
+		Type:            adminplusdomain.SupplierTypeNewAPI,
+		RuntimeStatus:   adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:    adminplusdomain.SupplierHealthStatusNormal,
+		KeyLimitPolicy:  adminplusdomain.SupplierKeyLimitPolicyUnknown,
+		BalanceCurrency: "USD",
+	})
+	repo.PutGroup(&adminplusdomain.SupplierGroup{
+		ID: 10, SupplierID: 7, ExternalGroupID: "g10", Name: "Codex", ProviderFamily: "openai", Status: adminplusdomain.SupplierGroupStatusActive,
+	})
+	keyAdapter := &stubKeyAdapter{capacityResult: &ports.ProviderKeyCapacityResult{
+		SupplierID: 7, SystemType: "new_api", KeyLimitPolicy: adminplusdomain.SupplierKeyLimitPolicyUnknown, LimitKnown: false,
+	}}
+	svc := NewService(repo, &stubSessionReader{input: ports.SessionProbeInput{SupplierID: 7}}, keyAdapter, &stubLocalAccountCreator{})
+
+	plan, err := svc.PlanEnsureAll(context.Background(), EnsureAllInput{
+		SupplierID: 7, LocalAccountBaseURL: "https://relay.example.com/v1",
+		RuntimeStatus: adminplusdomain.SupplierRuntimeStatusMonitorOnly, HealthStatus: adminplusdomain.SupplierHealthStatusNormal, BalanceCurrency: "USD",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, plan.ToCreate)
+	require.Zero(t, plan.Blocked)
+	require.Contains(t, plan.Warnings, "key_capacity_unknown")
+	require.Equal(t, "create", supplierPlanItem(plan, 10).Action)
+	require.Contains(t, supplierPlanItem(plan, 10).Warnings, "key_capacity_unknown")
+}
+
 func TestServiceEnsureAllCompletesProviderToSub2APIFlowForDuplicateNames(t *testing.T) {
 	repo := NewMemoryRepository()
 	repo.PutSupplier(&adminplusdomain.Supplier{
@@ -1332,7 +1364,7 @@ func TestServiceImportProviderProjectionsCreatesBatchManualSecretRequiredKeys(t 
 	require.Len(t, keyAdapter.capacityCalls, 1)
 }
 
-func TestServicePlanEnsureAllBlocksWhenProviderKeyCapacityIncomplete(t *testing.T) {
+func TestServiceEnsureAllTreatsIncompleteProviderKeyCapacityAsAdvisory(t *testing.T) {
 	repo := NewMemoryRepository()
 	repo.PutSupplier(&adminplusdomain.Supplier{
 		ID:              7,
@@ -1358,6 +1390,10 @@ func TestServicePlanEnsureAllBlocksWhenProviderKeyCapacityIncomplete(t *testing.
 			LimitKnown:     false,
 			Diagnostics:    map[string]any{"truncated": true, "truncated_reason": "empty_page"},
 		},
+		resultsByGroup: map[string]*ports.ProviderKeyResult{
+			"g10": {SupplierID: 7, ExternalGroupID: "g10", ExternalKeyID: "provider-10", Name: "supplier-Low", Secret: "sk-provider-10", Status: "active"},
+			"g20": {SupplierID: 7, ExternalGroupID: "g20", ExternalKeyID: "provider-20", Name: "supplier-Mid", Secret: "sk-provider-20", Status: "active"},
+		},
 	}
 	svc := NewService(repo, &stubSessionReader{input: ports.SessionProbeInput{SupplierID: 7}}, keyAdapter, &stubLocalAccountCreator{})
 	input := EnsureAllInput{
@@ -1371,20 +1407,19 @@ func TestServicePlanEnsureAllBlocksWhenProviderKeyCapacityIncomplete(t *testing.
 	plan, err := svc.PlanEnsureAll(context.Background(), input)
 
 	require.NoError(t, err)
-	require.Equal(t, 2, plan.Blocked)
-	require.Equal(t, 0, plan.ToCreate)
-	require.Equal(t, "provider_key_capacity_incomplete", supplierPlanItem(plan, 10).BlockedReason)
-	require.Equal(t, "provider_key_capacity_incomplete", supplierPlanItem(plan, 20).BlockedReason)
+	require.Zero(t, plan.Blocked)
+	require.Equal(t, 2, plan.ToCreate)
+	require.Contains(t, plan.Warnings, "provider_key_capacity_incomplete")
+	require.Contains(t, supplierPlanItem(plan, 10).Warnings, "provider_key_capacity_incomplete")
+	require.Contains(t, supplierPlanItem(plan, 20).Warnings, "provider_key_capacity_incomplete")
 	err = ensureAllPlanCanApply(plan, true)
-	require.Error(t, err)
-	require.Equal(t, "SUPPLIER_PROVIDER_KEY_CAPACITY_INCOMPLETE", infraerrors.Reason(err))
+	require.NoError(t, err)
 
 	result, err := svc.EnsureAll(context.Background(), input)
-	require.Nil(t, result)
-	require.Error(t, err)
-	require.Equal(t, "SUPPLIER_PROVIDER_KEY_CAPACITY_INCOMPLETE", infraerrors.Reason(err))
-	require.Len(t, keyAdapter.capacityCalls, 2)
-	require.Empty(t, keyAdapter.calls)
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Created)
+	require.Zero(t, result.Failed)
+	require.Len(t, keyAdapter.calls, 2)
 }
 
 func TestServiceProvisionRequiresSecretForProviderActiveKeyWithoutLocalBinding(t *testing.T) {
@@ -1450,7 +1485,7 @@ func TestServiceProvisionRequiresSecretForProviderActiveKeyWithoutLocalBinding(t
 	require.Empty(t, keyAdapter.calls)
 }
 
-func TestServiceProvisionRejectsIncompleteProviderKeyCapacityBeforeCreate(t *testing.T) {
+func TestServiceProvisionAttemptsCreateWhenProviderKeyCapacityIsIncomplete(t *testing.T) {
 	repo := NewMemoryRepository()
 	repo.PutSupplier(&adminplusdomain.Supplier{
 		ID:              7,
@@ -1501,11 +1536,13 @@ func TestServiceProvisionRejectsIncompleteProviderKeyCapacityBeforeCreate(t *tes
 		BalanceCurrency:         "USD",
 	})
 
-	require.Nil(t, result)
-	require.Error(t, err)
-	require.Equal(t, "SUPPLIER_PROVIDER_KEY_CAPACITY_INCOMPLETE", infraerrors.Reason(err))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Key)
+	require.Equal(t, adminplusdomain.SupplierKeyStatusBound, result.Key.Status)
 	require.Len(t, keyAdapter.capacityCalls, 1)
-	require.Empty(t, keyAdapter.calls)
+	require.Len(t, keyAdapter.calls, 1)
+	require.Equal(t, "g10", keyAdapter.calls[0].ExternalGroupID)
 }
 
 func TestServiceDisableProviderKeyCallsProviderBeforeLocalProjection(t *testing.T) {
@@ -1596,7 +1633,7 @@ func TestServiceDeleteProviderKeyFailureDoesNotReleaseLocalProjection(t *testing
 	require.Empty(t, current.ErrorCode)
 }
 
-func TestServiceEnsureAllRejectsUnknownCapacityForMissingGroups(t *testing.T) {
+func TestServiceEnsureAllAttemptsUnknownCapacityForMissingGroups(t *testing.T) {
 	repo := NewMemoryRepository()
 	repo.PutSupplier(&adminplusdomain.Supplier{
 		ID:              7,
@@ -1633,10 +1670,10 @@ func TestServiceEnsureAllRejectsUnknownCapacityForMissingGroups(t *testing.T) {
 		BalanceCurrency:     "USD",
 	})
 
-	require.Nil(t, result)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "SUPPLIER_KEY_CAPACITY_UNKNOWN")
-	require.Empty(t, keyAdapter.calls)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 1, result.Created)
+	require.Len(t, keyAdapter.calls, 1)
 }
 
 func TestServiceEnsureAllAllowsExplicitPartialCapacityPlan(t *testing.T) {

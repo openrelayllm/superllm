@@ -39,10 +39,10 @@ function key(overrides: Partial<SupplierKey> = {}): SupplierKey {
 }
 
 describe('supplierProvisionPresentation', () => {
-  it('未开通分组只显示开通动作', () => {
+  it('缺少 Key 的分组显示直接创建动作', () => {
     expect(supplierGroupAction(group(), undefined)).toMatchObject({
       kind: 'provision',
-      label: '开通',
+      label: '创建 Key',
       icon: 'key',
       disabled: false
     })
@@ -61,7 +61,7 @@ describe('supplierProvisionPresentation', () => {
     expect(isRepairableSub2APILandingKey(failedKey)).toBe(true)
     expect(supplierGroupAction(group(), failedKey)).toMatchObject({
       kind: 'repair_sub2api_landing',
-      label: '修复落地',
+      label: '完成绑定',
       icon: 'link',
       disabled: false
     })

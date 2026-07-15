@@ -35,18 +35,18 @@ export function supplierGroupAction(group: Pick<SupplierGroup, 'status'>, key?: 
   if (!key) {
     return {
       kind: 'provision',
-      label: '开通',
+      label: '创建 Key',
       icon: 'key',
-      title: group.status === 'active' ? '开通第三方 Key 并同步创建真实 Sub2API 账号' : '只有有效分组可以开通',
+      title: group.status === 'active' ? '创建第三方 Key，并自动创建和绑定本地 Sub2API 账号' : '只有有效分组可以创建 Key',
       disabled: group.status !== 'active'
     }
   }
   if (isRepairableSub2APILandingKey(key)) {
     return {
       kind: 'repair_sub2api_landing',
-      label: '修复落地',
+      label: '完成绑定',
       icon: 'link',
-      title: '第三方 Key 已存在，但真实 Sub2API 分组或账号未完成落地',
+      title: '第三方 Key 已存在，但本地 Sub2API 分组或账号尚未绑定',
       disabled: group.status !== 'active'
     }
   }

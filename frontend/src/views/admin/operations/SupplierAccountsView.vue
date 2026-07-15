@@ -209,7 +209,7 @@
           </template>
 
           <template #empty>
-            <EmptyState title="暂无账号/Key 绑定" description="请在供应商管理页同步分组，并从分组行开通 Key/账号。" />
+            <EmptyState title="暂无账号/Key 绑定" description="请进入供应商详情同步分组，然后创建缺失 Key。" />
           </template>
         </DataTable>
       </template>

@@ -1446,6 +1446,7 @@ export interface EnsureSupplierKeysPlanItem {
   group_active_key_count?: number
   group_remaining_key_slots?: number
   blocked_reason?: string
+  warnings?: string[]
 }
 
 export interface EnsureSupplierKeysPlan {
@@ -1459,6 +1460,7 @@ export interface EnsureSupplierKeysPlan {
   to_reuse: number
   already_satisfied: number
   blocked: number
+  warnings?: string[]
   items: EnsureSupplierKeysPlanItem[]
 }
 
@@ -2647,6 +2649,11 @@ export interface ListAdminPlusSystemLogsParams extends AdminPlusPaginationParams
 
 export async function listSuppliers(params?: Partial<Record<'kind' | 'type' | 'runtime_status' | 'health_status' | 'capability_status' | 'integration_protocol' | 'q', string>> & AdminPlusPaginationParams): Promise<AdminPlusListResponse<Supplier>> {
   const { data } = await apiClient.get<AdminPlusListResponse<Supplier>>('/admin-plus/suppliers', { params })
+  return data
+}
+
+export async function getSupplier(id: number): Promise<Supplier> {
+  const { data } = await apiClient.get<Supplier>(`/admin-plus/suppliers/${id}`)
   return data
 }
 

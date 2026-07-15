@@ -24,6 +24,7 @@ const (
 	SupplierProvisionStatusManualRequired   SupplierProvisionStatus = "manual_required"
 	SupplierProvisionStatusDead             SupplierProvisionStatus = "dead"
 	SupplierProvisionStatusCancelled        SupplierProvisionStatus = "cancelled"
+	SupplierProvisionStatusSkipped          SupplierProvisionStatus = "skipped"
 )
 
 type SupplierProvisionStepType string

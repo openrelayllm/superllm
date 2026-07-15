@@ -1,5 +1,5 @@
 <template>
-<BaseDialog :show="provisionDialogOpen" :title="provisionGroup ? `开通 Key/账号 - ${provisionGroup.name}` : '开通 Key/账号'" width="wide" @close="closeProvisionDialog">
+<BaseDialog :show="provisionDialogOpen" :title="provisionGroup ? `创建 Key - ${provisionGroup.name}` : '创建 Key'" width="wide" @close="closeProvisionDialog">
   <form id="supplier-key-provision-form" class="space-y-5" @submit.prevent="submitProvision">
     <div class="grid gap-4 md:grid-cols-3">
       <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
@@ -106,7 +106,7 @@
     <div v-if="activeProvisionJob?.job_type === 'provision_group_key'" class="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm dark:border-dark-700 dark:bg-dark-900/40">
       <div class="flex flex-wrap items-center gap-2">
         <span class="badge" :class="provisionJobStatusClass(activeProvisionJob.status)">{{ provisionJobStatusLabel(activeProvisionJob.status) }}</span>
-        <span class="font-medium text-gray-900 dark:text-gray-100">开通任务 #{{ activeProvisionJob.id }}</span>
+        <span class="font-medium text-gray-900 dark:text-gray-100">创建 Key 任务 #{{ activeProvisionJob.id }}</span>
       </div>
       <div class="mt-2 text-xs text-gray-500 dark:text-dark-400">{{ provisionJobCaption(activeProvisionJob) }}</div>
     </div>
@@ -116,7 +116,7 @@
     <button type="button" class="btn btn-secondary" @click="closeProvisionDialog">取消</button>
     <button type="submit" form="supplier-key-provision-form" class="btn btn-primary" :disabled="provisionSubmitting || activeProvisionJobRunning">
       <Icon name="key" size="sm" :class="{ 'animate-spin': provisionSubmitting }" />
-      {{ provisionSubmitting ? '提交中...' : '提交开通任务' }}
+      {{ provisionSubmitting ? '提交中...' : '开始创建 Key' }}
     </button>
   </template>
 </BaseDialog>

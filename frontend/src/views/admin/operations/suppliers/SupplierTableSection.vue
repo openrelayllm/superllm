@@ -396,7 +396,7 @@
               <button
                 type="button"
                 class="btn btn-secondary btn-sm"
-                title="打开供应商分组，补齐 Key/账号或查看绑定"
+                title="打开供应商详情，创建缺失 Key 或查看绑定"
                 @click="openGroupsDialog(row)"
               >
                 <Icon name="database" size="xs" />
@@ -462,7 +462,7 @@
                 <button
                   type="button"
                   class="btn btn-secondary btn-sm"
-                  title="打开供应商分组，先补齐 Key/账号或确认绑定"
+                  title="打开供应商详情，创建缺失 Key 或确认绑定"
                   @click="openGroupsDialog(row)"
                 >
                   <Icon name="database" size="xs" />
@@ -668,7 +668,7 @@
       <template #empty>
         <EmptyState
           title="暂无供应商"
-          description="先添加供应商父级，优先后端直登读取余额，再同步分组并按分组开通 Key 和本地账号。"
+          description="先添加供应商，完成登录并同步分组，然后创建缺失 Key；本地账号会自动绑定。"
           action-text="添加供应商"
           @action="openCreateDialog"
         />

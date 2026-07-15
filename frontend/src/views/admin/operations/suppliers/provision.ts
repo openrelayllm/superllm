@@ -11,6 +11,8 @@ interface ProviderKeyScheduleDecision {
 export function isPartialProvisionSkippableBlockReason(reason?: string): boolean {
   return reason === 'key_capacity_exhausted'
     || reason === 'group_key_capacity_exhausted'
+    || reason === 'group_key_capacity_unknown'
+    || reason === 'group_key_provisioning_unsupported'
     || reason === 'provider_key_exists_unbound'
 }
 
@@ -207,11 +209,11 @@ export function attachSupplierProvision(ctx: any) {
         balance_cents: centsFromYuan(provisionForm.balance_yuan),
         balance_currency: provisionForm.balance_currency || 'USD'
       })
-      appStore.showSuccess(`开通任务已提交 #${job.job_id}`)
+      appStore.showSuccess(`创建 Key 任务已提交 #${job.job_id}`)
       await watchProvisionJob(job.job_id)
       closeProvisionDialog()
     } catch (error) {
-      provisionError.value = (error as { message?: string }).message || '开通 Key/账号失败'
+      provisionError.value = (error as { message?: string }).message || '创建 Key 或绑定本地账号失败'
       appStore.showError(provisionError.value)
     } finally {
       provisionSubmitting.value = false
@@ -375,11 +377,11 @@ export function attachSupplierProvision(ctx: any) {
       ensureKeysPlan.value = await planEnsureSupplierKeys(supplier.id, ensureKeysPayload(supplier))
       if (ensureKeysPlan.value.blocked > 0) {
         const message = ensureKeysPlanCanSubmit()
-          ? 'Key 开通计划存在可跳过的阻塞项，可只提交其余可处理分组'
-          : 'Key 开通计划存在阻塞项，请按计划明细处理后重试'
+          ? '部分分组需要人工处理，其余分组可以继续创建'
+          : '当前没有可以自动创建的 Key'
         appStore.showWarning(message)
       } else {
-        appStore.showSuccess('Key 开通计划已生成')
+        appStore.showSuccess('创建前检查已完成')
       }
     } catch (error) {
       ensureKeysPlanError.value = (error as { message?: string }).message || '生成 Key 开通计划失败'
@@ -412,7 +414,7 @@ export function attachSupplierProvision(ctx: any) {
       const supplier = groupsSupplier.value
       const allowPartial = ensureKeysPlan.value.blocked > 0
       const job = await ensureSupplierKeys(supplier.id, ensureKeysPayload(supplier, allowPartial))
-      appStore.showSuccess(`补齐 Key/账号任务已提交 #${job.job_id}`)
+      appStore.showSuccess(`创建 Key 任务已提交 #${job.job_id}`)
       await watchProvisionJob(job.job_id)
       ensureKeysPlan.value = null
     } catch (error) {
