@@ -289,7 +289,7 @@ func validateProvisionAllPlan(plan *supplierkeys.EnsureAllPlan, allowPartial boo
 	if plan.Blocked == 0 {
 		return nil
 	}
-	if allowPartial && provisionPlanHasOnlyCapacityExhaustedBlocks(plan) && provisionPlanHasActionableItems(plan) {
+	if allowPartial && provisionPlanHasOnlyPartialProvisionSkippableBlocks(plan) && provisionPlanHasActionableItems(plan) {
 		return nil
 	}
 	reason := "SUPPLIER_KEY_PLAN_BLOCKED"
@@ -314,12 +314,12 @@ func validateProvisionAllPlan(plan *supplierkeys.EnsureAllPlan, allowPartial boo
 	return infraerrors.New(http.StatusConflict, reason, message)
 }
 
-func provisionPlanHasOnlyCapacityExhaustedBlocks(plan *supplierkeys.EnsureAllPlan) bool {
+func provisionPlanHasOnlyPartialProvisionSkippableBlocks(plan *supplierkeys.EnsureAllPlan) bool {
 	if plan == nil || plan.Blocked == 0 {
 		return false
 	}
 	for _, item := range plan.Items {
-		if item.Action == "blocked" && item.BlockedReason != "key_capacity_exhausted" {
+		if item.Action == "blocked" && !supplierkeys.IsPartialProvisionSkippableBlockReason(item.BlockedReason) {
 			return false
 		}
 	}

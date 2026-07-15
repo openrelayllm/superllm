@@ -192,6 +192,41 @@ func TestServiceProvisionAllAllowsExplicitPartialCapacityPlan(t *testing.T) {
 	require.Equal(t, true, stored.Steps[0].RequestSnapshot["allow_partial"])
 }
 
+func TestServiceProvisionAllAllowsExplicitPartialUnboundProviderKeyPlan(t *testing.T) {
+	repo := newProvisionJobsMemoryRepository()
+	keyProvisioner := &stubKeyProvisioner{
+		plan: &supplierkeys.EnsureAllPlan{
+			SupplierID: 7,
+			ToCreate:   1,
+			Blocked:    1,
+			Items: []supplierkeys.ProvisionGroupPlan{
+				{SupplierGroupID: 10, ExternalGroupID: "g10", GroupName: "Lowest", ProviderFamily: "openai", Action: "create"},
+				{SupplierGroupID: 20, ExternalGroupID: "g20", GroupName: "Existing", ProviderFamily: "openai", Action: "blocked", BlockedReason: "provider_key_exists_unbound", ProviderExternalKeyID: "3603"},
+			},
+		},
+	}
+	service := NewService(repo, nil, nil, keyProvisioner)
+
+	submitted, err := service.Submit(context.Background(), SubmitInput{
+		JobType:        adminplusdomain.SupplierProvisionJobTypeProvisionAllGroupKeys,
+		SupplierID:     7,
+		IdempotencyKey: "supplier-7-partial-unbound",
+		Request: map[string]any{
+			"allow_partial":          true,
+			"local_account_base_url": "https://relay.example.com/v1",
+			"runtime_status":         string(adminplusdomain.SupplierRuntimeStatusMonitorOnly),
+			"health_status":          string(adminplusdomain.SupplierHealthStatusNormal),
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, submitted)
+	stored, err := service.Get(context.Background(), submitted.JobID)
+	require.NoError(t, err)
+	require.Len(t, stored.Steps, 1)
+	require.Equal(t, int64(10), stored.Steps[0].SupplierGroupID)
+}
+
 func TestServiceProvisionAllRetriesOnlyFailedSupplierGroup(t *testing.T) {
 	repo := newProvisionJobsMemoryRepository()
 	now := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)

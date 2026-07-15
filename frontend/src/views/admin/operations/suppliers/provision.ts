@@ -8,6 +8,12 @@ interface ProviderKeyScheduleDecision {
   payload?: LocalAccountOpsActionPayload
 }
 
+export function isPartialProvisionSkippableBlockReason(reason?: string): boolean {
+  return reason === 'key_capacity_exhausted'
+    || reason === 'group_key_capacity_exhausted'
+    || reason === 'provider_key_exists_unbound'
+}
+
 export function attachSupplierProvision(ctx: any) {
   const appStore = ctxValue(ctx, 'appStore')
   const provisionSubmitting = ctxValue(ctx, 'provisionSubmitting')
@@ -319,7 +325,7 @@ export function attachSupplierProvision(ctx: any) {
     if (ensureKeysPlan.value.blocked === 0) return ensureKeysPlanActionableCount() > 0
     return ensureKeysPlanActionableCount() > 0 && ensureKeysPlan.value.items
       .filter((item: EnsureSupplierKeysPlanItem) => item.action === 'blocked')
-      .every((item: EnsureSupplierKeysPlanItem) => isCapacityExhaustedBlockReason(item.blocked_reason))
+      .every((item: EnsureSupplierKeysPlanItem) => isPartialProvisionSkippableBlockReason(item.blocked_reason))
   }
 
   function ensureKeysPriorityItems(): EnsureSupplierKeysPlanItem[] {
@@ -368,7 +374,10 @@ export function attachSupplierProvision(ctx: any) {
       const supplier = groupsSupplier.value
       ensureKeysPlan.value = await planEnsureSupplierKeys(supplier.id, ensureKeysPayload(supplier))
       if (ensureKeysPlan.value.blocked > 0) {
-        appStore.showWarning('Key 开通计划存在配额阻塞，请先调整供应商或分组配额后重试')
+        const message = ensureKeysPlanCanSubmit()
+          ? 'Key 开通计划存在可跳过的阻塞项，可只提交其余可创建分组'
+          : 'Key 开通计划存在阻塞项，请按计划明细处理后重试'
+        appStore.showWarning(message)
       } else {
         appStore.showSuccess('Key 开通计划已生成')
       }
