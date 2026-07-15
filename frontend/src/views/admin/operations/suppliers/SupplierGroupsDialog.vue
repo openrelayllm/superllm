@@ -47,7 +47,7 @@
         </button>
         <button type="button" class="btn btn-primary" :disabled="keysEnsuring || !canSubmitEnsureKeys || !ensureKeysPlanCanSubmit()" @click="ensureCurrentKeys">
           <Icon name="key" size="sm" :class="{ 'animate-spin': keysEnsuring }" />
-          {{ ensureKeysPlan?.blocked > 0 ? '提交可创建部分' : '提交补齐' }}
+          {{ ensureKeysPlan?.blocked > 0 ? '提交可处理部分' : '提交补齐' }}
         </button>
       </div>
     </div>
@@ -106,11 +106,11 @@
           </button>
           <button type="button" class="btn btn-primary btn-sm" :disabled="keysEnsuring || !ensureKeysPlanCanSubmit()" @click="ensureCurrentKeys">
             <Icon name="key" size="sm" :class="{ 'animate-spin': keysEnsuring }" />
-            {{ ensureKeysPlan.blocked > 0 ? '只提交可创建部分' : '提交任务' }}
+            {{ ensureKeysPlan.blocked > 0 ? '只提交可处理部分' : '提交任务' }}
           </button>
         </div>
       </div>
-      <div class="mt-4 grid gap-3 sm:grid-cols-4">
+      <div class="mt-4 grid gap-3 sm:grid-cols-5">
         <div class="rounded-md border border-gray-100 px-3 py-2 dark:border-dark-700">
           <div class="text-xs text-gray-500 dark:text-dark-400">有效分组</div>
           <div class="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">{{ ensureKeysPlan.total }}</div>
@@ -118,6 +118,10 @@
         <div class="rounded-md border border-gray-100 px-3 py-2 dark:border-dark-700">
           <div class="text-xs text-gray-500 dark:text-dark-400">将创建</div>
           <div class="mt-1 text-lg font-semibold text-emerald-700 dark:text-emerald-300">{{ ensureKeysPlan.to_create }}</div>
+        </div>
+        <div class="rounded-md border border-gray-100 px-3 py-2 dark:border-dark-700">
+          <div class="text-xs text-gray-500 dark:text-dark-400">将复用</div>
+          <div class="mt-1 text-lg font-semibold text-blue-700 dark:text-blue-300">{{ ensureKeysPlan.to_reuse || 0 }}</div>
         </div>
         <div class="rounded-md border border-gray-100 px-3 py-2 dark:border-dark-700">
           <div class="text-xs text-gray-500 dark:text-dark-400">已覆盖</div>
@@ -129,7 +133,7 @@
         </div>
       </div>
       <div v-if="ensureKeysPlan.blocked > 0" class="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
-        当前计划会创建不完整。你可以只提交可创建部分；被阻塞分组需要调整供应商 Key 配额策略、删除无用 Key 或改为手动处理。
+        当前计划包含阻塞分组。你可以只提交可处理部分；被阻塞分组需要调整供应商 Key 配额策略、删除无用 Key 或改为手动处理。
       </div>
       <div v-if="blockedPlanItems.length > 0" class="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/40">
         <div class="flex flex-wrap items-start justify-between gap-3">
@@ -908,6 +912,7 @@ function groupKeyCapacityClass(value?: string): string {
 function ensurePlanActionLabel(value?: string): string {
   return {
     create: '创建',
+    reuse: '复用',
     skipped_existing: '检查绑定',
     blocked: '阻塞'
   }[value || ''] || value || '-'
@@ -915,6 +920,7 @@ function ensurePlanActionLabel(value?: string): string {
 
 function ensurePlanActionClass(value?: string): string {
   if (value === 'create') return 'badge-success'
+  if (value === 'reuse') return 'badge-primary'
   if (value === 'blocked') return 'badge-danger'
   return 'badge-gray'
 }

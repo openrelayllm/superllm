@@ -1433,7 +1433,7 @@ export interface EnsureSupplierKeysPlanItem {
   provider_family: string
   rate_multiplier?: number
   effective_rate_multiplier?: number
-  action: 'create' | 'skipped_existing' | 'blocked' | string
+  action: 'create' | 'reuse' | 'skipped_existing' | 'blocked' | string
   priority?: number
   existing_key_id?: number
   existing_key_status?: SupplierKeyStatus | string
@@ -1456,6 +1456,7 @@ export interface EnsureSupplierKeysPlan {
   remaining_key_slots: number
   total: number
   to_create: number
+  to_reuse: number
   already_satisfied: number
   blocked: number
   items: EnsureSupplierKeysPlanItem[]

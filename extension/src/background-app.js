@@ -332,7 +332,9 @@ async function reportSupplierCandidate(payload) {
   const activeTab = summarizeTab(await getActiveTab())
   const candidate = looksLikeSiteCandidate(payload) ? payload : null
   const reportPayload = candidate
-    ? buildSupplierCandidatePayload(config.deviceID, { activeTab, candidate }, candidate, candidate.credential || {})
+    ? buildSupplierCandidatePayload(config.deviceID, { activeTab, candidate }, candidate, candidate.credential || {}, {
+      autoCreateSupplier: payload.auto_create_supplier === true
+    })
     : normalizeSupplierCandidateReportPayload(config.deviceID, activeTab, payload)
   const client = new AdminPlusClient(config)
   return client.reportSupplierCandidate(reportPayload)
@@ -720,7 +722,7 @@ async function collectFrameCredential(tabId) {
     null
 }
 
-function buildSupplierCandidatePayload(deviceID, identification, candidate, credentials) {
+function buildSupplierCandidatePayload(deviceID, identification, candidate, credentials, options = {}) {
   const activeTab = identification.activeTab || {}
   const page = candidate?.page || {}
   const defaults = candidate?.defaults || {}
@@ -746,7 +748,7 @@ function buildSupplierCandidatePayload(deviceID, identification, candidate, cred
   }
   return {
     device_id: firstNonEmpty(deviceID, ''),
-    auto_create_supplier: false,
+    auto_create_supplier: options.autoCreateSupplier === true,
     provider_type: providerType,
     system_type: providerType,
     type: providerType,
@@ -766,7 +768,10 @@ function buildSupplierCandidatePayload(deviceID, identification, candidate, cred
     source_host: page.host || activeTab.host || '',
     source_url: page.url || activeTab.url || '',
     origin: page.origin || activeTab.origin || '',
-    browser_login_enabled: Boolean(firstNonEmpty(credentials?.username, candidate?.credential?.username) && firstNonEmpty(credentials?.password, candidate?.credential?.password)),
+    browser_login_enabled: Boolean(
+      (firstNonEmpty(credentials?.username, candidate?.credential?.username) && firstNonEmpty(credentials?.password, candidate?.credential?.password)) ||
+      firstNonEmpty(credentials?.token, candidate?.credential?.token)
+    ),
     browser_login_username: firstNonEmpty(credentials?.username, candidate?.credential?.username),
     browser_login_password: firstNonEmpty(credentials?.password, candidate?.credential?.password),
     browser_login_token: firstNonEmpty(credentials?.token, candidate?.credential?.token),

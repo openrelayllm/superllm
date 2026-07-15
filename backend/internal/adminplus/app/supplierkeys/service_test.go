@@ -845,6 +845,56 @@ func TestServicePlanEnsureAllUsesProviderActiveKeyCountAfterLocalProjectionRelea
 	require.Equal(t, 5000, keyAdapter.capacityCalls[0].Limit)
 }
 
+func TestServiceEnsureAllReusesProviderKeyWithSecret(t *testing.T) {
+	repo := NewMemoryRepository()
+	repo.PutSupplier(&adminplusdomain.Supplier{
+		ID:              7,
+		Name:            "Relay",
+		Type:            adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus:   adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:    adminplusdomain.SupplierHealthStatusNormal,
+		APIBaseURL:      "https://relay.example.com",
+		KeyLimitPolicy:  adminplusdomain.SupplierKeyLimitPolicyLimited,
+		KeyLimitValue:   1,
+		BalanceCurrency: "USD",
+	})
+	repo.PutGroup(&adminplusdomain.SupplierGroup{
+		ID: 10, SupplierID: 7, ExternalGroupID: "g10", Name: "Existing",
+		ProviderFamily: "openai", EffectiveRateMultiplier: 0.4,
+		Status: adminplusdomain.SupplierGroupStatusActive,
+	})
+	keyAdapter := &stubKeyAdapter{
+		listResult: &ports.ListProviderKeysResult{
+			SupplierID: 7,
+			Keys: []ports.ProviderKeySnapshot{{
+				SupplierID: 7, ExternalGroupID: "g10", ExternalKeyID: "provider-g10",
+				Name: "provider existing", Status: "active",
+			}},
+		},
+		readResult: &ports.ProviderKeyResult{
+			SupplierID: 7, ExternalGroupID: "g10", ExternalKeyID: "provider-g10",
+			Name: "provider existing", Status: "active", Secret: "sk-provider-existing",
+		},
+	}
+	local := &stubLocalAccountCreator{}
+	svc := NewService(repo, &stubSessionReader{input: ports.SessionProbeInput{SupplierID: 7}}, keyAdapter, local)
+
+	result, err := svc.EnsureAll(context.Background(), EnsureAllInput{
+		SupplierID: 7, LocalAccountBaseURL: "https://relay.example.com/v1",
+		RuntimeStatus: adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:  adminplusdomain.SupplierHealthStatusNormal, BalanceCurrency: "USD",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Reused)
+	require.Len(t, result.Items, 1)
+	require.Equal(t, "reused", result.Items[0].Action)
+	require.Equal(t, "provider-g10", result.Items[0].Key.ExternalKeyID)
+	require.Equal(t, "sk-provider-existing", local.input.Credentials["api_key"])
+	require.Empty(t, keyAdapter.calls)
+	require.NotEmpty(t, keyAdapter.readCalls)
+}
+
 func TestServiceImportProviderProjectionCreatesManualSecretRequiredKey(t *testing.T) {
 	repo := NewMemoryRepository()
 	repo.PutSupplier(&adminplusdomain.Supplier{
@@ -1553,12 +1603,15 @@ func (s *stubSessionReader) DecryptedProbeInput(_ context.Context, _ int64) (por
 
 type stubKeyAdapter struct {
 	result         *ports.ProviderKeyResult
+	readResult     *ports.ProviderKeyResult
 	listResult     *ports.ListProviderKeysResult
 	capacityResult *ports.ProviderKeyCapacityResult
 	err            error
+	readErr        error
 	listErr        error
 	capacityErr    error
 	calls          []ports.CreateProviderKeyInput
+	readCalls      []ports.ReadProviderKeyInput
 	listCalls      []ports.ListProviderKeysInput
 	capacityCalls  []ports.ReadProviderKeyCapacityInput
 	renameCalls    []ports.RenameProviderKeyInput
@@ -1575,6 +1628,14 @@ func (s *stubKeyAdapter) ListKeys(_ context.Context, in ports.SessionProbeInput,
 		return s.listResult, nil
 	}
 	return nil, nil
+}
+
+func (s *stubKeyAdapter) ReadKey(_ context.Context, _ ports.SessionProbeInput, request ports.ReadProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	s.readCalls = append(s.readCalls, request)
+	if s.readErr != nil {
+		return nil, s.readErr
+	}
+	return s.readResult, nil
 }
 
 func (s *stubKeyAdapter) ReadKeyCapacity(_ context.Context, in ports.SessionProbeInput, request ports.ReadProviderKeyCapacityInput) (*ports.ProviderKeyCapacityResult, error) {

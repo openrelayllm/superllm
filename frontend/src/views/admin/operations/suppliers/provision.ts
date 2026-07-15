@@ -317,7 +317,7 @@ export function attachSupplierProvision(ctx: any) {
 
   function ensureKeysPlanActionableCount(): number {
     if (!ensureKeysPlan.value) return 0
-    return ensureKeysPlan.value.items.filter((item: EnsureSupplierKeysPlanItem) => item.action === 'create' || item.action === 'skipped_existing').length
+    return ensureKeysPlan.value.items.filter((item: EnsureSupplierKeysPlanItem) => item.action === 'create' || item.action === 'reuse' || item.action === 'skipped_existing').length
   }
 
   function ensureKeysPlanCanSubmit(): boolean {
@@ -375,7 +375,7 @@ export function attachSupplierProvision(ctx: any) {
       ensureKeysPlan.value = await planEnsureSupplierKeys(supplier.id, ensureKeysPayload(supplier))
       if (ensureKeysPlan.value.blocked > 0) {
         const message = ensureKeysPlanCanSubmit()
-          ? 'Key 开通计划存在可跳过的阻塞项，可只提交其余可创建分组'
+          ? 'Key 开通计划存在可跳过的阻塞项，可只提交其余可处理分组'
           : 'Key 开通计划存在阻塞项，请按计划明细处理后重试'
         appStore.showWarning(message)
       } else {

@@ -306,6 +306,35 @@ func TestExtensionHandlerReportSupplierCandidateCreatesSupplierWithCredential(t 
 	require.Contains(t, credential.Body.String(), `"token":"pixel-token"`)
 }
 
+func TestExtensionHandlerReportSupplierCandidateCreatesSupplierWithTokenOnly(t *testing.T) {
+	router := newOperationsHandlerTestRouter()
+
+	reported := performJSON(t, router, http.MethodPost, "/extension/suppliers/report-candidate", `{
+		"device_id": "chrome-token-only",
+		"name": "Token Only Relay",
+		"type": "new_api",
+		"dashboard_url": "https://token-only.example.com/login",
+		"api_base_url": "https://token-only.example.com",
+		"source_url": "https://token-only.example.com/login",
+		"source_host": "token-only.example.com",
+		"browser_login_enabled": true,
+		"browser_login_token": "temporary-session-token"
+	}`)
+
+	require.Equal(t, http.StatusOK, reported.Code, reported.Body.String())
+	var reportBody struct {
+		Data struct {
+			SupplierID      int64 `json:"supplier_id"`
+			Created         bool  `json:"created"`
+			CredentialSaved bool  `json:"credential_saved"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(reported.Body.Bytes(), &reportBody))
+	require.Greater(t, reportBody.Data.SupplierID, int64(1))
+	require.True(t, reportBody.Data.Created)
+	require.True(t, reportBody.Data.CredentialSaved)
+}
+
 func TestExtensionHandlerReportSupplierCandidateRequiresRegisteredCredential(t *testing.T) {
 	router := newOperationsHandlerTestRouter()
 

@@ -862,6 +862,7 @@ func (c *SessionProfileClient) ListKeys(ctx context.Context, in ports.SessionPro
 			ExternalKeyID:   keyID,
 			Name:            stringFromAny(raw["name"]),
 			Status:          normalizeSub2APIProviderKeyStatus(stringFromAny(raw["status"])),
+			Secret:          usableProviderKeySecret(raw),
 			RawPayload:      sanitizeProviderKeyPayload(raw),
 		})
 	}
@@ -878,6 +879,38 @@ func (c *SessionProfileClient) ListKeys(ctx context.Context, in ports.SessionPro
 		Total:      total,
 		CapturedAt: c.now().UTC(),
 	}, nil
+}
+
+// ReadKey reads one provider key without exposing its secret in serialized
+// snapshots. Sub2API returns the key value to the authenticated owner/admin
+// session, which lets SuperLLM reuse an existing key without creating a
+// duplicate provider key.
+func (c *SessionProfileClient) ReadKey(ctx context.Context, in ports.SessionProbeInput, request ports.ReadProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	if c == nil || c.httpClient == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", "provider adapter is not configured")
+	}
+	keyID, err := strconv.ParseInt(strings.TrimSpace(request.ExternalKeyID), 10, 64)
+	if err != nil || keyID <= 0 {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_KEY_EXTERNAL_ID_INVALID", "invalid supplier key id")
+	}
+	apiBaseURL := firstNonEmpty(in.APIBaseURL, stringValueAt(in.Bundle, "context", "api_base_url"), stringValue(in.Bundle, "api_base_url"), in.Origin)
+	endpoint, err := buildSub2APIUserEndpointURL(apiBaseURL, "/keys/"+strconv.FormatInt(keyID, 10))
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doSessionJSON(ctx, http.MethodGet, endpoint, in.Bundle, true)
+	if err != nil {
+		return nil, err
+	}
+	result, err := parseSub2APIKeyCreateResponse(body)
+	if err != nil {
+		return nil, infraerrors.New(http.StatusBadGateway, "SUPPLIER_KEY_RESPONSE_INVALID", "supplier key response is invalid").WithCause(err)
+	}
+	result.SupplierID = request.SupplierID
+	result.ExternalKeyID = firstNonEmpty(result.ExternalKeyID, request.ExternalKeyID)
+	result.ExternalGroupID = firstNonEmpty(result.ExternalGroupID, request.ExternalGroupID)
+	result.Name = firstNonEmpty(result.Name, request.Name)
+	return result, nil
 }
 
 func (c *SessionProfileClient) ReadKeyCapacity(ctx context.Context, in ports.SessionProbeInput, request ports.ReadProviderKeyCapacityInput) (*ports.ProviderKeyCapacityResult, error) {
@@ -1947,6 +1980,21 @@ func sanitizeProviderKeyPayload(raw map[string]any) map[string]any {
 		}
 	}
 	return out
+}
+
+func usableProviderKeySecret(raw map[string]any) string {
+	secret := firstNonEmpty(
+		stringFromAny(raw["key"]),
+		stringFromAny(raw["api_key"]),
+		stringFromAny(raw["apiKey"]),
+		stringFromAny(raw["token"]),
+		stringFromAny(raw["secret"]),
+	)
+	secret = strings.TrimSpace(secret)
+	if secret == "" || strings.Contains(secret, "*") || strings.Contains(secret, "...") {
+		return ""
+	}
+	return secret
 }
 
 func sub2APIProviderKeyListTotal(data []byte) int {

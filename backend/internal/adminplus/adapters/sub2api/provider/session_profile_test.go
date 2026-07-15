@@ -685,6 +685,7 @@ func TestSessionProfileClientListKeysReadsUserKeys(t *testing.T) {
 	require.Equal(t, "99", result.Keys[0].ExternalKeyID)
 	require.Equal(t, "10", result.Keys[0].ExternalGroupID)
 	require.Equal(t, "active", result.Keys[0].Status)
+	require.Equal(t, "sk-secret", result.Keys[0].Secret)
 	require.NotContains(t, result.Keys[0].RawPayload, "key")
 	require.Equal(t, "100", result.Keys[1].ExternalKeyID)
 	require.Equal(t, "20", result.Keys[1].ExternalGroupID)

@@ -298,13 +298,23 @@ type ListProviderKeysInput struct {
 	Limit      int
 }
 
+type ReadProviderKeyInput struct {
+	SupplierID      int64
+	ExternalKeyID   string
+	ExternalGroupID string
+	Name            string
+}
+
 type ProviderKeySnapshot struct {
 	SupplierID      int64
 	ExternalGroupID string
 	ExternalKeyID   string
 	Name            string
 	Status          string
-	RawPayload      map[string]any
+	// Secret is kept in memory only when the provider exposes a usable key.
+	// It is intentionally excluded from every serialized snapshot.
+	Secret     string `json:"-"`
+	RawPayload map[string]any
 }
 
 type ListProviderKeysResult struct {
@@ -356,6 +366,13 @@ type SessionKeyAdapter interface {
 	RenameKey(ctx context.Context, in SessionProbeInput, request RenameProviderKeyInput) (*ProviderKeyResult, error)
 	DisableKey(ctx context.Context, in SessionProbeInput, request DisableProviderKeyInput) (*ProviderKeyResult, error)
 	DeleteKey(ctx context.Context, in SessionProbeInput, request DeleteProviderKeyInput) (*ProviderKeyResult, error)
+}
+
+// ProviderKeySecretReader is optional because some providers never expose an
+// existing key secret after creation. Implementations should return an empty
+// Secret when the provider only returns an id or a masked value.
+type ProviderKeySecretReader interface {
+	ReadKey(ctx context.Context, in SessionProbeInput, request ReadProviderKeyInput) (*ProviderKeyResult, error)
 }
 
 type ProviderRateEntry struct {

@@ -163,8 +163,8 @@ async function captureCurrentSession() {
       })
       return
     }
-    if (!hasCompleteBrowserCredential(currentCandidate)) {
-      throw Object.assign(new Error('请先填写账号和密码后再上报 Session'), { reason: 'SUPPLIER_CREDENTIAL_REQUIRED' })
+    if (!hasCreationCredential(currentCandidate)) {
+      throw Object.assign(new Error('请先填写账号密码或临时 Token 后再上报 Session'), { reason: 'SUPPLIER_CREDENTIAL_REQUIRED' })
     }
     setBusy(true)
     try {
@@ -250,7 +250,7 @@ function render() {
   const siteStatus = identification?.status || 'unsupported'
   const candidateStatus = candidate?.status || (identification?.supplier ? 'identified' : 'unsupported')
   const resolvedStatus = identification?.supplier ? 'identified' : siteStatus
-  const sessionFirst = canCaptureSessionWithoutCredential(candidate || identification?.candidate || {})
+  const sessionFirst = Boolean(identification?.supplier) && canCaptureSessionWithoutCredential(candidate || identification?.candidate || {})
   if (siteStatus === 'ambiguous') {
     renderStep({
       index: 2,
@@ -301,7 +301,7 @@ function renderSitePanel(site, resolvedStatus) {
   if (resolvedStatus === 'ambiguous') {
     writeStatus('供应商已存在多个候选，请人工处理', 'failed')
   } else if (candidate?.status === 'identified' || resolvedStatus === 'identified') {
-    const sessionFirst = canCaptureSessionWithoutCredential(candidate || identification?.candidate || {})
+    const sessionFirst = Boolean(identification?.supplier) && canCaptureSessionWithoutCredential(candidate || identification?.candidate || {})
     writeStatus(identification?.message || (sessionFirst ? '供应商已识别，可直接上报 Session' : '供应商已识别，可提交账号密码或上报 Session'), 'success')
   } else if (candidate?.status === 'needs_type_selection') {
     writeStatus('无法判断系统类型，请选择', 'neutral')
@@ -334,7 +334,7 @@ function renderCandidatePanel() {
   evidenceEl.textContent = (candidate?.evidence || []).join(' · ') || '无明显指纹'
 
   const password = supplierPasswordEl.value
-  const sessionFirst = canCaptureSessionWithoutCredential(candidate || {})
+  const sessionFirst = Boolean(identification?.supplier) && canCaptureSessionWithoutCredential(candidate || {})
   passwordHintEl.textContent = sessionFirst ? '当前已登录页通常无法读取密码，可直接上报 Session。' : credential.password_present ? '密码只会在点击读取页面凭据或创建时读取。' : '无法自动读取密码，请手动输入。'
   if (!password && credential.password_present) {
     passwordHintEl.textContent = '页面存在密码输入框，点击读取页面凭据或创建时会尝试读取。'
@@ -400,12 +400,12 @@ async function submitSiteCandidate() {
     throw Object.assign(new Error('无法判断系统类型，请选择'), { reason: 'SUPPLIER_TYPE_REQUIRED' })
   }
   const hasCredential = hasAnyBrowserCredential(currentCandidate)
-  const canCreateSupplier = hasCompleteBrowserCredential(currentCandidate)
+  const canCreateSupplier = hasCreationCredential(currentCandidate)
   if (!hasCredential) {
-    throw Object.assign(new Error('请先填写账号和密码'), { reason: 'SUPPLIER_CREDENTIAL_REQUIRED' })
+    throw Object.assign(new Error('请先填写账号密码或临时 Token'), { reason: 'SUPPLIER_CREDENTIAL_REQUIRED' })
   }
   if (!identification?.supplier && !currentCandidate.supplier_id && !canCreateSupplier) {
-    throw Object.assign(new Error('未入库站点需要账号和密码'), { reason: 'SUPPLIER_CREDENTIAL_REQUIRED' })
+    throw Object.assign(new Error('未入库站点需要账号密码或临时 Token'), { reason: 'SUPPLIER_CREDENTIAL_REQUIRED' })
   }
   setBusy(true)
   try {
@@ -435,9 +435,12 @@ async function reportCandidate(currentCandidate, autoCreate) {
   })
 }
 
-function hasCompleteBrowserCredential(currentCandidate) {
+function hasCreationCredential(currentCandidate) {
   const credential = currentCandidate?.credential || {}
-  return Boolean(String(credential.username || '').trim() && String(credential.password || '').trim())
+  const username = String(credential.username || '').trim()
+  const password = String(credential.password || '').trim()
+  const token = String(credential.token || '').trim()
+  return Boolean((username && password) || token)
 }
 
 function hasAnyBrowserCredential(currentCandidate) {
@@ -538,7 +541,7 @@ function buildReportPayload(currentCandidate, options = {}) {
     source_host: page.host || '',
     source_url: page.url || '',
     origin: page.origin || '',
-    browser_login_enabled: Boolean(credential.username && credential.password),
+    browser_login_enabled: Boolean((credential.username && credential.password) || credential.token),
     browser_login_username: credential.username || '',
     browser_login_password: credential.password || '',
     browser_login_token: credential.token || '',
@@ -708,7 +711,7 @@ function showError(error) {
   if (error?.reason === 'SUPPLIER_TYPE_REQUIRED') return writeStatus('无法判断系统类型，请选择', 'failed')
   if (error?.reason === 'SUPPLIER_USERNAME_REQUIRED') return writeStatus('请填写账号', 'failed')
   if (error?.reason === 'SUPPLIER_PASSWORD_REQUIRED') return writeStatus('无法自动读取密码，请手动输入', 'failed')
-  if (error?.reason === 'SUPPLIER_CREDENTIAL_REQUIRED') return writeStatus('请先填写账号和密码', 'failed')
+  if (error?.reason === 'SUPPLIER_CREDENTIAL_REQUIRED') return writeStatus('请先填写账号密码或临时 Token', 'failed')
   if (error?.reason === 'SUPPLIER_CREDENTIAL_SAVE_FAILED') return writeStatus('供应商凭据未保存，已停止上报', 'failed')
   if (error?.reason === 'SUPPLIER_SITE_AMBIGUOUS') return writeStatus('供应商已存在多个候选，请人工处理', 'failed')
   if (error?.reason === 'SUPPLIER_SITE_REGISTRATION_REQUIRED') return writeStatus('未注册站点请先在后台注册任务中发起注册', 'failed')

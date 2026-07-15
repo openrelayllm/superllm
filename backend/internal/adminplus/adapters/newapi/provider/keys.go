@@ -243,6 +243,7 @@ func (c *Client) ListKeys(ctx context.Context, in ports.SessionProbeInput, reque
 			ExternalKeyID:   strconv.FormatInt(token.ID, 10),
 			Name:            token.Name,
 			Status:          firstNonEmpty(token.Status, "active"),
+			Secret:          token.Secret,
 			RawPayload:      token.RawPayload,
 		})
 	}
@@ -258,6 +259,37 @@ func (c *Client) ListKeys(ctx context.Context, in ports.SessionProbeInput, reque
 		Keys:       keys,
 		Total:      total,
 		CapturedAt: c.now().UTC(),
+	}, nil
+}
+
+func (c *Client) ReadKey(ctx context.Context, in ports.SessionProbeInput, request ports.ReadProviderKeyInput) (*ports.ProviderKeyResult, error) {
+	if c == nil || c.httpClient == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "ADMIN_PLUS_INTERNAL_ERROR", "new api provider adapter is not configured")
+	}
+	tokenID, err := strconv.ParseInt(strings.TrimSpace(request.ExternalKeyID), 10, 64)
+	if err != nil || tokenID <= 0 {
+		return nil, infraerrors.New(http.StatusBadRequest, "SUPPLIER_KEY_EXTERNAL_ID_INVALID", "invalid new api token id")
+	}
+	apiBaseURL, _, err := normalizeBaseURLs(firstNonEmpty(in.APIBaseURL, stringValueAt(in.Bundle, "context", "api_base_url"), stringValue(in.Bundle, "api_base_url")), firstNonEmpty(in.Origin, stringValue(in.Bundle, "origin")))
+	if err != nil {
+		return nil, err
+	}
+	tokenEndpoint, err := buildEndpointURL(apiBaseURL, "/api/token/")
+	if err != nil {
+		return nil, err
+	}
+	secret, err := c.readNewAPIProviderTokenKey(ctx, tokenEndpoint, in.Bundle, tokenID)
+	if err != nil {
+		return nil, err
+	}
+	return &ports.ProviderKeyResult{
+		SupplierID:      request.SupplierID,
+		ExternalGroupID: request.ExternalGroupID,
+		ExternalKeyID:   request.ExternalKeyID,
+		Name:            request.Name,
+		Secret:          secret,
+		Status:          "active",
+		CreatedAt:       c.now().UTC(),
 	}, nil
 }
 
@@ -382,6 +414,7 @@ type newAPITokenSnapshot struct {
 	Name        string
 	Group       string
 	Status      string
+	Secret      string
 	ExpiredTime int64
 	RawPayload  map[string]any
 }
@@ -490,6 +523,7 @@ func parseNewAPITokenSnapshot(raw map[string]any) newAPITokenSnapshot {
 		Name:        stringFromAny(raw["name"]),
 		Group:       stringFromAny(raw["group"]),
 		Status:      normalizeNewAPITokenStatus(raw["status"]),
+		Secret:      usableNewAPISecret(raw),
 		ExpiredTime: int64FromAny(raw["expired_time"]),
 		RawPayload:  sanitizeNewAPIKeyPayload(raw),
 	}
@@ -583,6 +617,19 @@ func normalizeNewAPISecret(secret string) string {
 		return secret
 	}
 	return "sk-" + secret
+}
+
+func usableNewAPISecret(raw map[string]any) string {
+	secret := normalizeNewAPISecret(firstNonEmpty(
+		stringFromAny(raw["key"]),
+		stringFromAny(raw["api_key"]),
+		stringFromAny(raw["token"]),
+		stringFromAny(raw["secret"]),
+	))
+	if secret == "" || strings.Contains(secret, "*") || strings.Contains(secret, "...") {
+		return ""
+	}
+	return secret
 }
 
 func normalizeNewAPITokenStatus(value any) string {

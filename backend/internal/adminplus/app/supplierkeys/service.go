@@ -89,6 +89,7 @@ type EnsureAllPlan struct {
 	RemainingKeySlots int                  `json:"remaining_key_slots"`
 	Total             int                  `json:"total"`
 	ToCreate          int                  `json:"to_create"`
+	ToReuse           int                  `json:"to_reuse"`
 	AlreadySatisfied  int                  `json:"already_satisfied"`
 	Blocked           int                  `json:"blocked"`
 	Items             []ProvisionGroupPlan `json:"items"`
@@ -207,6 +208,7 @@ type EnsureAllResult struct {
 	SupplierID         int64                 `json:"supplier_id"`
 	Total              int                   `json:"total"`
 	Created            int                   `json:"created"`
+	Reused             int                   `json:"reused"`
 	Skipped            int                   `json:"skipped"`
 	Failed             int                   `json:"failed"`
 	LocalGroupsCreated int                   `json:"local_groups_created"`
@@ -397,6 +399,13 @@ func (s *Service) Provision(ctx context.Context, in ProvisionKeyInput) (*Provisi
 	if strings.TrimSpace(created.Secret) == "" {
 		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_SECRET_REQUIRED", "supplier did not return created key secret")
 	}
+	return s.bindProviderKey(ctx, normalized, supplier, group, targetLocalName, providerCreateName, input, created)
+}
+
+func (s *Service) bindProviderKey(ctx context.Context, normalized ProvisionKeyInput, supplier *adminplusdomain.Supplier, group *adminplusdomain.SupplierGroup, targetLocalName string, providerCreateName string, input ports.SessionProbeInput, created *ports.ProviderKeyResult) (*ProvisionKeyResult, error) {
+	if created == nil || strings.TrimSpace(created.Secret) == "" {
+		return nil, infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_SECRET_REQUIRED", "supplier key secret is unavailable")
+	}
 	now := s.now().UTC()
 	key := &adminplusdomain.SupplierKey{
 		SupplierID:      normalized.SupplierID,
@@ -410,7 +419,7 @@ func (s *Service) Provision(ctx context.Context, in ProvisionKeyInput) (*Provisi
 		ProviderFamily:  normalizeProviderFamily(group.ProviderFamily),
 		ProvisionRequest: map[string]any{
 			"name":                 targetLocalName,
-			"requested_name":       in.Name,
+			"requested_name":       normalized.Name,
 			"provider_create_name": providerCreateName,
 			"sync_provider_name":   normalized.SyncProviderName,
 			"external_group_id":    group.ExternalGroupID,
@@ -486,7 +495,7 @@ func (s *Service) EnsureAll(ctx context.Context, in EnsureAllInput) (*EnsureAllR
 		Items:      make([]EnsureAllResultItem, 0, len(plan.Items)),
 	}
 	for _, planItem := range plan.Items {
-		if planItem.Action != "create" && planItem.Action != "skipped_existing" {
+		if planItem.Action != "create" && planItem.Action != "reuse" && planItem.Action != "skipped_existing" {
 			continue
 		}
 		group, err := s.repo.GetGroup(ctx, normalized.SupplierID, planItem.SupplierGroupID)
@@ -513,6 +522,11 @@ func (s *Service) EnsureAll(ctx context.Context, in EnsureAllInput) (*EnsureAllR
 		switch item.Action {
 		case "created":
 			result.Created++
+			if item.LocalAccountGroupBound {
+				result.LocalAccountsBound++
+			}
+		case "reused":
+			result.Reused++
 			if item.LocalAccountGroupBound {
 				result.LocalAccountsBound++
 			}
@@ -600,12 +614,19 @@ func (s *Service) planEnsureAll(ctx context.Context, normalized EnsureAllInput, 
 		if hasProviderSnapshot {
 			providerKey, hasProviderKey := providerSnapshot.activeExternalGroup(group.ExternalGroupID)
 			if hasProviderKey {
+				providerKey = s.hydrateProviderKeySnapshot(ctx, supplier, providerKey)
+				providerSnapshot.ActiveByExternalGroup[group.ExternalGroupID] = providerKey
 				item.ProviderExternalKeyID = providerKey.ExternalKeyID
 				item.ProviderKeyName = providerKey.Name
 				item.ProviderKeyStatus = providerKey.Status
-				item.Action = "blocked"
-				item.BlockedReason = "provider_key_exists_unbound"
-				plan.Blocked++
+				if providerKeySecretAvailable(providerKey) {
+					item.Action = "reuse"
+					plan.ToReuse++
+				} else {
+					item.Action = "blocked"
+					item.BlockedReason = "provider_key_exists_unbound"
+					plan.Blocked++
+				}
 				plan.Items = append(plan.Items, item)
 				continue
 			}
@@ -738,11 +759,43 @@ func planHasActionableItems(plan *EnsureAllPlan) bool {
 		return false
 	}
 	for _, item := range plan.Items {
-		if item.Action == "create" || item.Action == "skipped_existing" {
+		if item.Action == "create" || item.Action == "reuse" || item.Action == "skipped_existing" {
 			return true
 		}
 	}
 	return false
+}
+
+func providerKeySecretAvailable(key ports.ProviderKeySnapshot) bool {
+	secret := strings.TrimSpace(key.Secret)
+	return secret != "" && !strings.Contains(secret, "*") && !strings.Contains(secret, "...")
+}
+
+func (s *Service) hydrateProviderKeySnapshot(ctx context.Context, supplier *adminplusdomain.Supplier, key ports.ProviderKeySnapshot) ports.ProviderKeySnapshot {
+	if providerKeySecretAvailable(key) || s == nil || s.session == nil || s.keyAdapter == nil || supplier == nil {
+		return key
+	}
+	reader, ok := s.keyAdapter.(ports.ProviderKeySecretReader)
+	if !ok || strings.TrimSpace(key.ExternalKeyID) == "" {
+		return key
+	}
+	input, err := s.session.DecryptedProbeInput(ctx, supplier.ID)
+	if err != nil {
+		return key
+	}
+	result, err := reader.ReadKey(ctx, input, ports.ReadProviderKeyInput{
+		SupplierID:      supplier.ID,
+		ExternalKeyID:   key.ExternalKeyID,
+		ExternalGroupID: key.ExternalGroupID,
+		Name:            key.Name,
+	})
+	if err != nil || result == nil {
+		return key
+	}
+	key.Secret = strings.TrimSpace(result.Secret)
+	key.ExternalGroupID = firstNonEmpty(key.ExternalGroupID, result.ExternalGroupID)
+	key.Name = firstNonEmpty(key.Name, result.Name)
+	return key
 }
 
 func provisionGroupPlanFromGroup(group *adminplusdomain.SupplierGroup) ProvisionGroupPlan {
@@ -1269,6 +1322,44 @@ func (s *Service) ensureGroup(ctx context.Context, normalized EnsureAllInput, su
 		item.Action = "skipped"
 		item.Key = existing
 		return item, nil
+	}
+	if providerSnapshot, ok := s.readProviderKeyCapacitySnapshot(ctx, supplier); ok {
+		providerKey, found := providerSnapshot.activeExternalGroup(group.ExternalGroupID)
+		if found {
+			providerKey = s.hydrateProviderKeySnapshot(ctx, supplier, providerKey)
+			if !providerKeySecretAvailable(providerKey) {
+				return fail(infraerrors.New(http.StatusConflict, "SUPPLIER_KEY_SECRET_REQUIRED", "existing third-party key secret is unavailable; import the key and provide its secret"))
+			}
+			input := provisionInputFromEnsureAll(normalized, group)
+			input.LocalAccountBaseURL = normalized.LocalAccountBaseURL
+			input.LocalAccountPlatform = normalizeLocalPlatform(group.ProviderFamily)
+			input.LocalAccountName = defaultLocalAccountName(supplier, group)
+			providerResult := &ports.ProviderKeyResult{
+				SupplierID:      normalized.SupplierID,
+				ExternalGroupID: providerKey.ExternalGroupID,
+				ExternalKeyID:   providerKey.ExternalKeyID,
+				Name:            providerKey.Name,
+				Secret:          providerKey.Secret,
+				Status:          providerKey.Status,
+				RawPayload:      cloneMap(providerKey.RawPayload),
+				CreatedAt:       s.now().UTC(),
+			}
+			providerInput := ports.SessionProbeInput{}
+			if normalized.SyncProviderName {
+				providerInput, err = s.session.DecryptedProbeInput(ctx, normalized.SupplierID)
+				if err != nil {
+					return fail(err)
+				}
+			}
+			bound, err := s.bindProviderKey(ctx, input, supplier, group, defaultProvisionName(group), firstNonEmpty(providerKey.Name, defaultProvisionName(group)), providerInput, providerResult)
+			if err != nil {
+				return fail(err)
+			}
+			item.Action = "reused"
+			item.Key = bound.Key
+			item.Binding = bound.Binding
+			return item, nil
+		}
 	}
 	rate := group.EffectiveRateMultiplier
 	if rate <= 0 {

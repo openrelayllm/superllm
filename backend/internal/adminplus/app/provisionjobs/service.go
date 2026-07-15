@@ -258,7 +258,7 @@ func (s *Service) stepsForSubmit(ctx context.Context, in SubmitInput, now time.T
 	}
 	steps := make([]*adminplusdomain.SupplierProvisionStep, 0, len(plan.Items))
 	for _, item := range plan.Items {
-		if item.SupplierGroupID <= 0 || (item.Action != "create" && item.Action != "skipped_existing") {
+		if item.SupplierGroupID <= 0 || (item.Action != "create" && item.Action != "reuse" && item.Action != "skipped_existing") {
 			continue
 		}
 		request := cloneMap(in.Request)
@@ -331,7 +331,7 @@ func provisionPlanHasActionableItems(plan *supplierkeys.EnsureAllPlan) bool {
 		return false
 	}
 	for _, item := range plan.Items {
-		if item.Action == "create" || item.Action == "skipped_existing" {
+		if item.Action == "create" || item.Action == "reuse" || item.Action == "skipped_existing" {
 			return true
 		}
 	}
@@ -530,6 +530,7 @@ func jobResultSnapshot(job *adminplusdomain.SupplierProvisionJob, steps []*admin
 	out := map[string]any{
 		"total":                len(steps),
 		"created":              0,
+		"reused":               0,
 		"skipped":              0,
 		"failed":               0,
 		"local_groups_created": 0,
@@ -542,6 +543,8 @@ func jobResultSnapshot(job *adminplusdomain.SupplierProvisionJob, steps []*admin
 		switch stringValue(step.ResultSnapshot["action"]) {
 		case "created":
 			out["created"] = intValue(out["created"]) + 1
+		case "reused":
+			out["reused"] = intValue(out["reused"]) + 1
 		case "skipped":
 			out["skipped"] = intValue(out["skipped"]) + 1
 		}
