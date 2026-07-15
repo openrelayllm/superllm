@@ -3,8 +3,10 @@ package supplierkeys
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/Wei-Shaw/sub2api/internal/adminplus/ports"
@@ -162,6 +164,266 @@ func TestServiceProvisionRejectsGroupWithExistingBoundKeyBeforeProviderCall(t *t
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "SUPPLIER_GROUP_KEY_ALREADY_BOUND")
 	require.Empty(t, keyAdapter.calls)
+}
+
+func TestServicePlanEnsureAllUsesKnownProviderCapacityWhenSupplierPolicyUnknown(t *testing.T) {
+	repo := NewMemoryRepository()
+	repo.PutSupplier(&adminplusdomain.Supplier{
+		ID:              7,
+		Name:            "Relay",
+		Type:            adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus:   adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:    adminplusdomain.SupplierHealthStatusNormal,
+		KeyLimitPolicy:  adminplusdomain.SupplierKeyLimitPolicyUnknown,
+		BalanceCurrency: "USD",
+	})
+	for _, group := range []*adminplusdomain.SupplierGroup{
+		{ID: 10, SupplierID: 7, ExternalGroupID: "g10", Name: "First", ProviderFamily: "openai", Status: adminplusdomain.SupplierGroupStatusActive},
+		{ID: 20, SupplierID: 7, ExternalGroupID: "g20", Name: "Second", ProviderFamily: "openai", Status: adminplusdomain.SupplierGroupStatusActive},
+	} {
+		repo.PutGroup(group)
+	}
+	keyAdapter := &stubKeyAdapter{capacityResult: &ports.ProviderKeyCapacityResult{
+		SupplierID:        7,
+		SystemType:        "sub2api",
+		KeyLimitPolicy:    adminplusdomain.SupplierKeyLimitPolicyUnlimited,
+		KeyCapacityStatus: adminplusdomain.SupplierKeyCapacityAvailable,
+		LimitKnown:        true,
+	}}
+	svc := NewService(repo, &stubSessionReader{input: ports.SessionProbeInput{SupplierID: 7}}, keyAdapter, &stubLocalAccountCreator{})
+
+	plan, err := svc.PlanEnsureAll(context.Background(), EnsureAllInput{
+		SupplierID:          7,
+		LocalAccountBaseURL: "https://relay.example.com/v1",
+		RuntimeStatus:       adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:        adminplusdomain.SupplierHealthStatusNormal,
+		BalanceCurrency:     "USD",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, adminplusdomain.SupplierKeyLimitPolicyUnlimited, plan.KeyLimitPolicy)
+	require.Equal(t, 2, plan.ToCreate)
+	require.Zero(t, plan.Blocked)
+}
+
+func TestServiceEnsureAllCompletesProviderToSub2APIFlowForDuplicateNames(t *testing.T) {
+	repo := NewMemoryRepository()
+	repo.PutSupplier(&adminplusdomain.Supplier{
+		ID: 7, Name: "Relay", Type: adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus:   adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:    adminplusdomain.SupplierHealthStatusNormal,
+		KeyLimitPolicy:  adminplusdomain.SupplierKeyLimitPolicyUnknown,
+		BalanceCurrency: "USD",
+	})
+	for _, group := range []*adminplusdomain.SupplierGroup{
+		{ID: 10, SupplierID: 7, ExternalGroupID: "g10", Name: "OpenAI", StandardKeyName: "supplier-OpenAI-1x", ProviderFamily: "openai", Status: adminplusdomain.SupplierGroupStatusActive},
+		{ID: 20, SupplierID: 7, ExternalGroupID: "g20", Name: "OpenAI", StandardKeyName: "supplier-OpenAI-1x", ProviderFamily: "openai", Status: adminplusdomain.SupplierGroupStatusActive},
+	} {
+		repo.PutGroup(group)
+	}
+	keyAdapter := &stubKeyAdapter{
+		capacityResult: &ports.ProviderKeyCapacityResult{
+			SupplierID: 7, SystemType: "sub2api", KeyLimitPolicy: adminplusdomain.SupplierKeyLimitPolicyUnlimited,
+			KeyCapacityStatus: adminplusdomain.SupplierKeyCapacityAvailable, LimitKnown: true,
+		},
+		resultsByGroup: map[string]*ports.ProviderKeyResult{
+			"g10": {SupplierID: 7, ExternalGroupID: "g10", ExternalKeyID: "provider-10", Name: "supplier-OpenAI-1x", Secret: "sk-provider-10", Status: "active"},
+			"g20": {SupplierID: 7, ExternalGroupID: "g20", ExternalKeyID: "provider-20", Name: "supplier-OpenAI-1x", Secret: "sk-provider-20", Status: "active"},
+		},
+	}
+	local := &stubLocalAccountCreator{}
+	svc := NewService(repo, &stubSessionReader{input: ports.SessionProbeInput{SupplierID: 7}}, keyAdapter, local)
+
+	result, err := svc.EnsureAll(context.Background(), EnsureAllInput{
+		SupplierID: 7, LocalAccountBaseURL: "https://relay.example.com/v1",
+		RuntimeStatus:   adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:    adminplusdomain.SupplierHealthStatusNormal,
+		BalanceCurrency: "USD",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Total)
+	require.Equal(t, 2, result.Created)
+	require.Zero(t, result.Failed)
+	require.Len(t, keyAdapter.calls, 2)
+	require.Len(t, local.accounts, 2)
+	names := make(map[string]struct{}, len(local.accounts))
+	for _, account := range local.accounts {
+		names[account.Name] = struct{}{}
+		require.Equal(t, int64(7), int64FromMap(account.Extra, "admin_plus_supplier_id"))
+	}
+	require.Contains(t, names, "Relay / OpenAI [g10]")
+	require.Contains(t, names, "Relay / OpenAI [g20]")
+}
+
+func TestLocalAccountMatchesLookupRejectsSameNameWithDifferentAdminPlusIdentity(t *testing.T) {
+	account := &service.Account{
+		ID:       1001,
+		Name:     "duplicate-name",
+		Platform: service.PlatformOpenAI,
+		Extra: map[string]any{
+			"admin_plus_supplier_id":       int64(7),
+			"admin_plus_supplier_group_id": int64(10),
+			"admin_plus_supplier_key":      int64(100),
+		},
+	}
+
+	require.False(t, localAccountMatchesLookup(account, Sub2APIAccountLookupInput{
+		SupplierID:           7,
+		SupplierGroupID:      20,
+		SupplierKeyID:        200,
+		LocalAccountName:     "duplicate-name",
+		LocalAccountPlatform: service.PlatformOpenAI,
+	}))
+	require.True(t, localAccountMatchesLookup(account, Sub2APIAccountLookupInput{
+		SupplierID:           7,
+		SupplierGroupID:      10,
+		SupplierKeyID:        100,
+		LocalAccountName:     "duplicate-name",
+		LocalAccountPlatform: service.PlatformOpenAI,
+	}))
+	require.False(t, localAccountMatchesLookup(account, Sub2APIAccountLookupInput{
+		SupplierID:           7,
+		SupplierGroupID:      10,
+		SupplierKeyID:        200,
+		LocalAccountName:     "duplicate-name",
+		LocalAccountPlatform: service.PlatformOpenAI,
+	}))
+	require.True(t, localAccountMatchesLookup(&service.Account{
+		ID: 1002, Name: "duplicate-name", Platform: service.PlatformOpenAI,
+	}, Sub2APIAccountLookupInput{
+		SupplierID: 7, SupplierGroupID: 20, LocalAccountName: "duplicate-name", LocalAccountPlatform: service.PlatformOpenAI,
+	}))
+}
+
+func TestLocalAccountNameForGroupHandlesLongUnicodeValues(t *testing.T) {
+	stablePrefix := strings.Repeat("分", 80)
+	groupA := &adminplusdomain.SupplierGroup{ID: 10, ExternalGroupID: stablePrefix + "甲"}
+	groupB := &adminplusdomain.SupplierGroup{ID: 20, ExternalGroupID: stablePrefix + "乙"}
+	preferred := strings.Repeat("中文账号", 80)
+
+	nameA := localAccountNameForGroup(nil, groupA, preferred)
+	nameB := localAccountNameForGroup(nil, groupB, preferred)
+
+	require.True(t, utf8.ValidString(nameA))
+	require.LessOrEqual(t, utf8.RuneCountInString(nameA), 160)
+	require.NotEqual(t, nameA, nameB)
+	require.True(t, strings.HasSuffix(nameA, " ["+trimLimit(groupA.ExternalGroupID, 35)+"-"+fingerprintSecret(groupA.ExternalGroupID)[:12]+"]"))
+}
+
+func TestTrimLimitHandlesNonPositiveAndUnicodeLimits(t *testing.T) {
+	require.Empty(t, trimLimit("value", -1))
+	require.Equal(t, "中文", trimLimit("中文账号", 2))
+}
+
+func TestServiceProvisionReusesProviderKeyAfterFailedLocalLanding(t *testing.T) {
+	repo := NewMemoryRepository()
+	repo.PutSupplier(&adminplusdomain.Supplier{
+		ID: 7, Name: "Relay", Type: adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus:  adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:   adminplusdomain.SupplierHealthStatusNormal,
+		KeyLimitPolicy: adminplusdomain.SupplierKeyLimitPolicyUnlimited,
+	})
+	repo.PutGroup(&adminplusdomain.SupplierGroup{
+		ID: 10, SupplierID: 7, ExternalGroupID: "88", Name: "Low Cost",
+		ProviderFamily: "openai", Status: adminplusdomain.SupplierGroupStatusActive,
+	})
+	secret := "sk-provider-secret"
+	failed, err := repo.CreateKey(context.Background(), &adminplusdomain.SupplierKey{
+		SupplierID: 7, SupplierGroupID: 10, ExternalGroupID: "88", ExternalKeyID: "99",
+		Name: "ops-key", KeyFingerprint: fingerprintSecret(secret), KeyLast4: "cret",
+		Status: adminplusdomain.SupplierKeyStatusFailed, ProviderFamily: "openai",
+		ErrorCode: "LOCAL_ACCOUNT_CREATE_FAILED", ErrorMessage: "previous local landing failed",
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	keyAdapter := &stubKeyAdapter{capacityResult: &ports.ProviderKeyCapacityResult{
+		SupplierID: 7, SystemType: "sub2api", KeyLimitPolicy: adminplusdomain.SupplierKeyLimitPolicyUnlimited,
+		KeyCapacityStatus: adminplusdomain.SupplierKeyCapacityAvailable, LimitKnown: true,
+		Keys: []ports.ProviderKeySnapshot{{
+			SupplierID: 7, ExternalGroupID: "88", ExternalKeyID: "99", Name: "ops-key", Status: "active", Secret: secret,
+		}},
+	}}
+	local := &stubLocalAccountCreator{}
+	svc := NewService(repo, &stubSessionReader{input: ports.SessionProbeInput{SupplierID: 7}}, keyAdapter, local)
+
+	result, err := svc.Provision(context.Background(), ProvisionKeyInput{
+		SupplierID: 7, SupplierGroupID: 10, Name: "ops-key",
+		LocalAccountPlatform: service.PlatformOpenAI,
+		LocalAccountBaseURL:  "https://relay.example.com/v1",
+		RuntimeStatus:        adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:         adminplusdomain.SupplierHealthStatusNormal,
+		BalanceCurrency:      "USD",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, failed.ID, result.Key.ID)
+	require.Equal(t, adminplusdomain.SupplierKeyStatusBound, result.Key.Status)
+	require.Equal(t, int64(1001), result.Key.LocalSub2APIAccountID)
+	require.Empty(t, keyAdapter.calls)
+	require.Equal(t, secret, local.input.Credentials["api_key"])
+}
+
+func TestServiceEnsureGroupRecreatesDeletedLocalAccountFromProviderSecret(t *testing.T) {
+	repo := NewMemoryRepository()
+	repo.PutSupplier(&adminplusdomain.Supplier{
+		ID: 7, Name: "Relay", Type: adminplusdomain.SupplierTypeSub2API,
+		RuntimeStatus:  adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:   adminplusdomain.SupplierHealthStatusNormal,
+		KeyLimitPolicy: adminplusdomain.SupplierKeyLimitPolicyUnlimited,
+	})
+	repo.PutGroup(&adminplusdomain.SupplierGroup{
+		ID: 10, SupplierID: 7, ExternalGroupID: "88", Name: "Low Cost",
+		ProviderFamily: "openai", Status: adminplusdomain.SupplierGroupStatusActive,
+	})
+	key, err := repo.CreateKey(context.Background(), &adminplusdomain.SupplierKey{
+		SupplierID: 7, SupplierGroupID: 10, ExternalGroupID: "88", ExternalKeyID: "99",
+		Name: "ops-key", KeyFingerprint: fingerprintSecret("sk-provider-secret"), KeyLast4: "cret",
+		Status: adminplusdomain.SupplierKeyStatusBound, ProviderFamily: "openai",
+		LocalSub2APIAccountID: 77, LocalAccountName: "deleted-local-account", LocalAccountPlatform: service.PlatformOpenAI,
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	oldBinding, err := repo.CreateBinding(context.Background(), &adminplusdomain.SupplierAccount{
+		SupplierID:                7,
+		SupplierKeyID:             key.ID,
+		LocalSub2APIAccountID:     77,
+		SupplierAccountIdentifier: "99",
+		SupplierAccountLabel:      "ops-key",
+		RuntimeStatus:             adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+		HealthStatus:              adminplusdomain.SupplierHealthStatusNormal,
+		BalanceCurrency:           "USD",
+	})
+	require.NoError(t, err)
+	local := &stubLocalAccountCreator{missingAccountIDs: map[int64]bool{77: true}}
+	keyAdapter := &stubKeyAdapter{readResult: &ports.ProviderKeyResult{
+		SupplierID: 7, ExternalGroupID: "88", ExternalKeyID: "99", Name: "ops-key", Status: "active", Secret: "sk-provider-secret",
+	}}
+	svc := NewService(repo, &stubSessionReader{input: ports.SessionProbeInput{SupplierID: 7}}, keyAdapter, local)
+
+	result, err := svc.EnsureGroup(context.Background(), EnsureGroupInput{
+		SupplierGroupID: 10,
+		EnsureAllInput: EnsureAllInput{
+			SupplierID: 7, LocalAccountBaseURL: "https://relay.example.com/v1",
+			RuntimeStatus:   adminplusdomain.SupplierRuntimeStatusMonitorOnly,
+			HealthStatus:    adminplusdomain.SupplierHealthStatusNormal,
+			BalanceCurrency: "USD",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "skipped", result.Action)
+	require.Equal(t, key.ID, result.Key.ID)
+	require.Equal(t, int64(1001), result.Key.LocalSub2APIAccountID)
+	require.NotNil(t, result.Binding)
+	require.Equal(t, oldBinding.ID, result.Binding.ID)
+	require.Equal(t, key.ID, result.Binding.SupplierKeyID)
+	require.Equal(t, int64(1001), result.Binding.LocalSub2APIAccountID)
+	require.Equal(t, []ports.ReadProviderKeyInput{{
+		SupplierID: 7, ExternalKeyID: "99", ExternalGroupID: "88", Name: "ops-key",
+	}}, keyAdapter.readCalls)
+	require.Empty(t, keyAdapter.calls)
+	require.Equal(t, "sk-provider-secret", local.input.Credentials["api_key"])
 }
 
 func TestServiceProvisionRejectsExhaustedSupplierKeyCapacityBeforeProviderCall(t *testing.T) {
@@ -1125,7 +1387,7 @@ func TestServicePlanEnsureAllBlocksWhenProviderKeyCapacityIncomplete(t *testing.
 	require.Empty(t, keyAdapter.calls)
 }
 
-func TestServiceProvisionRejectsProviderActiveKeyWithoutLocalBindingBeforeCreate(t *testing.T) {
+func TestServiceProvisionRequiresSecretForProviderActiveKeyWithoutLocalBinding(t *testing.T) {
 	repo := NewMemoryRepository()
 	repo.PutSupplier(&adminplusdomain.Supplier{
 		ID:              7,
@@ -1183,7 +1445,7 @@ func TestServiceProvisionRejectsProviderActiveKeyWithoutLocalBindingBeforeCreate
 
 	require.Nil(t, result)
 	require.Error(t, err)
-	require.Equal(t, "SUPPLIER_PROVIDER_KEY_UNBOUND", infraerrors.Reason(err))
+	require.Equal(t, "SUPPLIER_KEY_SECRET_REQUIRED", infraerrors.Reason(err))
 	require.Len(t, keyAdapter.capacityCalls, 1)
 	require.Empty(t, keyAdapter.calls)
 }
@@ -1577,7 +1839,7 @@ func TestServiceRepairBindingCompletesManualSecretRequiredKey(t *testing.T) {
 	require.NotNil(t, result.Binding)
 	require.Equal(t, adminplusdomain.SupplierKeyStatusBound, result.Key.Status)
 	require.Equal(t, int64(1001), result.Key.LocalSub2APIAccountID)
-	require.Equal(t, "relay-low-cost", result.Key.LocalAccountName)
+	require.Equal(t, "relay-low-cost [88]", result.Key.LocalAccountName)
 	require.Equal(t, "cret", result.Key.KeyLast4)
 	require.NotEmpty(t, result.Key.KeyFingerprint)
 	require.NotEqual(t, "sk-manual-secret", result.Key.KeyFingerprint)
@@ -1603,6 +1865,7 @@ func (s *stubSessionReader) DecryptedProbeInput(_ context.Context, _ int64) (por
 
 type stubKeyAdapter struct {
 	result         *ports.ProviderKeyResult
+	resultsByGroup map[string]*ports.ProviderKeyResult
 	readResult     *ports.ProviderKeyResult
 	listResult     *ports.ListProviderKeysResult
 	capacityResult *ports.ProviderKeyCapacityResult
@@ -1672,6 +1935,10 @@ func (s *stubKeyAdapter) CreateKey(_ context.Context, _ ports.SessionProbeInput,
 	if s.err != nil {
 		return nil, s.err
 	}
+	if result := s.resultsByGroup[request.ExternalGroupID]; result != nil {
+		copy := *result
+		return &copy, nil
+	}
 	return s.result, nil
 }
 
@@ -1721,23 +1988,32 @@ func (s *stubKeyAdapter) DeleteKey(_ context.Context, _ ports.SessionProbeInput,
 }
 
 type stubLocalAccountCreator struct {
-	input    service.CreateAccountInput
-	accounts map[int64]*service.Account
-	getCalls []int64
+	input             service.CreateAccountInput
+	accounts          map[int64]*service.Account
+	missingAccountIDs map[int64]bool
+	getCalls          []int64
 }
 
 func (s *stubLocalAccountCreator) CreateAccount(_ context.Context, input *service.CreateAccountInput) (*service.Account, error) {
 	s.input = *input
+	if s.accounts == nil {
+		s.accounts = make(map[int64]*service.Account)
+	}
+	accountID := int64(1001)
+	for {
+		if _, exists := s.accounts[accountID]; !exists {
+			break
+		}
+		accountID++
+	}
 	account := &service.Account{
-		ID:          1001,
+		ID:          accountID,
 		Name:        input.Name,
 		Platform:    input.Platform,
 		Type:        input.Type,
 		Credentials: input.Credentials,
+		Extra:       input.Extra,
 		GroupIDs:    append([]int64(nil), input.GroupIDs...),
-	}
-	if s.accounts == nil {
-		s.accounts = make(map[int64]*service.Account)
 	}
 	s.accounts[account.ID] = account
 	return account, nil
@@ -1745,6 +2021,9 @@ func (s *stubLocalAccountCreator) CreateAccount(_ context.Context, input *servic
 
 func (s *stubLocalAccountCreator) GetAccount(_ context.Context, id int64) (*service.Account, error) {
 	s.getCalls = append(s.getCalls, id)
+	if s.missingAccountIDs[id] {
+		return nil, infraerrors.New(http.StatusNotFound, "LOCAL_SUB2API_ACCOUNT_NOT_FOUND", "local Sub2API account not found")
+	}
 	if account, ok := s.accounts[id]; ok {
 		cp := *account
 		return &cp, nil

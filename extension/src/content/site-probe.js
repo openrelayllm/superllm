@@ -11,7 +11,10 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!SUPPORTED_MESSAGES.has(message?.type)) return false
-    Promise.resolve(collectSiteCandidate({ includeSensitive: message.include_sensitive === true }))
+    Promise.resolve(collectSiteCandidate({
+      includeSensitive: message.include_sensitive === true,
+      skipAPIProbe: message.skip_api_probe === true
+    }))
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({
         ok: false,
@@ -24,7 +27,9 @@
   async function collectSiteCandidate(options = {}) {
     const storage = collectStorage()
     const page = pageSummary()
-    const identification = await identifyProvider(storage)
+    const identification = await identifyProvider(storage, {
+      skipAPIProbe: options.skipAPIProbe === true
+    })
     const login = collectLoginForm(options.includeSensitive)
     const debug = summarizeInputs()
     const token = options.includeSensitive ? extractToken(storage) : ''
@@ -66,7 +71,7 @@
     }
   }
 
-  async function identifyProvider(storage) {
+  async function identifyProvider(storage, options = {}) {
     const evidence = []
     let sub2apiScore = 0
     let newAPIScore = 0
@@ -107,10 +112,12 @@
       evidence.push('storage:sub2api-auth')
     }
 
-    const apiEvidence = await probeKnownAPIs()
-    sub2apiScore += apiEvidence.sub2apiScore
-    newAPIScore += apiEvidence.newAPIScore
-    evidence.push(...apiEvidence.evidence)
+    if (!options.skipAPIProbe) {
+      const apiEvidence = await probeKnownAPIs()
+      sub2apiScore += apiEvidence.sub2apiScore
+      newAPIScore += apiEvidence.newAPIScore
+      evidence.push(...apiEvidence.evidence)
+    }
 
     if (newAPIScore >= 3 && newAPIScore >= sub2apiScore + 2) {
       return {
@@ -209,11 +216,19 @@
   }
 
   function findPasswordInput(visible, includeSensitive) {
-    const visiblePassword = visible.find((input) => input.type === 'password')
+    const visiblePassword = visible.find(isPasswordInput)
     if (visiblePassword) return visiblePassword
     if (!includeSensitive) return null
-    return allInputs()
-      .find((input) => !input.disabled && !input.readOnly && stringValue(input.value)) || null
+    const candidates = allInputs().filter((input) => !input.disabled && !input.readOnly && isPasswordInput(input))
+    return candidates.find((input) => stringValue(input.value)) || candidates[0] || null
+  }
+
+  function isPasswordInput(input) {
+    if (!input) return false
+    const type = String(input.type || '').toLowerCase()
+    if (type === 'password') return true
+    if (type !== 'text' && type !== '') return false
+    return /(password|passwd|passcode|\bpwd\b|密码|口令)/i.test(inputDescriptor(input))
   }
 
   function visibleInputs() {
@@ -246,7 +261,7 @@
 
   function summarizeInputs() {
     const inputs = allInputs()
-    const passwordInputs = inputs.filter((input) => input.type === 'password')
+    const passwordInputs = inputs.filter(isPasswordInput)
     return {
       input_count: inputs.length,
       password_input_count: passwordInputs.length,

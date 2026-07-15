@@ -13,15 +13,31 @@ export SERVER_PORT DATA_DIR
 export ADMIN_PLUS_BASE_URL ADMIN_PLUS_E2E_DB_URL ADMIN_PLUS_E2E_REDIS_URL
 export ADMIN_PLUS_E2E_EMAIL="${ADMIN_PLUS_E2E_EMAIL:-admin@superllm.local}"
 export ADMIN_PLUS_E2E_PASSWORD="${ADMIN_PLUS_E2E_PASSWORD:-AdminPlus@123456}"
+export ADMIN_PLUS_E2E_MANAGED_ADMIN="${ADMIN_PLUS_E2E_MANAGED_ADMIN:-true}"
 export ADMIN_PLUS_SCHEDULER_ENABLED="${ADMIN_PLUS_SCHEDULER_ENABLED:-false}"
+export ADMIN_PLUS_NOTIFICATIONS_DISABLED="true"
 
 PIDS=()
 
+terminate_process_tree() {
+  local pid="$1"
+  local child_pid
+  while IFS= read -r child_pid; do
+    if [[ -n "${child_pid}" ]]; then
+      terminate_process_tree "${child_pid}"
+    fi
+  done < <(pgrep -P "${pid}" 2>/dev/null || true)
+  if kill -0 "${pid}" >/dev/null 2>&1; then
+    kill "${pid}" >/dev/null 2>&1 || true
+  fi
+}
+
 cleanup() {
   for pid in "${PIDS[@]}"; do
-    if kill -0 "${pid}" >/dev/null 2>&1; then
-      kill "${pid}" >/dev/null 2>&1 || true
-    fi
+    terminate_process_tree "${pid}"
+  done
+  for pid in "${PIDS[@]}"; do
+    wait "${pid}" >/dev/null 2>&1 || true
   done
 }
 
@@ -34,6 +50,11 @@ echo "waiting for backend on ${ADMIN_PLUS_BASE_URL}"
 for _ in $(seq 1 90); do
   if curl -fsS "${ADMIN_PLUS_BASE_URL}/setup/status" >/dev/null 2>&1; then
     break
+  fi
+  if ! kill -0 "${PIDS[0]}" >/dev/null 2>&1; then
+    wait "${PIDS[0]}" || true
+    echo "backend process exited before becoming ready" >&2
+    exit 1
   fi
   sleep 1
 done

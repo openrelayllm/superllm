@@ -7,16 +7,22 @@ import process from 'node:process'
 const baseURL = trimTrailingSlash(process.env.ADMIN_PLUS_BASE_URL || 'http://localhost:3000')
 const email = process.env.ADMIN_PLUS_E2E_EMAIL || 'admin@superllm.local'
 const password = process.env.ADMIN_PLUS_E2E_PASSWORD || 'AdminPlus@123456'
+const presetToken = (process.env.ADMIN_PLUS_E2E_TOKEN || '').trim()
+const managedAdmin = process.env.ADMIN_PLUS_E2E_MANAGED_ADMIN !== 'false'
 const dbURL = process.env.ADMIN_PLUS_E2E_DB_URL || 'postgresql://root:root@127.0.0.1:5432/superllm?sslmode=disable'
+const sub2APIDBURL = process.env.ADMIN_PLUS_E2E_SUB2API_DB_URL || 'postgresql://root:root@127.0.0.1:5432/sub2api?sslmode=disable'
 const redisURL = process.env.ADMIN_PLUS_E2E_REDIS_URL || 'redis://127.0.0.1:6379/0'
 const cleanupEnabled = process.env.ADMIN_PLUS_E2E_CLEANUP !== 'false'
 const allowNonLocal = process.env.ADMIN_PLUS_E2E_ALLOW_NON_LOCAL === '1'
+const e2eScope = (process.env.ADMIN_PLUS_E2E_SCOPE || 'full').trim().toLowerCase()
 const realUpstreamBaseURL = trimTrailingSlash(process.env.ADMIN_PLUS_E2E_REAL_UPSTREAM_BASE_URL || '')
 const realUpstreamAPIKey = process.env.ADMIN_PLUS_E2E_REAL_UPSTREAM_API_KEY || ''
 const probeModel = 'gpt-5.5'
 const runID = `e2e-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 8)}`
 
 let token = ''
+let loginEmail = email
+let loginPassword = password
 let testUpstreamBaseURL = ''
 let testUpstreamRequests = []
 let localAccountIDForCleanup = 0
@@ -40,10 +46,14 @@ async function main() {
   try {
     log(`Admin Plus API E2E starting: ${runID}`)
     await waitForService()
+    if (!presetToken && managedAdmin) {
+      createAdminUserFixture()
+    }
     await login()
 
     const localAccountID = createLocalAccountFixture()
     await exerciseLocalAccountRuntime(localAccountID)
+    await exerciseLocalAccountStateAndOps(localAccountID)
     let supplier = await createSupplier()
     await listAndGetSupplier(supplier.id)
     supplier = await updateSupplier(supplier.id)
@@ -52,16 +62,20 @@ async function main() {
     let supplierAccount = await createSupplierAccount(activeSupplier.id, localAccountID)
     supplierAccount = await updateSupplierAccount(activeSupplier.id, supplierAccount)
     await listSupplierAccounts(activeSupplier.id, supplierAccount.id)
+    if (e2eScope === 'supplier-link') {
+      await deleteSupplierAccount(activeSupplier.id, supplierAccount.id)
+      log('supplier link E2E scope completed')
+      return
+    }
 
     const rateEvent = await exerciseRateMonitoring(activeSupplier.id)
     const balanceEvent = await exerciseBalanceMonitoring(activeSupplier.id)
     const healthEvent = await exerciseHealthMonitoring(activeSupplier.id, supplierAccount.id)
-    const announcementEvent = await exerciseAnnouncementMonitoring(activeSupplier.id)
-    const reconciliation = await exerciseBillingAndReconciliation(activeSupplier.id, localAccountID)
+    await exerciseUsageCosts(activeSupplier.id, localAccountID)
     await exerciseScheduler(activeSupplier.id)
     await exerciseExtensionTasks(activeSupplier.id)
     const candidateSupplier = await createCandidateSupplier()
-    await exerciseActionRecommendations(activeSupplier, candidateSupplier, balanceEvent, announcementEvent, healthEvent, reconciliation.summary)
+    await exerciseActionRecommendations(activeSupplier, candidateSupplier, balanceEvent, healthEvent)
     await verifyAllListEndpoints(activeSupplier.id)
     await deleteSupplierAccount(activeSupplier.id, supplierAccount.id)
 
@@ -92,17 +106,41 @@ async function waitForService() {
 }
 
 async function login() {
-  const data = await api('POST', '/api/v1/auth/login', {
-    email,
-    password
-  }, { auth: false })
-  token = data.access_token
-  assert(token, 'login should return access token')
-  assert(data.user?.role === 'admin', 'login user should be admin')
+  if (presetToken) {
+    token = presetToken
+  } else {
+    const data = await api('POST', '/api/v1/auth/login', {
+      email: loginEmail,
+      password: loginPassword
+    }, { auth: false })
+    token = data.access_token
+    assert(token, 'login should return access token')
+    assert(data.user?.role === 'admin', 'login user should be admin')
+  }
 
   const me = await api('GET', '/api/v1/auth/me')
   assert(me.role === 'admin', 'auth/me should return admin user')
   log(`logged in as ${me.email}`)
+}
+
+function createAdminUserFixture() {
+  loginEmail = `${runID}-admin@e2e.local`
+  loginPassword = 'AdminPlus@123456'
+  const passwordHash = '$2a$10$KRlaYOJmEMFmx1P6fRXQhuG7O6qVzj1qMsVKNIWesPXfLB3g.f6oy'
+  const sql = `
+    INSERT INTO users (email, password_hash, role, balance, concurrency, status, created_at, updated_at)
+    VALUES (
+      '${sqlString(loginEmail)}', '${passwordHash}', 'admin', 0, 5, 'active', NOW(), NOW()
+    )
+    RETURNING id;
+  `
+  const out = execFileSync('psql', [sub2APIDBURL, '-v', 'ON_ERROR_STOP=1', '-At', '-c', sql], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  }).trim()
+  const id = parseReturningID(out)
+  assert(Number.isInteger(id) && id > 0, `admin user fixture should return id, got: ${out}`)
+  log(`created Sub2API admin identity fixture #${id}`)
 }
 
 function createLocalAccountFixture() {
@@ -126,7 +164,7 @@ function createLocalAccountFixture() {
     )
     RETURNING id;
   `
-  const out = execFileSync('psql', [dbURL, '-v', 'ON_ERROR_STOP=1', '-At', '-c', sql], {
+  const out = execFileSync('psql', [sub2APIDBURL, '-v', 'ON_ERROR_STOP=1', '-At', '-c', sql], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   }).trim()
@@ -153,7 +191,7 @@ function createLocalUsageFixture(localAccountID, requestID, model, actualCostUSD
     )
     RETURNING id;
   `
-  const out = execFileSync('psql', [dbURL, '-v', 'ON_ERROR_STOP=1', '-At', '-c', sql], {
+  const out = execFileSync('psql', [sub2APIDBURL, '-v', 'ON_ERROR_STOP=1', '-At', '-c', sql], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   }).trim()
@@ -175,6 +213,79 @@ async function exerciseLocalAccountRuntime(localAccountID) {
   log('local account runtime verified')
 }
 
+async function exerciseLocalAccountStateAndOps(localAccountID) {
+  let synced = await api('POST', '/api/v1/admin-plus/sub2api/local-account-ops/sync-local-state', {
+    account_ids: [localAccountID],
+    limit: 20
+  })
+  assert(synced.checked_accounts === 1, 'local state sync should read the Sub2API account')
+  assert(synced.pending_drift_accounts === 0, 'new local state snapshot should be synchronized')
+
+  setLocalAccountSchedulableFixture(localAccountID, false)
+  synced = await api('POST', '/api/v1/admin-plus/sub2api/local-account-ops/sync-local-state', {
+    account_ids: [localAccountID],
+    limit: 20
+  })
+  assert(synced.pending_drift_accounts === 1, 'manual Sub2API state change should create pending drift')
+  const restoredState = await api('POST', '/api/v1/admin-plus/sub2api/local-account-ops/restore-local-state', {
+    account_ids: [localAccountID]
+  })
+  assert(restoredState.restored_accounts === 1, 'restore should apply the accepted SuperLLM state to Sub2API')
+  assert(restoredState.pending_drift_accounts === 0, 'restored state should clear pending drift')
+
+  setLocalAccountSchedulableFixture(localAccountID, false)
+  synced = await api('POST', '/api/v1/admin-plus/sub2api/local-account-ops/sync-local-state', {
+    account_ids: [localAccountID],
+    limit: 20
+  })
+  assert(synced.pending_drift_accounts === 1, 'second manual Sub2API change should create pending drift')
+  const acceptedState = await api('POST', '/api/v1/admin-plus/sub2api/local-account-ops/accept-local-state', {
+    account_ids: [localAccountID]
+  })
+  assert(acceptedState.resolved_accounts === 1, 'accept should adopt the observed Sub2API state')
+  assert(acceptedState.pending_drift_accounts === 0, 'accepted state should clear pending drift')
+
+  const preview = await api('POST', '/api/v1/admin-plus/sub2api/local-account-ops/preview', {
+    action: 'set_schedulable',
+    account_ids: [localAccountID],
+    schedulable: true,
+    reason: runID
+  })
+  assert(preview.dry_run === true, 'local account operation preview should remain side-effect free')
+  assert(preview.blocked === false, 'unbound fixture account should be safe to restore')
+
+  const restored = await api('POST', '/api/v1/admin-plus/sub2api/local-account-ops/apply', {
+    action: 'set_schedulable',
+    account_ids: [localAccountID],
+    schedulable: true,
+    reason: runID
+  })
+  assert(restored.updated_accounts === 1, 'local account operation should restore Sub2API schedulable state')
+  assert(restored.blocked === false, 'local account operation should not be blocked by cross-database state')
+
+  const restoredList = await api('GET', `/api/v1/admin-plus/sub2api/local-account-ops?q=${encodeURIComponent(runID)}&limit=20`)
+  const restoredAccount = restoredList.items.find((item) => item.local_sub2api_account_id === localAccountID)
+  assert(restoredAccount?.local_account_schedulable === true, 'local account list should reflect restored state')
+
+  const resynced = await api('POST', '/api/v1/admin-plus/sub2api/local-account-ops/sync-local-state', {
+    account_ids: [localAccountID],
+    limit: 20
+  })
+  assert(resynced.pending_drift_accounts === 0, 'applied local state should be accepted in SuperLLM')
+  log('cross-database local account state and operations verified')
+}
+
+function setLocalAccountSchedulableFixture(localAccountID, schedulable) {
+  execFileSync('psql', [sub2APIDBURL, '-v', 'ON_ERROR_STOP=1', '-qAt', '-c', `
+    UPDATE accounts
+    SET schedulable = ${schedulable ? 'TRUE' : 'FALSE'}, updated_at = NOW()
+    WHERE id = ${localAccountID};
+  `], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+}
+
 function writeRuntimeRedisFixture(localAccountID) {
   const now = Math.floor(Date.now() / 1000)
   execFileSync('redis-cli', ['-u', redisURL, 'ZADD', `concurrency:account:${localAccountID}`, String(now), `${runID}-req-a`, String(now), `${runID}-req-b`], {
@@ -194,7 +305,7 @@ function ensureLocalUserFixture() {
     VALUES ('${sqlString(emailValue)}', 'e2e-test-only-password-hash', 'user', 100, 5, 'active', NOW(), NOW())
     RETURNING id;
   `
-  const out = execFileSync('psql', [dbURL, '-v', 'ON_ERROR_STOP=1', '-At', '-c', sql], {
+  const out = execFileSync('psql', [sub2APIDBURL, '-v', 'ON_ERROR_STOP=1', '-At', '-c', sql], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   }).trim()
@@ -211,7 +322,7 @@ function ensureLocalAPIKeyFixture(userID) {
     VALUES (${userID}, '${sqlString(keyValue)}', '${sqlString(name)}', 'active', NOW(), NOW())
     RETURNING id;
   `
-  const out = execFileSync('psql', [dbURL, '-v', 'ON_ERROR_STOP=1', '-At', '-c', sql], {
+  const out = execFileSync('psql', [sub2APIDBURL, '-v', 'ON_ERROR_STOP=1', '-At', '-c', sql], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   }).trim()
@@ -509,39 +620,16 @@ async function exerciseHealthMonitoring(supplierID, supplierAccountID) {
   return result.events.find((item) => item.type === 'request_error') || result.events[0]
 }
 
-async function exerciseAnnouncementMonitoring(supplierID) {
-  const bonus = 20
-  const event = await api('POST', '/api/v1/admin-plus/announcements', {
-    supplier_id: supplierID,
-    source: 'chrome',
-    type: 'recharge_bonus',
-    title: `${runID} recharge bonus`,
-    description: 'E2E announcement for zero-balance monitor-only supplier.',
-    currency: 'CNY',
-    min_recharge_cents: 10000,
-    bonus_percent: bonus,
-    runtime_status: 'monitor_only',
-    balance_cents: 0
-  }, { expected: 201 })
-  assert(event.recommendation === 'recharge_to_unlock', 'zero-balance announcement should recommend recharge_to_unlock')
-  assert(event.switch_eligible === false, 'zero-balance announcement should not be switch eligible')
-
-  const ack = await api('PATCH', `/api/v1/admin-plus/announcements/${event.id}/ack`)
-  assert(ack.status === 'acknowledged', 'announcement event should be acknowledged')
-  log('announcement monitoring verified')
-  return event
-}
-
-async function exerciseBillingAndReconciliation(supplierID, localAccountID) {
+async function exerciseUsageCosts(supplierID, localAccountID) {
   const startedAt = new Date().toISOString()
   const endedAt = new Date(Date.now() + 1500).toISOString()
   const externalRequestID = `${runID}-req-1`
   const localUsageID = createLocalUsageFixture(localAccountID, externalRequestID, `${runID}-model`, 2.4)
-  const imported = await api('POST', '/api/v1/admin-plus/billing/lines/import', {
+  const imported = await api('POST', '/api/v1/admin-plus/usage-costs/lines/import', {
     lines: [{
       supplier_id: supplierID,
       source: 'chrome',
-      external_bill_id: `${runID}-bill-1`,
+      external_usage_cost_id: `${runID}-bill-1`,
       external_request_id: externalRequestID,
       model: `${runID}-model`,
       currency: 'USD',
@@ -553,11 +641,11 @@ async function exerciseBillingAndReconciliation(supplierID, localAccountID) {
       raw_payload: { run_id: runID }
     }]
   }, { expected: 201 })
-  assert(imported.total === 1, 'billing import should create one bill line')
-  const bill = imported.items[0]
+  assert(imported.total === 1, 'usage cost import should create one line')
+  const usageCost = imported.items[0]
 
-  const list = await api('GET', `/api/v1/admin-plus/billing/lines?supplier_id=${supplierID}`)
-  assert(list.items.some((item) => item.id === bill.id), 'billing list should include imported bill line')
+  const list = await api('GET', `/api/v1/admin-plus/usage-costs/lines?supplier_id=${supplierID}`)
+  assert(list.items.some((item) => item.id === usageCost.id), 'usage cost list should include imported line')
 
   const usageLines = await api('GET', `/api/v1/admin-plus/sub2api/usage-lines?account_id=${localAccountID}&model=${encodeURIComponent(`${runID}-model`)}&limit=20`)
   assert(usageLines.items.some((item) => item.id === localUsageID), 'local usage lines should include usage log fixture')
@@ -565,27 +653,7 @@ async function exerciseBillingAndReconciliation(supplierID, localAccountID) {
   const usageSummary = await api('GET', `/api/v1/admin-plus/sub2api/usage-summary?account_id=${localAccountID}&model=${encodeURIComponent(`${runID}-model`)}&limit=20`)
   assert(usageSummary.items.some((item) => item.account_id === localAccountID && item.request_count >= 1), 'local usage summary should include usage log fixture')
 
-  const reconciliation = await api('POST', '/api/v1/admin-plus/reconciliation/run', {
-    supplier_bills: [{
-      id: bill.id,
-      supplier_id: supplierID,
-      external_bill_id: bill.external_bill_id,
-      external_request_id: externalRequestID,
-      model: bill.model,
-      currency: bill.currency,
-      cost_cents: bill.cost_cents,
-      input_tokens: bill.input_tokens,
-      output_tokens: bill.output_tokens,
-      started_at: startedAt
-    }],
-    local_usages: usageLines.items.filter((item) => item.id === localUsageID),
-    time_tolerance_seconds: 60,
-    cost_mismatch_cents: 0
-  })
-  assert(reconciliation.summary.matched_lines === 1, 'reconciliation should match supplier bill with local usage')
-  assert(reconciliation.summary.profit_cents === 120, 'reconciliation should calculate profit')
-  log('billing and reconciliation verified')
-  return reconciliation
+  log('supplier and Sub2API usage costs verified')
 }
 
 async function exerciseExtensionTasks(supplierID) {
@@ -711,34 +779,42 @@ async function exerciseScheduler(supplierID) {
   const status = await api('GET', '/api/v1/admin-plus/scheduler/status')
   assert(status.queue === 'admin_plus_extension_tasks', 'scheduler should use extension task queue')
 
-  const first = await api('POST', '/api/v1/admin-plus/scheduler/run', {
-    mode: 'e2e',
+  const preview = await api('POST', '/api/v1/admin-plus/scheduler/run', {
+    mode: runID,
+    supplier_id: supplierID,
+    task_types: ['capture_supplier_session'],
+    window_minutes: 10,
+    dry_run: true
+  })
+  assert(preview.dry_run === true, 'scheduler preview should remain side-effect free')
+  assert(preview.items.length === 1, 'scheduler preview should include one supplier step')
+  assert(preview.items.every((item) => item.schedule_key), 'scheduler preview should include schedule keys')
+  assert(preview.items.every((item) => item.action === 'extension_task'), 'scheduler preview should use the extension queue action')
+
+  const queued = await api('POST', '/api/v1/admin-plus/scheduler/run', {
+    mode: runID,
     supplier_id: supplierID,
     task_types: ['capture_supplier_session'],
     window_minutes: 10
-  })
-  assert(first.created_count === 1, 'scheduler should create one capture session task')
-  assert(first.items.every((item) => item.schedule_key), 'scheduler items should include schedule keys')
-  assert(first.items.every((item) => item.action === 'extension_task'), 'scheduler should keep only session capture in extension queue')
+  }, { expected: 202 })
+  assert(queued.status === 'queued', 'scheduler should accept the run asynchronously')
+  assert(queued.id.startsWith(`${runID}-`), 'scheduler run should use the E2E cleanup prefix')
+  assert(queued.total_steps === 1, 'scheduler run should persist one step')
 
-  const queued = await api('GET', `/api/v1/admin-plus/extension/tasks?supplier_id=${supplierID}&limit=100`)
-  for (const item of first.items) {
-    assert(queued.items.some((task) => task.id === item.task_id && task.schedule_key === item.schedule_key), 'scheduler-created task should be persisted in extension queue')
-  }
+  const detail = await api('GET', `/api/v1/admin-plus/scheduler/runs/${encodeURIComponent(queued.id)}`)
+  assert(detail.run?.id === queued.id, 'scheduler run detail should return the queued run')
+  assert(detail.steps?.length === 1, 'scheduler run detail should include one queued step')
+  assert(detail.steps[0].schedule_key, 'scheduler queued step should persist its schedule key')
+  assert(detail.steps[0].action === 'extension_task', 'scheduler queued step should preserve the extension action')
 
-  const second = await api('POST', '/api/v1/admin-plus/scheduler/run', {
-    mode: 'e2e',
-    supplier_id: supplierID,
-    task_types: ['capture_supplier_session'],
-    window_minutes: 10
-  })
-  assert(second.created_count === 0, 'scheduler should not duplicate tasks in the same window')
-  assert(second.skipped_count === 1, 'scheduler should report skipped duplicate capture task')
-  assert(second.items.every((item) => item.reason === 'duplicate'), 'scheduler duplicate skips should explain the reason')
-  log('scheduler capture-session task generation verified')
+  const cancelled = await api('POST', `/api/v1/admin-plus/scheduler/runs/${encodeURIComponent(queued.id)}/cancel`, undefined, { expected: 202 })
+  assert(cancelled.status === 'cancelled', 'scheduler queued run should be cancellable')
+  const deleted = await api('DELETE', `/api/v1/admin-plus/scheduler/runs/${encodeURIComponent(queued.id)}`)
+  assert(deleted.deleted_runs === 1 && deleted.deleted_steps === 1, 'scheduler cleanup should delete the run and its step')
+  log('scheduler preview and async run lifecycle verified')
 }
 
-async function exerciseActionRecommendations(supplier, candidateSupplier, balanceEvent, announcementEvent, healthEvent, reconciliationSummary) {
+async function exerciseActionRecommendations(supplier, candidateSupplier, balanceEvent, healthEvent) {
   const generated = await api('POST', '/api/v1/admin-plus/actions/generate', {
     suppliers: [{
       supplier_id: supplier.id,
@@ -758,9 +834,7 @@ async function exerciseActionRecommendations(supplier, candidateSupplier, balanc
       effective_cost_cents: 80
     }],
     balance_events: [balanceEvent],
-    announcement_events: [announcementEvent],
     health_events: [healthEvent],
-    reconciliation: reconciliationSummary,
     min_profit_margin: 0.6
   })
   assert(generated.total > 0, 'actions generate should create recommendations')
@@ -791,9 +865,8 @@ async function verifyAllListEndpoints(supplierID) {
     `/api/v1/admin-plus/balances/events?supplier_id=${supplierID}`,
     `/api/v1/admin-plus/health/samples?supplier_id=${supplierID}`,
     `/api/v1/admin-plus/health/events?supplier_id=${supplierID}`,
-    `/api/v1/admin-plus/announcements?supplier_id=${supplierID}`,
     `/api/v1/admin-plus/extension/tasks?supplier_id=${supplierID}`,
-    `/api/v1/admin-plus/billing/lines?supplier_id=${supplierID}`,
+    `/api/v1/admin-plus/usage-costs/lines?supplier_id=${supplierID}`,
     `/api/v1/admin-plus/actions/recommendations?limit=20`
   ]
   for (const path of checks) {
@@ -861,9 +934,11 @@ function assertSafeE2ETarget() {
   if (allowNonLocal) return
   const apiURL = new URL(baseURL)
   const dbHost = dbURLHost(dbURL)
+  const sub2APIDBHost = dbURLHost(sub2APIDBURL)
   const redisHost = redisURLHost(redisURL)
   assert(isLocalHost(apiURL.hostname), `refuse to run E2E against non-local API host: ${apiURL.hostname}`)
   assert(isLocalHost(dbHost), `refuse to run E2E against non-local database host: ${dbHost}`)
+  assert(isLocalHost(sub2APIDBHost), `refuse to run E2E against non-local Sub2API database host: ${sub2APIDBHost}`)
   assert(isLocalHost(redisHost), `refuse to run E2E against non-local Redis host: ${redisHost}`)
 }
 
@@ -1003,10 +1078,17 @@ function cleanupE2EFixturesSafely() {
 
 function cleanupE2EFixtures() {
   const escapedRunID = sqlString(runID)
+  const localAccountID = Number.isInteger(localAccountIDForCleanup) ? localAccountIDForCleanup : 0
   const sql = `
     DELETE FROM admin_plus_notification_deliveries
     WHERE dedupe_key LIKE '%${escapedRunID}%'
        OR payload::text LIKE '%${escapedRunID}%';
+
+    DELETE FROM admin_plus_local_account_drift_events
+    WHERE ${localAccountID} > 0 AND local_sub2api_account_id = ${localAccountID};
+
+    DELETE FROM admin_plus_local_account_state_snapshots
+    WHERE ${localAccountID} > 0 AND local_sub2api_account_id = ${localAccountID};
 
     DELETE FROM admin_plus_action_recommendations
     WHERE reason_code LIKE '%${escapedRunID}%'
@@ -1015,8 +1097,12 @@ function cleanupE2EFixtures() {
        OR expected_impact LIKE '%${escapedRunID}%'
        OR signals::text LIKE '%${escapedRunID}%';
 
-    DELETE FROM admin_plus_supplier_bill_lines
-    WHERE external_bill_id LIKE '${escapedRunID}%'
+    DELETE FROM admin_plus_scheduler_runs
+    WHERE id LIKE '${escapedRunID}-%'
+       OR legacy_run_id LIKE '${escapedRunID}-%';
+
+    DELETE FROM admin_plus_supplier_usage_cost_lines
+    WHERE external_usage_cost_id LIKE '${escapedRunID}%'
        OR external_request_id LIKE '${escapedRunID}%'
        OR model LIKE '${escapedRunID}%'
        OR raw_payload::text LIKE '%${escapedRunID}%';
@@ -1071,6 +1157,25 @@ function cleanupE2EFixtures() {
        OR contact LIKE '%${escapedRunID}%'
        OR notes LIKE '%${escapedRunID}%';
 
+  `
+  execFileSync('psql', [dbURL, '-v', 'ON_ERROR_STOP=1', '-c', sql], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  cleanupLocalDatabaseFixtures(dbURL, escapedRunID)
+  if (sub2APIDBURL !== dbURL) {
+    cleanupLocalDatabaseFixtures(sub2APIDBURL, escapedRunID)
+  }
+  cleanupRuntimeRedisFixture()
+}
+
+function cleanupLocalDatabaseFixtures(databaseURL, escapedRunID) {
+  const localAccountID = Number.isInteger(localAccountIDForCleanup) ? localAccountIDForCleanup : 0
+  const sql = `
+    DELETE FROM scheduler_outbox
+    WHERE payload::text LIKE '%${escapedRunID}%'
+       OR (${localAccountID} > 0 AND payload @> '{"account_ids":[${localAccountID}]}'::jsonb);
+
     DELETE FROM usage_logs
     WHERE request_id LIKE '${escapedRunID}%'
        OR model LIKE '${escapedRunID}%'
@@ -1085,13 +1190,12 @@ function cleanupE2EFixtures() {
        OR extra::text LIKE '%${escapedRunID}%';
 
     DELETE FROM users
-    WHERE email LIKE '${escapedRunID}@e2e.local';
+    WHERE email LIKE '${escapedRunID}%@e2e.local';
   `
-  execFileSync('psql', [dbURL, '-v', 'ON_ERROR_STOP=1', '-c', sql], {
+  execFileSync('psql', [databaseURL, '-v', 'ON_ERROR_STOP=1', '-c', sql], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   })
-  cleanupRuntimeRedisFixture()
 }
 
 function cleanupRuntimeRedisFixture() {

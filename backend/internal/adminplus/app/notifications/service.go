@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	EnvFeishuWebhookURL    = "ADMIN_PLUS_FEISHU_WEBHOOK_URL"
-	EnvFeishuWebhookSecret = "ADMIN_PLUS_FEISHU_WEBHOOK_SECRET"
-	envLegacyWebhookURL    = "ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_URL"
-	envLegacyWebhookSecret = "ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_SECRET"
+	EnvNotificationsDisabled = "ADMIN_PLUS_NOTIFICATIONS_DISABLED"
+	EnvFeishuWebhookURL      = "ADMIN_PLUS_FEISHU_WEBHOOK_URL"
+	EnvFeishuWebhookSecret   = "ADMIN_PLUS_FEISHU_WEBHOOK_SECRET"
+	envLegacyWebhookURL      = "ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_URL"
+	envLegacyWebhookSecret   = "ADMIN_PLUS_FEISHU_BALANCE_WEBHOOK_SECRET"
 )
 
 type SecretCipher interface {
@@ -60,6 +61,9 @@ func (s *Service) Dispatch(ctx context.Context, in DispatchInput) error {
 	}
 	if strings.TrimSpace(in.Text) == "" {
 		return nil
+	}
+	if notificationsDisabled() {
+		return s.createSuppressed(ctx, in, nil, "notifications_disabled")
 	}
 	settings := s.effectiveSettings(ctx)
 	rule := findRule(settings.Rules, normalizeEventType(in.Type))
@@ -366,6 +370,10 @@ func (s *Service) currentTime() time.Time {
 		return s.now().UTC()
 	}
 	return time.Now().UTC()
+}
+
+func notificationsDisabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(EnvNotificationsDisabled)), "true")
 }
 
 func defaultSettings() adminplusdomain.NotificationSettings {

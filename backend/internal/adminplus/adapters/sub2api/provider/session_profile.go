@@ -929,18 +929,19 @@ func (c *SessionProfileClient) ReadKeyCapacity(ctx context.Context, in ports.Ses
 			Limit:      request.Limit,
 		})
 	})
+	diagnostics["limit_source"] = "sub2api_unlimited"
 	activeCount := countProviderKeysOccupyingCapacity(keys)
 	return &ports.ProviderKeyCapacityResult{
 		SupplierID:        firstPage.SupplierID,
 		SystemType:        firstPage.SystemType,
 		Origin:            firstPage.Origin,
 		APIBaseURL:        firstPage.APIBaseURL,
-		KeyLimitPolicy:    "unknown",
+		KeyLimitPolicy:    "unlimited",
 		KeyLimitValue:     0,
 		ActiveKeyCount:    activeCount,
-		RemainingKeySlots: 0,
-		KeyCapacityStatus: "unknown",
-		LimitKnown:        false,
+		RemainingKeySlots: -1,
+		KeyCapacityStatus: "available",
+		LimitKnown:        true,
 		Keys:              keys,
 		Diagnostics:       diagnostics,
 		CapturedAt:        c.now().UTC(),

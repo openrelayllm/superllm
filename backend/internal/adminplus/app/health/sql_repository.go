@@ -8,16 +8,27 @@ import (
 	"net/http"
 	"strings"
 
+	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 type SQLRepository struct {
-	db *sql.DB
+	db        *sql.DB
+	accountDB *sql.DB
 }
 
 func NewSQLRepository(db *sql.DB) *SQLRepository {
-	return &SQLRepository{db: db}
+	return &SQLRepository{db: db, accountDB: db}
+
+}
+
+func NewSQLRepositoryWithReadDB(db *sql.DB, readDB sub2apiapp.ReadDB) *SQLRepository {
+	repo := NewSQLRepository(db)
+	if readDB.DB != nil {
+		repo.accountDB = readDB.DB
+	}
+	return repo
 }
 
 func (r *SQLRepository) CreateSample(ctx context.Context, sample *adminplusdomain.HealthSample) (*adminplusdomain.HealthSample, error) {
@@ -195,7 +206,7 @@ func (r *SQLRepository) UpdateEventStatus(ctx context.Context, id int64, status 
 }
 
 func (r *SQLRepository) GetProbeTarget(ctx context.Context, supplierID int64, supplierAccountID int64) (*ProbeTarget, error) {
-	if r == nil || r.db == nil {
+	if r == nil || r.db == nil || r.accountDB == nil {
 		return nil, dbNotConfigured()
 	}
 	where := "asa.supplier_id = $1"
@@ -213,15 +224,10 @@ func (r *SQLRepository) GetProbeTarget(ctx context.Context, supplierID int64, su
 			asa.local_sub2api_account_id,
 			asa.local_account_name,
 			asa.local_account_platform,
-			asa.local_account_type,
-			a.status,
-			a.schedulable,
-			a.concurrency,
-			a.credentials
+			asa.local_account_type
 		FROM admin_plus_supplier_accounts asa
 		INNER JOIN admin_plus_suppliers s ON s.id = asa.supplier_id
-		INNER JOIN accounts a ON a.id = asa.local_sub2api_account_id
-		WHERE `+where+` AND a.deleted_at IS NULL
+		WHERE `+where+`
 		ORDER BY
 			CASE asa.runtime_status WHEN 'active' THEN 1 WHEN 'candidate' THEN 2 ELSE 3 END,
 			asa.id ASC
@@ -235,6 +241,25 @@ func (r *SQLRepository) GetProbeTarget(ctx context.Context, supplierID int64, su
 		&target.SupplierAPIBaseURL,
 		&target.SupplierAccountID,
 		&target.LocalAccountID,
+		&target.LocalAccountName,
+		&target.LocalAccountPlatform,
+		&target.LocalAccountType,
+	)
+	if err != nil {
+		return nil, translateNoRows(err, "HEALTH_PROBE_TARGET_NOT_FOUND", "health probe target not found")
+	}
+	err = r.accountDB.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(name, ''),
+			COALESCE(platform, ''),
+			COALESCE(type, ''),
+			COALESCE(status, ''),
+			COALESCE(schedulable, false),
+			COALESCE(concurrency, 0),
+			credentials
+		FROM accounts
+		WHERE id = $1 AND deleted_at IS NULL
+	`, target.LocalAccountID).Scan(
 		&target.LocalAccountName,
 		&target.LocalAccountPlatform,
 		&target.LocalAccountType,

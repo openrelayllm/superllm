@@ -56,6 +56,20 @@ func NewSQLRepository(db ReadDB) *SQLRepository {
 	return &SQLRepository{db: db.DB, primaryDB: primaryDB}
 }
 
+func (r *SQLRepository) adminDB() *sql.DB {
+	if r == nil {
+		return nil
+	}
+	if r.primaryDB != nil {
+		return r.primaryDB
+	}
+	return r.db
+}
+
+func (r *SQLRepository) usesSplitDatabases() bool {
+	return r != nil && r.db != nil && r.primaryDB != nil && r.primaryDB != r.db
+}
+
 func (r *SQLRepository) ListLocalUsageLines(ctx context.Context, filter UsageFilter) ([]*adminplusdomain.LocalUsageLine, error) {
 	if r == nil || r.db == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "SUB2API_READ_DB_NOT_CONFIGURED", "sub2api read database is not configured")
@@ -794,6 +808,9 @@ func (r *SQLRepository) ApplyLocalAccountOpsAction(ctx context.Context, input Lo
 	if r == nil || r.db == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "SUB2API_READ_DB_NOT_CONFIGURED", "sub2api read database is not configured")
 	}
+	if r.usesSplitDatabases() {
+		return r.applyLocalAccountOpsActionSplitDB(ctx, input)
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -909,7 +926,8 @@ func (r *SQLRepository) ListLocalGroups(ctx context.Context, limit int) ([]*Loca
 }
 
 func (r *SQLRepository) CreateRoutingRefillRun(ctx context.Context, run *RoutingRefillRun) (*RoutingRefillRun, error) {
-	if r == nil || r.db == nil {
+	adminDB := r.adminDB()
+	if r == nil || r.db == nil || adminDB == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "SUB2API_READ_DB_NOT_CONFIGURED", "sub2api read database is not configured")
 	}
 	if run == nil {
@@ -923,7 +941,7 @@ func (r *SQLRepository) CreateRoutingRefillRun(ctx context.Context, run *Routing
 	if err != nil {
 		return nil, err
 	}
-	row := r.db.QueryRowContext(ctx, `
+	row := adminDB.QueryRowContext(ctx, `
 		INSERT INTO admin_plus_routing_refill_runs (
 			run_id, sub2api_instance_id, local_group_id, local_group_name, platform, model_scope,
 			trigger_type, dry_run, status, reason, skipped_reason,
@@ -983,7 +1001,8 @@ func (r *SQLRepository) CreateRoutingRefillRun(ctx context.Context, run *Routing
 }
 
 func (r *SQLRepository) ListRoutingRefillRuns(ctx context.Context, filter RoutingRefillRunFilter) ([]*RoutingRefillRun, error) {
-	if r == nil || r.db == nil {
+	adminDB := r.adminDB()
+	if r == nil || r.db == nil || adminDB == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "SUB2API_READ_DB_NOT_CONFIGURED", "sub2api read database is not configured")
 	}
 	where := []string{"1=1"}
@@ -1002,7 +1021,7 @@ func (r *SQLRepository) ListRoutingRefillRuns(ctx context.Context, filter Routin
 		limit = 500
 	}
 	limitRef := addSQLArg(&args, limit)
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := adminDB.QueryContext(ctx, `
 		SELECT
 			id, run_id, sub2api_instance_id, local_group_id, local_group_name, platform, model_scope,
 			trigger_type, dry_run, status, reason, skipped_reason,
@@ -1667,18 +1686,47 @@ func (r *SQLRepository) HasSupplierUsageSince(ctx context.Context, supplierID in
 	if r == nil || r.db == nil {
 		return false, infraerrors.New(http.StatusInternalServerError, "SUB2API_READ_DB_NOT_CONFIGURED", "sub2api read database is not configured")
 	}
+	primaryDB := r.primaryDB
+	if primaryDB == nil {
+		primaryDB = r.db
+	}
+	rows, err := primaryDB.QueryContext(ctx, `
+		SELECT DISTINCT local_sub2api_account_id
+		FROM admin_plus_supplier_accounts
+		WHERE supplier_id = $1
+			AND local_sub2api_account_id > 0
+		ORDER BY local_sub2api_account_id
+	`, supplierID)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	accountIDs := make([]int64, 0)
+	for rows.Next() {
+		var accountID int64
+		if err := rows.Scan(&accountID); err != nil {
+			return false, err
+		}
+		accountIDs = append(accountIDs, accountID)
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	if len(accountIDs) == 0 {
+		return false, nil
+	}
+
 	var exists bool
-	err := r.db.QueryRowContext(ctx, `
+	err = r.db.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM usage_logs ul
-			INNER JOIN admin_plus_supplier_accounts asa
-				ON asa.local_sub2api_account_id = ul.account_id
-			WHERE asa.supplier_id = $1
+			WHERE ul.account_id = ANY($1)
 				AND ul.created_at >= $2
 			LIMIT 1
 		)
-	`, supplierID, since.UTC()).Scan(&exists)
+	`, pq.Array(accountIDs), since.UTC()).Scan(&exists)
 	if err != nil {
 		return false, err
 	}
@@ -1688,6 +1736,9 @@ func (r *SQLRepository) HasSupplierUsageSince(ctx context.Context, supplierID in
 func (r *SQLRepository) SyncLocalAccountState(ctx context.Context, input LocalAccountStateSyncInput) (*adminplusdomain.LocalAccountStateSyncResult, error) {
 	if r == nil || r.db == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "SUB2API_READ_DB_NOT_CONFIGURED", "sub2api read database is not configured")
+	}
+	if r.usesSplitDatabases() {
+		return r.syncLocalAccountStateSplitDB(ctx, input, true)
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1710,6 +1761,9 @@ func (r *SQLRepository) SyncLocalAccountState(ctx context.Context, input LocalAc
 func (r *SQLRepository) ResolveLocalAccountState(ctx context.Context, input LocalAccountStateResolutionInput) (*adminplusdomain.LocalAccountStateResolutionResult, error) {
 	if r == nil || r.db == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "SUB2API_READ_DB_NOT_CONFIGURED", "sub2api read database is not configured")
+	}
+	if r.usesSplitDatabases() {
+		return r.resolveLocalAccountStateSplitDB(ctx, input)
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1778,6 +1832,405 @@ func (r *SQLRepository) ResolveLocalAccountState(ctx context.Context, input Loca
 		return nil, err
 	}
 	return result, nil
+}
+
+type localAccountStateRecord struct {
+	AccountID   int64
+	Name        string
+	Platform    string
+	Type        string
+	Schedulable bool
+	GroupIDs    []int64
+}
+
+func (r *SQLRepository) applyLocalAccountOpsActionSplitDB(ctx context.Context, input LocalAccountOpsActionInput) (*adminplusdomain.LocalAccountOpsActionResult, error) {
+	if _, err := r.syncLocalAccountStateSplitDB(ctx, LocalAccountStateSyncInput{
+		AccountIDs: input.AccountIDs,
+		Limit:      len(input.AccountIDs),
+	}, false); err != nil {
+		return nil, err
+	}
+	pending, err := listPendingLocalAccountStateDrift(ctx, r.adminDB(), input.AccountIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(pending) > 0 {
+		return &adminplusdomain.LocalAccountOpsActionResult{
+			Action:        input.Action,
+			AccountIDs:    append([]int64(nil), input.AccountIDs...),
+			GroupIDs:      append([]int64(nil), input.GroupIDs...),
+			Blocked:       true,
+			BlockedReason: "LOCAL_ACCOUNT_STATE_DRIFT_PENDING",
+			Warnings:      []string{"检测到 Sub2API 原后台手工改动，请先同步并采纳或恢复本地状态"},
+		}, nil
+	}
+
+	plan, err := r.buildLocalAccountOpsActionPlan(ctx, r.db, input, false)
+	if err != nil {
+		return nil, err
+	}
+	if plan.Blocked && !input.AllowEmptyPool {
+		return plan, nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := r.applyLocalAccountOpsAction(ctx, tx, input, plan); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	if err := r.acceptCurrentLocalAccountStatesSplitDB(ctx, input.AccountIDs); err != nil {
+		return nil, err
+	}
+	plan.Blocked = false
+	plan.BlockedReason = ""
+	return plan, nil
+}
+
+func (r *SQLRepository) syncLocalAccountStateSplitDB(ctx context.Context, input LocalAccountStateSyncInput, recordEvents bool) (*adminplusdomain.LocalAccountStateSyncResult, error) {
+	states, err := readCurrentLocalAccountStates(ctx, r.db, input)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := r.adminDB().BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := upsertObservedLocalAccountStates(ctx, tx, states); err != nil {
+		return nil, err
+	}
+	if recordEvents {
+		if err := insertLocalAccountDriftEvents(ctx, tx, input.AccountIDs); err != nil {
+			return nil, err
+		}
+	}
+	result, err := localAccountStateSyncResult(ctx, tx, input)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *SQLRepository) acceptCurrentLocalAccountStatesSplitDB(ctx context.Context, accountIDs []int64) error {
+	states, err := readCurrentLocalAccountStates(ctx, r.db, LocalAccountStateSyncInput{
+		AccountIDs: accountIDs,
+		Limit:      len(accountIDs),
+	})
+	if err != nil {
+		return err
+	}
+	tx, err := r.adminDB().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := acceptCurrentLocalAccountStates(ctx, tx, states); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *SQLRepository) resolveLocalAccountStateSplitDB(ctx context.Context, input LocalAccountStateResolutionInput) (*adminplusdomain.LocalAccountStateResolutionResult, error) {
+	syncInput := LocalAccountStateSyncInput{AccountIDs: input.AccountIDs, Limit: len(input.AccountIDs)}
+	if _, err := r.syncLocalAccountStateSplitDB(ctx, syncInput, true); err != nil {
+		return nil, err
+	}
+	pendingAccountIDs, err := listPendingLocalAccountStateDrift(ctx, r.adminDB(), input.AccountIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(pendingAccountIDs) == 0 {
+		return localAccountStateResolutionResult(ctx, r.adminDB(), input, 0, 0, []string{"未发现待处理的本地状态变更"})
+	}
+
+	var resolvedAccounts int64
+	var restoredAccounts int64
+	if input.Action == adminplusdomain.LocalAccountStateResolutionRestoreAccepted {
+		states, err := readAcceptedLocalAccountStates(ctx, r.adminDB(), pendingAccountIDs)
+		if err != nil {
+			return nil, err
+		}
+		acceptedGroupIDs := make([]int64, 0)
+		for _, state := range states {
+			acceptedGroupIDs = append(acceptedGroupIDs, state.GroupIDs...)
+		}
+		acceptedGroupIDs = uniquePositiveInt64s(acceptedGroupIDs)
+		existingGroupIDs, err := listExistingLocalGroupIDs(ctx, r.db, acceptedGroupIDs)
+		if err != nil {
+			return nil, err
+		}
+		if missing := missingInt64Values(acceptedGroupIDs, existingGroupIDs); len(missing) > 0 {
+			return nil, infraerrors.New(http.StatusConflict, "LOCAL_ACCOUNT_STATE_RESTORE_GROUPS_MISSING", fmt.Sprintf("accepted local groups are missing: %v", missing))
+		}
+		impactedGroupIDs, err := listLocalAccountStateRestoreGroupIDs(ctx, r.adminDB(), pendingAccountIDs)
+		if err != nil {
+			return nil, err
+		}
+		localTx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = localTx.Rollback() }()
+		if err := restoreAcceptedLocalAccountStateRecords(ctx, localTx, states); err != nil {
+			return nil, err
+		}
+		if err := enqueueLocalAccountStateRestoreSchedulerOutbox(ctx, localTx, input, impactedGroupIDs); err != nil {
+			return nil, err
+		}
+		if err := localTx.Commit(); err != nil {
+			return nil, err
+		}
+		restoredAccounts = int64(len(pendingAccountIDs))
+		resolvedAccounts = restoredAccounts
+	}
+
+	adminTx, err := r.adminDB().BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = adminTx.Rollback() }()
+	switch input.Action {
+	case adminplusdomain.LocalAccountStateResolutionAcceptObserved:
+		resolvedAccounts, err = acceptObservedLocalAccountStateSnapshots(ctx, adminTx, pendingAccountIDs)
+		if err != nil {
+			return nil, err
+		}
+		if err := markLocalAccountDriftEvents(ctx, adminTx, pendingAccountIDs, "accepted"); err != nil {
+			return nil, err
+		}
+	case adminplusdomain.LocalAccountStateResolutionRestoreAccepted:
+		if err := acceptObservedLocalAccountStateAfterRestore(ctx, adminTx, pendingAccountIDs); err != nil {
+			return nil, err
+		}
+		if err := markLocalAccountDriftEvents(ctx, adminTx, pendingAccountIDs, "restored"); err != nil {
+			return nil, err
+		}
+	}
+	result, err := localAccountStateResolutionResult(ctx, adminTx, input, resolvedAccounts, restoredAccounts, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := adminTx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func readCurrentLocalAccountStates(ctx context.Context, db *sql.DB, input LocalAccountStateSyncInput) ([]localAccountStateRecord, error) {
+	if input.Limit <= 0 {
+		input.Limit = 500
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT
+			a.id,
+			COALESCE(a.name, ''),
+			COALESCE(a.platform, ''),
+			COALESCE(a.type, ''),
+			COALESCE(a.schedulable, false),
+			COALESCE(array_agg(ag.group_id ORDER BY ag.group_id) FILTER (WHERE ag.group_id IS NOT NULL), ARRAY[]::BIGINT[])
+		FROM accounts a
+		LEFT JOIN account_groups ag ON ag.account_id = a.id
+		WHERE a.deleted_at IS NULL
+			AND (COALESCE(array_length($1::BIGINT[], 1), 0) = 0 OR a.id = ANY($1))
+		GROUP BY a.id, a.name, a.platform, a.type, a.schedulable
+		ORDER BY a.id DESC
+		LIMIT $2
+	`, pq.Array(input.AccountIDs), input.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	states := make([]localAccountStateRecord, 0)
+	for rows.Next() {
+		var state localAccountStateRecord
+		var groupIDs pq.Int64Array
+		if err := rows.Scan(&state.AccountID, &state.Name, &state.Platform, &state.Type, &state.Schedulable, &groupIDs); err != nil {
+			return nil, err
+		}
+		state.GroupIDs = append([]int64{}, groupIDs...)
+		states = append(states, state)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return states, nil
+}
+
+func upsertObservedLocalAccountStates(ctx context.Context, exec localAccountOpsExec, states []localAccountStateRecord) error {
+	for _, state := range states {
+		if _, err := exec.ExecContext(ctx, `
+			INSERT INTO admin_plus_local_account_state_snapshots (
+				local_sub2api_account_id,
+				accepted_account_name, accepted_account_platform, accepted_account_type, accepted_schedulable, accepted_group_ids,
+				observed_account_name, observed_account_platform, observed_account_type, observed_schedulable, observed_group_ids,
+				drift_status, first_drift_detected_at, last_checked_at, accepted_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $2, $3, $4, $5, $6, 'synced', NULL, NOW(), NOW(), NOW())
+			ON CONFLICT (local_sub2api_account_id) DO UPDATE
+			SET observed_account_name = EXCLUDED.observed_account_name,
+				observed_account_platform = EXCLUDED.observed_account_platform,
+				observed_account_type = EXCLUDED.observed_account_type,
+				observed_schedulable = EXCLUDED.observed_schedulable,
+				observed_group_ids = EXCLUDED.observed_group_ids,
+				drift_status = CASE
+					WHEN admin_plus_local_account_state_snapshots.accepted_account_name <> EXCLUDED.observed_account_name
+						OR admin_plus_local_account_state_snapshots.accepted_account_platform <> EXCLUDED.observed_account_platform
+						OR admin_plus_local_account_state_snapshots.accepted_account_type <> EXCLUDED.observed_account_type
+						OR admin_plus_local_account_state_snapshots.accepted_schedulable <> EXCLUDED.observed_schedulable
+						OR admin_plus_local_account_state_snapshots.accepted_group_ids <> EXCLUDED.observed_group_ids
+					THEN 'pending' ELSE 'synced' END,
+				first_drift_detected_at = CASE
+					WHEN admin_plus_local_account_state_snapshots.accepted_account_name <> EXCLUDED.observed_account_name
+						OR admin_plus_local_account_state_snapshots.accepted_account_platform <> EXCLUDED.observed_account_platform
+						OR admin_plus_local_account_state_snapshots.accepted_account_type <> EXCLUDED.observed_account_type
+						OR admin_plus_local_account_state_snapshots.accepted_schedulable <> EXCLUDED.observed_schedulable
+						OR admin_plus_local_account_state_snapshots.accepted_group_ids <> EXCLUDED.observed_group_ids
+					THEN COALESCE(admin_plus_local_account_state_snapshots.first_drift_detected_at, NOW()) ELSE NULL END,
+				last_checked_at = NOW(), updated_at = NOW()
+		`, state.AccountID, state.Name, state.Platform, state.Type, state.Schedulable, pq.Array(state.GroupIDs)); err != nil {
+			return err
+		}
+		if _, err := exec.ExecContext(ctx, `
+			UPDATE admin_plus_supplier_accounts
+			SET local_account_name = $2, local_account_platform = $3, local_account_type = $4, updated_at = NOW()
+			WHERE local_sub2api_account_id = $1
+		`, state.AccountID, state.Name, state.Platform, state.Type); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func acceptCurrentLocalAccountStates(ctx context.Context, exec localAccountOpsExec, states []localAccountStateRecord) error {
+	for _, state := range states {
+		if _, err := exec.ExecContext(ctx, `
+			INSERT INTO admin_plus_local_account_state_snapshots (
+				local_sub2api_account_id,
+				accepted_account_name, accepted_account_platform, accepted_account_type, accepted_schedulable, accepted_group_ids,
+				observed_account_name, observed_account_platform, observed_account_type, observed_schedulable, observed_group_ids,
+				drift_status, first_drift_detected_at, last_checked_at, accepted_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $2, $3, $4, $5, $6, 'synced', NULL, NOW(), NOW(), NOW())
+			ON CONFLICT (local_sub2api_account_id) DO UPDATE
+			SET accepted_account_name = EXCLUDED.accepted_account_name,
+				accepted_account_platform = EXCLUDED.accepted_account_platform,
+				accepted_account_type = EXCLUDED.accepted_account_type,
+				accepted_schedulable = EXCLUDED.accepted_schedulable,
+				accepted_group_ids = EXCLUDED.accepted_group_ids,
+				observed_account_name = EXCLUDED.observed_account_name,
+				observed_account_platform = EXCLUDED.observed_account_platform,
+				observed_account_type = EXCLUDED.observed_account_type,
+				observed_schedulable = EXCLUDED.observed_schedulable,
+				observed_group_ids = EXCLUDED.observed_group_ids,
+				drift_status = 'synced', first_drift_detected_at = NULL,
+				last_checked_at = NOW(), accepted_at = NOW(), updated_at = NOW()
+		`, state.AccountID, state.Name, state.Platform, state.Type, state.Schedulable, pq.Array(state.GroupIDs)); err != nil {
+			return err
+		}
+		if _, err := exec.ExecContext(ctx, `
+			UPDATE admin_plus_supplier_accounts
+			SET local_account_name = $2, local_account_platform = $3, local_account_type = $4, updated_at = NOW()
+			WHERE local_sub2api_account_id = $1
+		`, state.AccountID, state.Name, state.Platform, state.Type); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readAcceptedLocalAccountStates(ctx context.Context, exec localAccountOpsExec, accountIDs []int64) ([]localAccountStateRecord, error) {
+	rows, err := exec.QueryContext(ctx, `
+		SELECT local_sub2api_account_id, accepted_account_name, accepted_account_platform,
+			accepted_account_type, accepted_schedulable, accepted_group_ids
+		FROM admin_plus_local_account_state_snapshots
+		WHERE drift_status = 'pending' AND local_sub2api_account_id = ANY($1)
+		ORDER BY local_sub2api_account_id
+	`, pq.Array(accountIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	states := make([]localAccountStateRecord, 0, len(accountIDs))
+	for rows.Next() {
+		var state localAccountStateRecord
+		var groupIDs pq.Int64Array
+		if err := rows.Scan(&state.AccountID, &state.Name, &state.Platform, &state.Type, &state.Schedulable, &groupIDs); err != nil {
+			return nil, err
+		}
+		state.GroupIDs = append([]int64{}, groupIDs...)
+		states = append(states, state)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return states, nil
+}
+
+func restoreAcceptedLocalAccountStateRecords(ctx context.Context, exec localAccountOpsExec, states []localAccountStateRecord) error {
+	for _, state := range states {
+		result, err := exec.ExecContext(ctx, `
+			UPDATE accounts
+			SET name = $2, platform = $3, type = $4, schedulable = $5, updated_at = NOW()
+			WHERE deleted_at IS NULL AND id = $1
+		`, state.AccountID, state.Name, state.Platform, state.Type, state.Schedulable)
+		if err != nil {
+			return err
+		}
+		if affected, err := result.RowsAffected(); err != nil {
+			return err
+		} else if affected == 0 {
+			return infraerrors.New(http.StatusNotFound, "LOCAL_ACCOUNT_OPS_ACCOUNTS_NOT_FOUND", "local accounts not found")
+		}
+		if _, err := exec.ExecContext(ctx, `
+			DELETE FROM account_groups
+			WHERE account_id = $1 AND NOT (group_id = ANY($2))
+		`, state.AccountID, pq.Array(state.GroupIDs)); err != nil {
+			return err
+		}
+		if len(state.GroupIDs) > 0 {
+			if _, err := addLocalAccountsToGroups(ctx, exec, []int64{state.AccountID}, state.GroupIDs); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func acceptObservedLocalAccountStateAfterRestore(ctx context.Context, exec localAccountOpsExec, accountIDs []int64) error {
+	_, err := exec.ExecContext(ctx, `
+		UPDATE admin_plus_local_account_state_snapshots
+		SET observed_account_name = accepted_account_name,
+			observed_account_platform = accepted_account_platform,
+			observed_account_type = accepted_account_type,
+			observed_schedulable = accepted_schedulable,
+			observed_group_ids = accepted_group_ids,
+			drift_status = 'synced', first_drift_detected_at = NULL,
+			last_checked_at = NOW(), accepted_at = NOW(), updated_at = NOW()
+		WHERE local_sub2api_account_id = ANY($1)
+	`, pq.Array(accountIDs))
+	return err
+}
+
+func missingInt64Values(expected []int64, actual []int64) []int64 {
+	actualSet := make(map[int64]struct{}, len(actual))
+	for _, value := range actual {
+		actualSet[value] = struct{}{}
+	}
+	missing := make([]int64, 0)
+	for _, value := range expected {
+		if _, ok := actualSet[value]; !ok {
+			missing = append(missing, value)
+		}
+	}
+	return missing
 }
 
 func buildUsageWhere(filter UsageFilter) ([]string, []any) {
@@ -2492,7 +2945,7 @@ func localAccountStateSyncResult(ctx context.Context, exec localAccountOpsExec, 
 	rows, err := exec.QueryContext(ctx, `
 		SELECT
 			lss.local_sub2api_account_id,
-			COALESCE(a.name, ''),
+			COALESCE(NULLIF(lss.observed_account_name, ''), lss.accepted_account_name, ''),
 			lss.accepted_account_name,
 			lss.accepted_account_platform,
 			lss.accepted_account_type,
@@ -2513,7 +2966,6 @@ func localAccountStateSyncResult(ctx context.Context, exec localAccountOpsExec, 
 			lss.last_checked_at,
 			lss.drift_status
 		FROM admin_plus_local_account_state_snapshots lss
-		LEFT JOIN accounts a ON a.id = lss.local_sub2api_account_id
 		WHERE (COALESCE(array_length($1::BIGINT[], 1), 0) = 0 OR lss.local_sub2api_account_id = ANY($1))
 		ORDER BY CASE WHEN lss.drift_status = 'pending' THEN 0 ELSE 1 END, lss.updated_at DESC, lss.local_sub2api_account_id DESC
 		LIMIT $2

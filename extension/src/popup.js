@@ -71,8 +71,12 @@ async function init() {
 async function refresh() {
   setBusy(true)
   try {
-    state = await sendMessage({ type: 'state:get' })
-    lastCaptureResult = await sendMessage({ type: 'capture:last-result' })
+    const [nextState, nextCaptureResult] = await Promise.all([
+      sendMessage({ type: 'state:get' }),
+      sendMessage({ type: 'capture:last-result' })
+    ])
+    state = nextState
+    lastCaptureResult = nextCaptureResult
     if (state.connection.status === 'connected') {
       identification = await sendMessage({ type: 'site:identify' })
       candidate = identification?.candidate || null
@@ -483,9 +487,14 @@ async function collectCurrentCandidate(includeSensitive = false) {
 }
 
 async function readPageCandidate(includeSensitive = false) {
+  const knownProviderType = normalizeProviderType(
+    supplierTypeEl.value || candidate?.provider_type || identification?.supplier?.type || ''
+  )
   const response = await sendMessage({
     type: 'site:collect-candidate',
-    includeSensitive
+    includeSensitive,
+    skipAPIProbe: includeSensitive && Boolean(knownProviderType),
+    knownProviderType
   })
   return response || null
 }

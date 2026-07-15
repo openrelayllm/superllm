@@ -763,8 +763,9 @@ func TestSQLRepositoryListLocalGroupsReadsCapacityProjection(t *testing.T) {
 }
 
 func TestSQLRepositoryCreateRoutingRefillRunPersistsSnapshot(t *testing.T) {
-	db, mock := newSub2APISQLMock(t)
-	repo := NewSQLRepository(ReadDB{DB: db})
+	readDB, _ := newSub2APISQLMock(t)
+	primaryDB, mock := newSub2APISQLMock(t)
+	repo := NewSQLRepository(ReadDB{DB: readDB, PrimaryDB: primaryDB, Configured: true})
 	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 
 	mock.ExpectQuery(`INSERT INTO admin_plus_routing_refill_runs`).
@@ -1185,6 +1186,51 @@ func TestSQLRepositorySyncLocalAccountStateReturnsPendingDrift(t *testing.T) {
 	require.NotNil(t, result.Items[0].FirstDetectedAt)
 }
 
+func TestSQLRepositorySyncLocalAccountStateReadsSplitDatabases(t *testing.T) {
+	readDB, readMock := newSub2APISQLMock(t)
+	primaryDB, primaryMock := newSub2APISQLMock(t)
+	repo := NewSQLRepository(ReadDB{DB: readDB, PrimaryDB: primaryDB, Configured: true})
+	now := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC)
+
+	readMock.ExpectQuery(`SELECT\s+a\.id,[\s\S]*FROM accounts a\s+LEFT JOIN account_groups ag ON ag\.account_id = a\.id`).
+		WithArgs(pq.Array([]int64{42}), 25).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "platform", "type", "schedulable", "group_ids",
+		}).AddRow(int64(42), "Lime gpt-4o", "openai", "api_key", true, pq.Int64Array{}))
+	primaryMock.ExpectBegin()
+	primaryMock.ExpectExec(`INSERT INTO admin_plus_local_account_state_snapshots`).
+		WithArgs(int64(42), "Lime gpt-4o", "openai", "api_key", true, pq.Array([]int64{})).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	primaryMock.ExpectExec(`UPDATE admin_plus_supplier_accounts\s+SET local_account_name = \$2`).
+		WithArgs(int64(42), "Lime gpt-4o", "openai", "api_key").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	primaryMock.ExpectExec(`INSERT INTO admin_plus_local_account_drift_events`).
+		WithArgs(pq.Array([]int64{42})).
+		WillReturnResult(sqlmock.NewResult(1, 0))
+	primaryMock.ExpectQuery(`SELECT\s+lss\.local_sub2api_account_id,[\s\S]*FROM admin_plus_local_account_state_snapshots lss`).
+		WithArgs(pq.Array([]int64{42}), 25).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"local_sub2api_account_id", "account_name", "accepted_account_name", "accepted_account_platform",
+			"accepted_account_type", "accepted_schedulable", "accepted_group_ids", "observed_account_name",
+			"observed_account_platform", "observed_account_type", "observed_schedulable", "observed_group_ids",
+			"drift_fields", "first_drift_detected_at", "last_checked_at", "drift_status",
+		}).AddRow(
+			int64(42), "Lime gpt-4o", "Lime gpt-4o", "openai", "api_key", true, pq.Int64Array{},
+			"Lime gpt-4o", "openai", "api_key", true, pq.Int64Array{}, pq.StringArray{}, nil, now, "synced",
+		))
+	primaryMock.ExpectCommit()
+
+	result, err := repo.SyncLocalAccountState(context.Background(), LocalAccountStateSyncInput{
+		AccountIDs: []int64{42},
+		Limit:      25,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(1), result.CheckedAccounts)
+	require.Equal(t, int64(1), result.SyncedAccounts)
+	require.Equal(t, int64(0), result.PendingDriftAccounts)
+}
+
 func TestSQLRepositoryResolveLocalAccountStateAcceptsObservedSnapshot(t *testing.T) {
 	db, mock := newSub2APISQLMock(t)
 	repo := NewSQLRepository(ReadDB{DB: db})
@@ -1266,12 +1312,16 @@ func TestSQLRepositoryResolveLocalAccountStateRestoresAcceptedSnapshot(t *testin
 }
 
 func TestSQLRepositoryHasSupplierUsageSinceReadsBoundAccounts(t *testing.T) {
-	db, mock := newSub2APISQLMock(t)
-	repo := NewSQLRepository(ReadDB{DB: db})
+	readDB, readMock := newSub2APISQLMock(t)
+	primaryDB, primaryMock := newSub2APISQLMock(t)
+	repo := NewSQLRepository(ReadDB{DB: readDB, PrimaryDB: primaryDB, Configured: true})
 	since := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC)
 
-	mock.ExpectQuery(`FROM usage_logs ul\s+INNER JOIN admin_plus_supplier_accounts asa\s+ON asa\.local_sub2api_account_id = ul\.account_id\s+WHERE asa\.supplier_id = \$1\s+AND ul\.created_at >= \$2`).
-		WithArgs(int64(7), since).
+	primaryMock.ExpectQuery(`SELECT DISTINCT local_sub2api_account_id\s+FROM admin_plus_supplier_accounts\s+WHERE supplier_id = \$1\s+AND local_sub2api_account_id > 0\s+ORDER BY local_sub2api_account_id`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"local_sub2api_account_id"}).AddRow(int64(42)).AddRow(int64(84)))
+	readMock.ExpectQuery(`FROM usage_logs ul\s+WHERE ul\.account_id = ANY\(\$1\)\s+AND ul\.created_at >= \$2`).
+		WithArgs(pq.Array([]int64{42, 84}), since).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
 	hasUsage, err := repo.HasSupplierUsageSince(context.Background(), 7, since)
@@ -1281,13 +1331,33 @@ func TestSQLRepositoryHasSupplierUsageSinceReadsBoundAccounts(t *testing.T) {
 }
 
 func TestSQLRepositoryHasSupplierUsageSinceReturnsFalseWhenUnused(t *testing.T) {
-	db, mock := newSub2APISQLMock(t)
-	repo := NewSQLRepository(ReadDB{DB: db})
+	readDB, readMock := newSub2APISQLMock(t)
+	primaryDB, primaryMock := newSub2APISQLMock(t)
+	repo := NewSQLRepository(ReadDB{DB: readDB, PrimaryDB: primaryDB, Configured: true})
 	since := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC)
 
-	mock.ExpectQuery(`FROM usage_logs ul\s+INNER JOIN admin_plus_supplier_accounts asa\s+ON asa\.local_sub2api_account_id = ul\.account_id\s+WHERE asa\.supplier_id = \$1\s+AND ul\.created_at >= \$2`).
-		WithArgs(int64(7), since).
+	primaryMock.ExpectQuery(`SELECT DISTINCT local_sub2api_account_id\s+FROM admin_plus_supplier_accounts\s+WHERE supplier_id = \$1`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"local_sub2api_account_id"}).AddRow(int64(42)))
+	readMock.ExpectQuery(`FROM usage_logs ul\s+WHERE ul\.account_id = ANY\(\$1\)\s+AND ul\.created_at >= \$2`).
+		WithArgs(pq.Array([]int64{42}), since).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	hasUsage, err := repo.HasSupplierUsageSince(context.Background(), 7, since)
+
+	require.NoError(t, err)
+	require.False(t, hasUsage)
+}
+
+func TestSQLRepositoryHasSupplierUsageSinceSkipsUsageQueryWithoutBoundAccounts(t *testing.T) {
+	readDB, _ := newSub2APISQLMock(t)
+	primaryDB, primaryMock := newSub2APISQLMock(t)
+	repo := NewSQLRepository(ReadDB{DB: readDB, PrimaryDB: primaryDB, Configured: true})
+	since := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC)
+
+	primaryMock.ExpectQuery(`SELECT DISTINCT local_sub2api_account_id\s+FROM admin_plus_supplier_accounts\s+WHERE supplier_id = \$1`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"local_sub2api_account_id"}))
 
 	hasUsage, err := repo.HasSupplierUsageSince(context.Background(), 7, since)
 

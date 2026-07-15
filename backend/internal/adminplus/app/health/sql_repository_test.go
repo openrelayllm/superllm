@@ -7,6 +7,7 @@ import (
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	sub2apiapp "github.com/Wei-Shaw/sub2api/internal/adminplus/app/sub2api"
 	adminplusdomain "github.com/Wei-Shaw/sub2api/internal/adminplus/domain"
 	"github.com/stretchr/testify/require"
 )
@@ -165,6 +166,33 @@ func TestSQLRepositoryUpdateHealthEventStatusNotFound(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "HEALTH_EVENT_NOT_FOUND")
+}
+
+func TestSQLRepositoryGetProbeTargetReadsAccountFromSub2APIDatabase(t *testing.T) {
+	primaryDB, primaryMock := newHealthSQLMock(t)
+	accountDB, accountMock := newHealthSQLMock(t)
+	repo := NewSQLRepositoryWithReadDB(primaryDB, sub2apiapp.ReadDB{DB: accountDB, Configured: true})
+
+	primaryMock.ExpectQuery(`FROM admin_plus_supplier_accounts asa\s+INNER JOIN admin_plus_suppliers s`).
+		WithArgs(int64(7), int64(11)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"supplier_id", "supplier_name", "api_base_url", "supplier_account_id",
+			"local_account_id", "local_account_name", "local_account_platform", "local_account_type",
+		}).AddRow(int64(7), "Relay", "https://supplier.example", int64(11), int64(101), "stale", "openai", "apikey"))
+	accountMock.ExpectQuery(`FROM accounts\s+WHERE id = \$1 AND deleted_at IS NULL`).
+		WithArgs(int64(101)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"name", "platform", "type", "status", "schedulable", "concurrency", "credentials",
+		}).AddRow("Sub2API account", "openai", "apikey", "active", true, 8, []byte(`{"api_key":"sk-test","base_url":"https://relay.example/v1"}`)))
+
+	target, err := repo.GetProbeTarget(context.Background(), 7, 11)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(101), target.LocalAccountID)
+	require.Equal(t, "Sub2API account", target.LocalAccountName)
+	require.Equal(t, "sk-test", target.APIKey)
+	require.Equal(t, "https://relay.example/v1", target.AccountBaseURL)
+	require.Equal(t, 8, target.LocalAccountConcurrency)
 }
 
 func newHealthSampleRows() *sqlmock.Rows {

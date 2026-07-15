@@ -34,6 +34,30 @@ func TestServiceDispatchSuppressesWhenChannelDisabled(t *testing.T) {
 	require.Equal(t, "channel_disabled", items[0].LastError)
 }
 
+func TestServiceDispatchSuppressesWhenNotificationsAreDisabled(t *testing.T) {
+	t.Setenv(EnvNotificationsDisabled, "true")
+	repo := NewMemoryRepository()
+	svc := NewService(repo)
+	settings := defaultSettings()
+	settings.Feishu.Enabled = true
+	settings.Feishu.WebhookURL = "https://open.feishu.cn/webhook/must-not-be-called"
+	require.NoError(t, repo.SaveSettings(context.Background(), settings))
+
+	err := svc.Dispatch(context.Background(), DispatchInput{
+		Type:       "balance.low_balance",
+		ID:         20,
+		SupplierID: 7,
+		Text:       "low balance",
+	})
+
+	require.NoError(t, err)
+	items, err := repo.ListDeliveries(context.Background(), DeliveryFilter{Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, adminplusdomain.NotificationStatusSuppressed, items[0].Status)
+	require.Equal(t, "notifications_disabled", items[0].LastError)
+}
+
 func TestServiceDispatchSuppressesDisabledRule(t *testing.T) {
 	repo := NewMemoryRepository()
 	svc := NewService(repo)

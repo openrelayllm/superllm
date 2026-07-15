@@ -16,7 +16,9 @@ const NEW_API_USER_HEADER_ALIASES = [
   ...NEW_API_USER_HEADER_NAMES,
   'new-api-user'
 ]
+const SUPPLIER_LIST_REUSE_TTL_MS = 3000
 let registrationTaskRun = null
+let reusableSupplierList = null
 
 async function loadConfig() {
   const stored = await chrome.storage.local.get(CONFIG_KEY)
@@ -310,7 +312,10 @@ async function handleMessage(message) {
     case 'site:identify':
       return identifyCurrentSite()
     case 'site:collect-candidate':
-      return collectSiteCandidate(message.includeSensitive === true)
+      return collectSiteCandidate(message.includeSensitive === true, 0, {
+        skipAPIProbe: message.skipAPIProbe === true,
+        knownProviderType: message.knownProviderType || ''
+      })
     case 'session:capture':
       return captureSupplierSession(
         message.supplierID,
@@ -351,8 +356,8 @@ async function getState() {
   }
   if (connection.status === 'connected') {
     try {
-      const client = new AdminPlusClient(config)
-      await client.listSuppliers()
+      const suppliers = takeReusableSupplierList(config) || await new AdminPlusClient(config).listSuppliers()
+      rememberSupplierList(config, suppliers)
     } catch (error) {
       connection = {
         ...connection,
@@ -390,8 +395,9 @@ async function connectFromActiveTab(baseURL = '') {
       connectedAt: new Date().toISOString()
     }
     try {
-      await verifyAdminPlusConnection(candidate, result)
+      const suppliers = await verifyAdminPlusConnection(candidate, result)
       await saveConfig(candidate)
+      rememberSupplierList(candidate, suppliers)
       return getState()
     } catch (error) {
       lastError = error
@@ -453,8 +459,7 @@ async function readAdminPlusAuthFromTab(tab) {
 async function verifyAdminPlusConnection(config, tabAuth) {
   try {
     const client = new AdminPlusClient(config)
-    await client.listSuppliers()
-    return
+    return await client.listSuppliers()
   } catch (error) {
     const looksLikeAdminPlus = hasAdminPlusPathHint(tabAuth?.path)
     const reason = looksLikeAdminPlus ? 'ADMIN_PLUS_AUTH_INVALID' : 'ADMIN_PLUS_PAGE_REQUIRED'
@@ -524,9 +529,8 @@ async function identifyCurrentSite() {
       message: '当前页面不支持供应商识别'
     }
   }
-  const client = new AdminPlusClient(config)
   const probe = await collectSiteCandidate(false, tab?.id).catch(() => emptySiteCandidate())
-  const suppliers = await client.listSuppliers()
+  const suppliers = takeReusableSupplierList(config) || await new AdminPlusClient(config).listSuppliers()
   const matches = suppliers
     .map((supplier) => ({ supplier, score: matchSupplier(currentURL, supplier) }))
     .filter((item) => item.score > 0)
@@ -645,7 +649,7 @@ async function captureSupplierSession(supplierID, autoCreate, candidate = null, 
   }
 }
 
-async function collectSiteCandidate(includeSensitive, tabId) {
+async function collectSiteCandidate(includeSensitive, tabId, options = {}) {
   if (!tabId) {
     const active = await getActiveTab()
     tabId = active?.id || 0
@@ -653,11 +657,20 @@ async function collectSiteCandidate(includeSensitive, tabId) {
   if (!tabId) {
     return emptySiteCandidate()
   }
-  const response = await sendContentMessage(tabId, { type: 'admin-plus:collect-candidate:v2', include_sensitive: includeSensitive === true })
+  const response = await sendContentMessage(tabId, {
+    type: 'admin-plus:collect-candidate:v2',
+    include_sensitive: includeSensitive === true,
+    skip_api_probe: options.skipAPIProbe === true
+  })
   if (response?.ok === false) {
     throw new Error(response.error_message || 'site candidate probe failed')
   }
   const candidate = normalizeSiteCandidate(response)
+  const knownProviderType = normalizeProviderType(options.knownProviderType || '')
+  if (!candidate.provider_type && knownProviderType) {
+    candidate.provider_type = knownProviderType
+    candidate.status = 'identified'
+  }
   if (includeSensitive && !candidate.credential.password) {
     const frameCredential = await collectFrameCredential(tabId).catch(() => null)
     if (frameCredential?.password) {
@@ -864,6 +877,23 @@ function emptySiteCandidate() {
     credential: {},
     defaults: {}
   })
+}
+
+function rememberSupplierList(config, suppliers) {
+  reusableSupplierList = {
+    baseURL: normalizeBaseURL(config?.baseURL || ''),
+    token: config?.token || '',
+    suppliers: Array.isArray(suppliers) ? suppliers : [],
+    expiresAt: Date.now() + SUPPLIER_LIST_REUSE_TTL_MS
+  }
+}
+
+function takeReusableSupplierList(config) {
+  const cached = reusableSupplierList
+  reusableSupplierList = null
+  if (!cached || cached.expiresAt < Date.now()) return null
+  if (cached.baseURL !== normalizeBaseURL(config?.baseURL || '') || cached.token !== (config?.token || '')) return null
+  return cached.suppliers
 }
 
 async function runNextRegistrationTask() {
