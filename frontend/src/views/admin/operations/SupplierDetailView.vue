@@ -20,6 +20,7 @@
 
         <nav class="mt-5 flex gap-5" aria-label="供应商详情">
           <button type="button" class="border-b-2 px-1 pb-2 text-sm font-medium" :class="activeTab === 'groups' ? 'border-primary-500 text-primary-700 dark:text-primary-300' : 'border-transparent text-gray-500 dark:text-dark-400'" @click="setTab('groups')">分组</button>
+          <button type="button" class="border-b-2 px-1 pb-2 text-sm font-medium" :class="activeTab === 'alignment' ? 'border-primary-500 text-primary-700 dark:text-primary-300' : 'border-transparent text-gray-500 dark:text-dark-400'" @click="setTab('alignment')">Key 对齐</button>
           <button type="button" class="border-b-2 px-1 pb-2 text-sm font-medium" :class="activeTab === 'tasks' ? 'border-primary-500 text-primary-700 dark:text-primary-300' : 'border-transparent text-gray-500 dark:text-dark-400'" @click="setTab('tasks')">任务记录</button>
         </nav>
       </header>
@@ -27,6 +28,13 @@
       <div v-if="loading" class="py-16 text-center text-sm text-gray-500 dark:text-dark-400">正在加载供应商...</div>
       <div v-else-if="error" class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">{{ error }}</div>
       <SupplierGroupWorkspace v-else-if="supplier && activeTab === 'groups'" :vm="vm" />
+      <SupplierAlignmentPanel
+        v-else-if="supplier && activeTab === 'alignment'"
+        :supplier-id="supplier.id"
+        @open-groups="setTab('groups')"
+        @create-key="handleAlignmentCreateKey"
+        @repair-key="handleAlignmentRepairKey"
+      />
       <SupplierTasksPanel v-else-if="supplier" :supplier-id="supplier.id" />
     </div>
 
@@ -40,10 +48,11 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getSupplier } from '@/api/admin/adminPlus'
-import type { Supplier } from '@/api/admin/adminPlus'
+import type { Supplier, SupplierGroup, SupplierKey } from '@/api/admin/adminPlus'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import SupplierChannelProbeDialog from './suppliers/SupplierChannelProbeDialog.vue'
+import SupplierAlignmentPanel from './suppliers/SupplierAlignmentPanel.vue'
 import SupplierGroupWorkspace from './suppliers/SupplierGroupWorkspace.vue'
 import SupplierProvisionDialog from './suppliers/SupplierProvisionDialog.vue'
 import SupplierRepairDeleteDialogs from './suppliers/SupplierRepairDeleteDialogs.vue'
@@ -56,7 +65,7 @@ const vm: any = useSuppliersViewModel()
 const supplier = ref<Supplier | null>(null)
 const loading = ref(true)
 const error = ref('')
-const activeTab = ref(route.query.tab === 'tasks' ? 'tasks' : 'groups')
+const activeTab = ref(route.query.tab === 'tasks' ? 'tasks' : route.query.tab === 'alignment' ? 'alignment' : 'groups')
 
 async function loadSupplierWorkspace() {
   const supplierID = Number(route.params.supplierId || 0)
@@ -83,14 +92,24 @@ async function loadSupplierWorkspace() {
   }
 }
 
-function setTab(tab: 'groups' | 'tasks') {
+function setTab(tab: 'groups' | 'alignment' | 'tasks') {
   activeTab.value = tab
-  void router.replace({ query: tab === 'tasks' ? { ...route.query, tab: 'tasks' } : {} })
+  void router.replace({ query: tab === 'groups' ? {} : { ...route.query, tab } })
+}
+
+function handleAlignmentCreateKey(group: SupplierGroup) {
+  setTab('groups')
+  vm.openProvisionDialog(group)
+}
+
+function handleAlignmentRepairKey(key: SupplierKey) {
+  setTab('groups')
+  vm.openRepairDialog(key)
 }
 
 watch(() => route.params.supplierId, loadSupplierWorkspace)
 watch(() => route.query.tab, (tab) => {
-  activeTab.value = tab === 'tasks' ? 'tasks' : 'groups'
+  activeTab.value = tab === 'tasks' ? 'tasks' : tab === 'alignment' ? 'alignment' : 'groups'
 })
 onMounted(loadSupplierWorkspace)
 onBeforeUnmount(() => vm.closeGroupsDialog())

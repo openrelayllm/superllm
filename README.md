@@ -112,7 +112,7 @@ postgresql://superllm_readonly:password@127.0.0.1:5432/sub2api?sslmode=require
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/openrelayllm/superllm/main/deploy/install.sh \
-  | sudo bash -s -- install -v v0.42.5 --host 127.0.0.1 --port 8081
+  | sudo bash -s -- install -v v0.43.0 --host 127.0.0.1 --port 8081
 ```
 
 同机运行 Sub2API 时，建议显式监听 `127.0.0.1:8081` 并由 Nginx/Caddy 反向代理。未指定端口且默认 `8080` 已被占用时，安装器会自动选择下一个可用端口；显式指定的端口被占用时会直接报错，不会覆盖现有服务。
